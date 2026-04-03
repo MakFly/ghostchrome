@@ -31,13 +31,7 @@ Playwright MCP burns **14,000-50,000 tokens per snapshot**. ghostchrome returns 
 
 ## Install
 
-### Homebrew (macOS & Linux)
-
-```bash
-brew install MakFly/tap/ghostchrome
-```
-
-### Shell script (macOS & Linux)
+### Quick install (macOS & Linux)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/MakFly/ghostchrome/main/install.sh | sh
@@ -51,15 +45,7 @@ go install github.com/MakFly/ghostchrome@latest
 
 ### Manual download
 
-Download a prebuilt binary from [Releases](https://github.com/MakFly/ghostchrome/releases):
-
-| Platform | Binary |
-|---|---|
-| macOS (Apple Silicon) | `ghostchrome-darwin-arm64` |
-| macOS (Intel) | `ghostchrome-darwin-amd64` |
-| Linux (x86_64) | `ghostchrome-linux-amd64` |
-| Linux (ARM64) | `ghostchrome-linux-arm64` |
-| Windows | `ghostchrome-windows-amd64.exe` |
+Prebuilt binaries on [Releases](https://github.com/MakFly/ghostchrome/releases) — macOS (Intel/ARM), Linux (amd64/arm64), Windows.
 
 ### Requirements
 
