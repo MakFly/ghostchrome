@@ -21,3 +21,6 @@ Thumbs.db
 
 # Recipes / config
 *.yaml
+
+# Playwright
+.playwright*
