@@ -17,28 +17,24 @@ Examples:
   ghostchrome back --connect ws://127.0.0.1:9222`,
 	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		b, err := engine.NewBrowser(flagConnect, flagHeadless, flagTimeout)
-		if err != nil {
-			exitErr("browser", err)
-		}
+		b, page := openPage()
 		defer b.Close()
 
-		page, err := b.Page()
-		if err != nil {
-			exitErr("page", err)
-		}
-
-		err = page.NavigateBack()
+		err := page.NavigateBack()
 		if err != nil {
 			exitErr("back", err)
 		}
 
-		page.MustWaitStable()
+		if err := engine.WaitForPage(page, "stable"); err != nil {
+			exitErr("back", err)
+		}
 
 		info, err := page.Info()
 		if err != nil {
 			exitErr("page info", err)
 		}
+
+		_ = snapshotPage(b, page, engine.LevelSkeleton)
 
 		type navResult struct {
 			Action string `json:"action"`
@@ -65,28 +61,24 @@ Examples:
   ghostchrome forward --connect ws://127.0.0.1:9222`,
 	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		b, err := engine.NewBrowser(flagConnect, flagHeadless, flagTimeout)
-		if err != nil {
-			exitErr("browser", err)
-		}
+		b, page := openPage()
 		defer b.Close()
 
-		page, err := b.Page()
-		if err != nil {
-			exitErr("page", err)
-		}
-
-		err = page.NavigateForward()
+		err := page.NavigateForward()
 		if err != nil {
 			exitErr("forward", err)
 		}
 
-		page.MustWaitStable()
+		if err := engine.WaitForPage(page, "stable"); err != nil {
+			exitErr("forward", err)
+		}
 
 		info, err := page.Info()
 		if err != nil {
 			exitErr("page info", err)
 		}
+
+		_ = snapshotPage(b, page, engine.LevelSkeleton)
 
 		type navResult struct {
 			Action string `json:"action"`

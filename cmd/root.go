@@ -22,8 +22,16 @@ var rootCmd = &cobra.Command{
 	Long: `ghostchrome — a single Go binary that controls Chrome via CDP.
 Designed for LLM agents: compact output, minimal tokens, zero overhead.
 
-Commands return JSON (default) or compact text (--format text).
+Commands return compact text by default or JSON with --format json.
 Use 'ghostchrome serve' to start a persistent Chrome, then --connect to reuse it.`,
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		switch flagFormat {
+		case "text", "json":
+			return nil
+		default:
+			return fmt.Errorf("invalid format %q: use text or json", flagFormat)
+		}
+	},
 }
 
 func init() {

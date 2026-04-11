@@ -30,45 +30,28 @@ Examples:
 		} else {
 			values = []string{args[1]}
 		}
-
-		b, err := engine.NewBrowser(flagConnect, flagHeadless, flagTimeout)
-		if err != nil {
-			exitErr("browser", err)
+		targetURL := ""
+		if len(args) > 2 {
+			targetURL = args[2]
 		}
+
+		b, page := openPage()
 		defer b.Close()
 
-		page, err := b.Page()
-		if err != nil {
-			exitErr("page", err)
-		}
+		snapshot := ensureSnapshot(b, page, targetURL, "load", engine.LevelSkeleton)
 
-		// If URL provided, navigate first.
-		urlIdx := 2
-		if len(args) > urlIdx {
-			applyStealthIfNeeded(page)
-			_, err := engine.Navigate(page, args[urlIdx], "load")
-			if err != nil {
-				exitErr("navigate", err)
-			}
-			dismissCookiesIfNeeded(page)
-		}
-
-		// Select options.
-		err = engine.SelectOption(page, ref, values)
+		err := engine.SelectOption(page, ref, values, snapshot)
 		if err != nil {
+			exitIfStaleRef(err, "select")
 			exitErr("select", err)
 		}
 
-		// Extract skeleton after select.
-		result, err := engine.Extract(page, engine.LevelSkeleton, "")
-		if err != nil {
-			exitErr("extract after select", err)
-		}
+		result := snapshotPage(b, page, engine.LevelSkeleton)
 
 		type selectResult struct {
-			Action string                  `json:"action"`
-			Ref    string                  `json:"ref"`
-			Values []string                `json:"values"`
+			Action string                   `json:"action"`
+			Ref    string                   `json:"ref"`
+			Values []string                 `json:"values"`
 			Result *engine.ExtractionResult `json:"result"`
 		}
 

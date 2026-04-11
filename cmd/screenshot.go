@@ -29,35 +29,32 @@ Examples:
   ghostchrome screenshot https://example.com --output page.png --quality 90`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		b, err := engine.NewBrowser(flagConnect, flagHeadless, flagTimeout)
-		if err != nil {
-			exitErr("browser", err)
+		targetURL := ""
+		if len(args) > 0 {
+			targetURL = args[0]
 		}
+
+		b, page := openPage()
 		defer b.Close()
 
-		page, err := b.Page()
-		if err != nil {
-			exitErr("page", err)
+		var snapshot *engine.PageSnapshot
+		if flagElement != "" || targetURL != "" {
+			snapshot = ensureSnapshot(b, page, targetURL, "load", engine.LevelSkeleton)
 		}
 
-		// If URL provided, navigate first.
-		if len(args) > 0 {
-			_, err := engine.Navigate(page, args[0], "load")
-			if err != nil {
-				exitErr("navigate", err)
-			}
-		}
-
-		// Take screenshot.
-		data, err := engine.TakeScreenshot(page, flagFull, flagElement, flagQuality)
+		data, err := engine.TakeScreenshot(page, flagFull, flagElement, flagQuality, snapshot)
 		if err != nil {
+			exitIfStaleRef(err, "screenshot")
 			exitErr("screenshot", err)
 		}
 
-		// Determine output path.
 		outPath := flagOutputPath
 		if outPath == "" {
-			outPath = fmt.Sprintf("/tmp/ghostchrome-screenshot-%d.png", time.Now().UnixMilli())
+			ext := "png"
+			if flagQuality > 0 && flagElement == "" {
+				ext = "jpg"
+			}
+			outPath = fmt.Sprintf("/tmp/ghostchrome-screenshot-%d.%s", time.Now().UnixMilli(), ext)
 		}
 
 		// Write file.

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"github.com/MakFly/ghostchrome/engine"
+	"github.com/go-rod/rod"
 	"github.com/spf13/cobra"
 )
 
@@ -23,27 +24,24 @@ Examples:
 	Run: func(cmd *cobra.Command, args []string) {
 		targetURL := args[0]
 
-		b, err := engine.NewBrowser(flagConnect, flagHeadless, flagTimeout)
-		if err != nil {
-			exitErr("browser", err)
-		}
+		b, page := openPage()
 		defer b.Close()
-
-		page, err := b.Page()
-		if err != nil {
-			exitErr("page", err)
-		}
 
 		applyStealthIfNeeded(page)
 
 		level := engine.ExtractLevel(flagPreviewLevel)
 
-		result, err := engine.Preview(page, targetURL, "stable", level)
+		result, err := engine.Preview(page, targetURL, "stable", level, func(page *rod.Page) error {
+			dismissCookiesIfNeeded(page)
+			return nil
+		}, flagStealth)
 		if err != nil {
 			exitErr("preview", err)
 		}
 
-		dismissCookiesIfNeeded(page)
+		if err := b.SaveSnapshot(page, result.DOM); err != nil {
+			exitErr("snapshot", err)
+		}
 
 		text := engine.FormatPreview(result)
 		output(result, text)

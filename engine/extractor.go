@@ -19,16 +19,17 @@ const (
 
 // ExtractedNode represents a filtered accessibility node.
 type ExtractedNode struct {
-	Ref      string          `json:"ref,omitempty"`
-	Role     string          `json:"role"`
-	Name     string          `json:"name,omitempty"`
-	Value    string          `json:"value,omitempty"`
-	Level    int             `json:"level,omitempty"`
-	Href     string          `json:"href,omitempty"`
-	Type     string          `json:"type,omitempty"`
-	Checked  *bool           `json:"checked,omitempty"`
-	Disabled bool            `json:"disabled,omitempty"`
-	Children []ExtractedNode `json:"children,omitempty"`
+	Ref           string                 `json:"ref,omitempty"`
+	Role          string                 `json:"role"`
+	Name          string                 `json:"name,omitempty"`
+	Value         string                 `json:"value,omitempty"`
+	Level         int                    `json:"level,omitempty"`
+	Href          string                 `json:"href,omitempty"`
+	Type          string                 `json:"type,omitempty"`
+	Checked       *bool                  `json:"checked,omitempty"`
+	Disabled      bool                   `json:"disabled,omitempty"`
+	BackendNodeID proto.DOMBackendNodeID `json:"-"`
+	Children      []ExtractedNode        `json:"children,omitempty"`
 }
 
 // ExtractionResult holds the extraction output.
@@ -79,19 +80,23 @@ var skeletonRoles = map[string]bool{
 
 // Content-level additions on top of skeleton.
 var contentRoles = map[string]bool{
-	"StaticText": true,
-	"text":       true,
-	"paragraph":  true,
-	"listitem":   true,
-	"img":        true,
-	"image":      true,
-	"table":      true,
-	"rowheader":  true,
+	"StaticText":   true,
+	"text":         true,
+	"paragraph":    true,
+	"listitem":     true,
+	"img":          true,
+	"image":        true,
+	"table":        true,
+	"rowheader":    true,
 	"columnheader": true,
 }
 
 // Extract retrieves the accessibility tree from the page and filters it.
 func Extract(page *rod.Page, level ExtractLevel, selector string) (*ExtractionResult, error) {
+	if err := ValidateExtractLevel(level); err != nil {
+		return nil, err
+	}
+
 	// Get the full accessibility tree via CDP.
 	result, err := proto.AccessibilityGetFullAXTree{}.Call(page)
 	if err != nil {
@@ -155,7 +160,7 @@ func resolveScope(page *rod.Page, selector string) (map[proto.AccessibilityAXNod
 
 	// Use AccessibilityGetPartialAXTree to get the subtree.
 	partial, err := proto.AccessibilityGetPartialAXTree{
-		BackendNodeID: desc.BackendNodeID,
+		BackendNodeID:  desc.BackendNodeID,
 		FetchRelatives: true,
 	}.Call(page)
 	if err != nil {
@@ -212,8 +217,9 @@ func buildTree(
 	}
 
 	node := ExtractedNode{
-		Role: role,
-		Name: name,
+		Role:          role,
+		Name:          name,
+		BackendNodeID: axNode.BackendDOMNodeID,
 	}
 
 	// Extract value.
@@ -247,7 +253,7 @@ func buildTree(
 	}
 
 	// Assign ref to interactive elements.
-	if interactiveRoles[role] {
+	if interactiveRoles[role] && axNode.BackendDOMNodeID != 0 {
 		*refCounter++
 		node.Ref = fmt.Sprintf("@%d", *refCounter)
 		stats.InteractiveCount++
@@ -285,6 +291,16 @@ func shouldInclude(role, name string, level ExtractLevel) bool {
 		return name != "" || skeletonRoles[role] || contentRoles[role]
 	}
 	return false
+}
+
+// ValidateExtractLevel ensures the extraction level is supported.
+func ValidateExtractLevel(level ExtractLevel) error {
+	switch level {
+	case LevelSkeleton, LevelContent, LevelFull:
+		return nil
+	default:
+		return fmt.Errorf("invalid level %q: use skeleton, content, or full", level)
+	}
 }
 
 // axValueStr extracts the string representation from an AXValue.

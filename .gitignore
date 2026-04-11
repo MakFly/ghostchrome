@@ -18,3 +18,6 @@ Thumbs.db
 
 # ig index
 .ig/
+
+# Recipes / config
+*.yaml

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/MakFly/ghostchrome/engine"
 	"github.com/spf13/cobra"
@@ -45,35 +46,20 @@ Examples:
 }
 
 func runDialogHandler(accept bool, text string) {
-	b, err := engine.NewBrowser(flagConnect, flagHeadless, flagTimeout)
-	if err != nil {
-		exitErr("browser", err)
-	}
+	b, page := openPage()
 	defer b.Close()
 
-	page, err := b.Page()
+	result, err := engine.HandleNextDialog(page, accept, text, time.Duration(flagTimeout)*time.Second)
 	if err != nil {
-		exitErr("page", err)
+		exitErr("dialog", err)
 	}
 
-	engine.HandleNextDialog(page, accept, text)
-
-	action := "accept"
-	if !accept {
-		action = "dismiss"
+	text2 := fmt.Sprintf("Dialog %s timed out after %ds", result.Action, flagTimeout)
+	if result.Handled {
+		text2 = fmt.Sprintf("Dialog %s: [%s] %s", result.Action, result.Type, result.Message)
 	}
 
-	type dialogResult struct {
-		Action string `json:"action"`
-		Text   string `json:"text,omitempty"`
-	}
-
-	text2 := fmt.Sprintf("Dialog handler set: will %s", action)
-	if text != "" {
-		text2 = fmt.Sprintf("Dialog handler set: will %s with text %q", action, text)
-	}
-
-	output(&dialogResult{Action: action, Text: text}, text2)
+	output(result, text2)
 }
 
 func init() {

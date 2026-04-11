@@ -77,7 +77,7 @@ ghostchrome errors <url>
 
 ### Interaction (via refs)
 
-Every interactive element gets a compact ref (`@1`, `@2`, etc.):
+Refs (`@1`, `@2`, etc.) come from the latest page snapshot produced by `preview`, `extract`, `navigate --extract`, or an interaction command that first navigates to a URL.
 
 ```bash
 ghostchrome click @3 <url>              # Click a button/link
@@ -104,7 +104,7 @@ ghostchrome tabs switch 2              # Switch to tab
 ghostchrome tabs close 1               # Close tab
 ghostchrome viewport 375 667           # Set viewport size
 ghostchrome viewport --device iphone-14 <url>  # Device preset
-ghostchrome dialog accept              # Handle JS alert/confirm
+ghostchrome dialog accept              # Wait for and handle next JS alert/confirm
 ghostchrome serve [--port 9222]        # Persistent Chrome session
 ```
 

@@ -21,29 +21,22 @@ Examples:
 	Args: cobra.RangeArgs(1, 2),
 	Run: func(cmd *cobra.Command, args []string) {
 		expr := args[0]
-
-		b, err := engine.NewBrowser(flagConnect, flagHeadless, flagTimeout)
-		if err != nil {
-			exitErr("browser", err)
+		targetURL := ""
+		if len(args) > 1 {
+			targetURL = args[1]
 		}
+
+		b, page := openPage()
 		defer b.Close()
 
-		page, err := b.Page()
-		if err != nil {
-			exitErr("page", err)
+		var snapshot *engine.PageSnapshot
+		if flagOnRef != "" || targetURL != "" {
+			snapshot = ensureSnapshot(b, page, targetURL, "load", engine.LevelSkeleton)
 		}
 
-		// If URL provided, navigate first.
-		if len(args) > 1 {
-			_, err := engine.Navigate(page, args[1], "load")
-			if err != nil {
-				exitErr("navigate", err)
-			}
-		}
-
-		// Evaluate JS.
-		result, err := engine.EvalJS(page, expr, flagOnRef)
+		result, err := engine.EvalJS(page, expr, flagOnRef, snapshot)
 		if err != nil {
+			exitIfStaleRef(err, "eval")
 			exitErr("eval", err)
 		}
 

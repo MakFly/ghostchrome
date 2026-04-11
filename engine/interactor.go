@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -11,34 +12,53 @@ import (
 	"github.com/go-rod/rod/lib/proto"
 )
 
-// interactiveSelector matches the same elements that get @ref assignments in the AX tree.
-const interactiveSelector = `a[href], button, input, select, textarea, [role="button"], [role="link"], [role="textbox"], [role="checkbox"], [role="radio"], [role="combobox"], [role="menuitem"], [role="tab"], [contenteditable="true"]`
+// ErrStaleRef indicates that a ref no longer maps to a live element.
+var ErrStaleRef = errors.New("stale ref: snapshot is missing or no longer matches the page")
 
-// ResolveRef finds an element by its ref (@1, @2, etc.).
-// Refs are assigned in DOM order to interactive elements, so @N means the Nth
-// element matching the interactive selector.
-func ResolveRef(page *rod.Page, ref string) (*rod.Element, error) {
-	ref = strings.TrimPrefix(ref, "@")
-	idx, err := strconv.Atoi(ref)
+func parseRef(ref string) (string, error) {
+	trimmed := strings.TrimPrefix(ref, "@")
+	idx, err := strconv.Atoi(trimmed)
 	if err != nil || idx < 1 {
-		return nil, fmt.Errorf("invalid ref %q: must be @N where N >= 1", ref)
+		return "", fmt.Errorf("invalid ref %q: must be @N where N >= 1", ref)
+	}
+	return "@" + trimmed, nil
+}
+
+func resolveRefSnapshot(page *rod.Page, ref string, snapshot *PageSnapshot) (*rod.Element, error) {
+	if snapshot == nil {
+		return nil, fmt.Errorf("%w: run preview, extract, or navigate --extract first", ErrStaleRef)
+	}
+	refInfo, ok := snapshot.Refs[ref]
+	if !ok || refInfo.BackendNodeID == 0 {
+		return nil, fmt.Errorf("%w: ref %s not found in last snapshot", ErrStaleRef, ref)
 	}
 
-	elements, err := page.Elements(interactiveSelector)
+	el, err := page.ElementFromNode(&proto.DOMNode{BackendNodeID: refInfo.BackendNodeID})
 	if err != nil {
-		return nil, fmt.Errorf("query interactive elements: %w", err)
+		return nil, fmt.Errorf("%w: ref %s is no longer attached", ErrStaleRef, ref)
 	}
-
-	if idx > len(elements) {
-		return nil, fmt.Errorf("ref @%d out of range: only %d interactive elements found", idx, len(elements))
+	connected, err := el.Eval(`() => this.isConnected`)
+	if err != nil {
+		return nil, fmt.Errorf("%w: ref %s could not be verified", ErrStaleRef, ref)
 	}
+	if connected == nil || connected.Value.Val() != true {
+		return nil, fmt.Errorf("%w: ref %s is detached from the DOM", ErrStaleRef, ref)
+	}
+	return el, nil
+}
 
-	return elements[idx-1], nil
+// ResolveRef finds an element by its ref (@1, @2, etc.) using a persisted snapshot.
+func ResolveRef(page *rod.Page, ref string, snapshot *PageSnapshot) (*rod.Element, error) {
+	parsed, err := parseRef(ref)
+	if err != nil {
+		return nil, err
+	}
+	return resolveRefSnapshot(page, parsed, snapshot)
 }
 
 // ClickRef clicks the element at the given ref.
-func ClickRef(page *rod.Page, ref string) error {
-	el, err := ResolveRef(page, ref)
+func ClickRef(page *rod.Page, ref string, snapshot *PageSnapshot) error {
+	el, err := ResolveRef(page, ref, snapshot)
 	if err != nil {
 		return err
 	}
@@ -62,8 +82,8 @@ func ClickRef(page *rod.Page, ref string) error {
 
 // TypeRef types text into the element at the given ref.
 // Uses focus + select all + keyboard typing to work with React/Vue/Angular.
-func TypeRef(page *rod.Page, ref string, text string) error {
-	el, err := ResolveRef(page, ref)
+func TypeRef(page *rod.Page, ref string, text string, snapshot *PageSnapshot) error {
+	el, err := ResolveRef(page, ref, snapshot)
 	if err != nil {
 		return err
 	}
@@ -105,9 +125,9 @@ func TypeRef(page *rod.Page, ref string, text string) error {
 // If elementRef is non-empty, captures only that element.
 // If fullPage is true, captures the full scrollable page.
 // quality controls JPEG quality (1-100); PNG is used if quality <= 0.
-func TakeScreenshot(page *rod.Page, fullPage bool, elementRef string, quality int) ([]byte, error) {
+func TakeScreenshot(page *rod.Page, fullPage bool, elementRef string, quality int, snapshot *PageSnapshot) ([]byte, error) {
 	if elementRef != "" {
-		el, err := ResolveRef(page, elementRef)
+		el, err := ResolveRef(page, elementRef, snapshot)
 		if err != nil {
 			return nil, err
 		}
@@ -161,9 +181,9 @@ func TakeScreenshot(page *rod.Page, fullPage bool, elementRef string, quality in
 
 // EvalJS evaluates JavaScript on the page or in an element context.
 // If elementRef is non-empty, the JS runs with `this` bound to that element.
-func EvalJS(page *rod.Page, expr string, elementRef string) (string, error) {
+func EvalJS(page *rod.Page, expr string, elementRef string, snapshot *PageSnapshot) (string, error) {
 	if elementRef != "" {
-		el, err := ResolveRef(page, elementRef)
+		el, err := ResolveRef(page, elementRef, snapshot)
 		if err != nil {
 			return "", err
 		}
@@ -206,8 +226,8 @@ func intPtr(v int) *int {
 // ---------------------------------------------------------------------------
 
 // SelectOption selects option(s) in a <select> element by visible text.
-func SelectOption(page *rod.Page, ref string, values []string) error {
-	el, err := ResolveRef(page, ref)
+func SelectOption(page *rod.Page, ref string, values []string, snapshot *PageSnapshot) error {
+	el, err := ResolveRef(page, ref, snapshot)
 	if err != nil {
 		return err
 	}
@@ -220,8 +240,8 @@ func SelectOption(page *rod.Page, ref string, values []string) error {
 }
 
 // HoverRef hovers over the element at the given ref.
-func HoverRef(page *rod.Page, ref string) error {
-	el, err := ResolveRef(page, ref)
+func HoverRef(page *rod.Page, ref string, snapshot *PageSnapshot) error {
+	el, err := ResolveRef(page, ref, snapshot)
 	if err != nil {
 		return err
 	}
@@ -251,9 +271,9 @@ var keyMap = map[string]input.Key{
 }
 
 // PressKey sends a keyboard key press. If ref is non-empty, focuses the element first.
-func PressKey(page *rod.Page, key string, ref string) error {
+func PressKey(page *rod.Page, key string, ref string, snapshot *PageSnapshot) error {
 	if ref != "" {
-		el, err := ResolveRef(page, ref)
+		el, err := ResolveRef(page, ref, snapshot)
 		if err != nil {
 			return err
 		}
@@ -290,13 +310,15 @@ func WaitForSelector(page *rod.Page, selector string, timeoutSec int) error {
 
 // TabInfo holds metadata about a browser tab.
 type TabInfo struct {
-	Index int    `json:"index"`
-	URL   string `json:"url"`
-	Title string `json:"title"`
+	Index    int    `json:"index"`
+	URL      string `json:"url"`
+	Title    string `json:"title"`
+	TargetID string `json:"target_id,omitempty"`
+	Active   bool   `json:"active,omitempty"`
 }
 
 // ListTabs returns info for every open tab in the browser.
-func ListTabs(browser *rod.Browser) ([]TabInfo, error) {
+func ListTabs(browser *rod.Browser, currentTargetID string) ([]TabInfo, error) {
 	pages, err := browser.Pages()
 	if err != nil {
 		return nil, err
@@ -310,7 +332,14 @@ func ListTabs(browser *rod.Browser) ([]TabInfo, error) {
 			title = info.Title
 			url = info.URL
 		}
-		tabs = append(tabs, TabInfo{Index: i, URL: url, Title: title})
+		targetID := string(p.TargetID)
+		tabs = append(tabs, TabInfo{
+			Index:    i,
+			URL:      url,
+			Title:    title,
+			TargetID: targetID,
+			Active:   currentTargetID != "" && currentTargetID == targetID,
+		})
 	}
 	return tabs, nil
 }
@@ -332,15 +361,16 @@ func SwitchTab(browser *rod.Browser, index int) (*rod.Page, error) {
 }
 
 // CloseTab closes the tab at the given index.
-func CloseTab(browser *rod.Browser, index int) error {
+func CloseTab(browser *rod.Browser, index int) (proto.TargetTargetID, error) {
 	pages, err := browser.Pages()
 	if err != nil {
-		return err
+		return "", err
 	}
 	if index < 0 || index >= len(pages) {
-		return fmt.Errorf("tab index %d out of range (0-%d)", index, len(pages)-1)
+		return "", fmt.Errorf("tab index %d out of range (0-%d)", index, len(pages)-1)
 	}
-	return pages[index].Close()
+	targetID := pages[index].TargetID
+	return targetID, pages[index].Close()
 }
 
 // ---------------------------------------------------------------------------
@@ -350,23 +380,68 @@ func CloseTab(browser *rod.Browser, index int) error {
 // SetViewport overrides the page viewport dimensions.
 func SetViewport(page *rod.Page, width, height int) error {
 	return proto.EmulationSetDeviceMetricsOverride{
-		Width:            width,
-		Height:           height,
+		Width:             width,
+		Height:            height,
 		DeviceScaleFactor: 1,
-		Mobile:           width < 768,
+		Mobile:            width < 768,
 	}.Call(page)
 }
 
-// HandleNextDialog sets up a one-shot handler for the next JavaScript dialog
-// (alert, confirm, prompt). It returns immediately; the handler fires when
-// the dialog appears.
-func HandleNextDialog(page *rod.Page, accept bool, promptText string) {
+// DialogResult describes how a JS dialog handler completed.
+type DialogResult struct {
+	Handled       bool   `json:"handled"`
+	Action        string `json:"action"`
+	Type          string `json:"type,omitempty"`
+	Message       string `json:"message,omitempty"`
+	URL           string `json:"url,omitempty"`
+	DefaultPrompt string `json:"default_prompt,omitempty"`
+	TimedOut      bool   `json:"timed_out,omitempty"`
+}
+
+// HandleNextDialog waits for the next JavaScript dialog and handles it.
+func HandleNextDialog(page *rod.Page, accept bool, promptText string, timeout time.Duration) (*DialogResult, error) {
 	wait, handle := page.HandleDialog()
+
+	resultCh := make(chan *DialogResult, 1)
+	errCh := make(chan error, 1)
+
 	go func() {
-		wait()
-		_ = handle(&proto.PageHandleJavaScriptDialog{
+		event := wait()
+		err := handle(&proto.PageHandleJavaScriptDialog{
 			Accept:     accept,
 			PromptText: promptText,
 		})
+		if err != nil {
+			errCh <- err
+			return
+		}
+		action := "accept"
+		if !accept {
+			action = "dismiss"
+		}
+		resultCh <- &DialogResult{
+			Handled:       true,
+			Action:        action,
+			Type:          string(event.Type),
+			Message:       event.Message,
+			URL:           event.URL,
+			DefaultPrompt: event.DefaultPrompt,
+		}
 	}()
+
+	select {
+	case result := <-resultCh:
+		return result, nil
+	case err := <-errCh:
+		return nil, err
+	case <-time.After(timeout):
+		action := "accept"
+		if !accept {
+			action = "dismiss"
+		}
+		return &DialogResult{
+			Action:   action,
+			TimedOut: true,
+		}, nil
+	}
 }

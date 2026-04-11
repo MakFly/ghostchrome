@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"time"
+	"github.com/go-rod/rod"
 
 	"github.com/MakFly/ghostchrome/engine"
 	"github.com/spf13/cobra"
@@ -25,30 +25,23 @@ Examples:
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		targetURL := args[0]
-
-		b, err := engine.NewBrowser(flagConnect, flagHeadless, flagTimeout)
-		if err != nil {
-			exitErr("browser launch", err)
+		switch flagErrLevel {
+		case "error", "warning", "all":
+		default:
+			exitErr("errors", errInvalidArg("level", flagErrLevel, "error, warning, all"))
 		}
+
+		b, page := openPage()
 		defer b.Close()
 
-		page, err := b.Page()
+		applyStealthIfNeeded(page)
+		allErrors, err := engine.CollectErrors(page, targetURL, "load", func(page *rod.Page) error {
+			dismissCookiesIfNeeded(page)
+			return nil
+		})
 		if err != nil {
-			exitErr("create page", err)
+			exitErr("errors", err)
 		}
-
-		// Start error collector before navigation so it catches everything
-		collector := engine.NewErrorCollector(page)
-
-		_, err = engine.Navigate(page, targetURL, "load")
-		if err != nil {
-			exitErr("navigate", err)
-		}
-
-		// Give a brief moment for late-arriving events
-		time.Sleep(500 * time.Millisecond)
-
-		allErrors := collector.Errors()
 
 		// Filter errors based on flags
 		var filtered []engine.ErrorEntry

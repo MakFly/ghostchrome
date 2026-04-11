@@ -33,13 +33,30 @@ if [ -z "$VERSION" ]; then
 fi
 
 URL="https://github.com/${REPO}/releases/download/${VERSION}/${BINARY}"
+CHECKSUMS_URL="https://github.com/${REPO}/releases/download/${VERSION}/checksums.txt"
 
 echo "Installing ghostchrome ${VERSION} (${OS}/${ARCH})..."
 
 # Download
 TMP=$(mktemp)
+SUMS=$(mktemp)
+trap 'rm -f "$TMP" "$SUMS"' EXIT
 curl -fsSL "$URL" -o "$TMP"
+curl -fsSL "$CHECKSUMS_URL" -o "$SUMS"
 chmod +x "$TMP"
+
+if command -v sha256sum >/dev/null 2>&1; then
+  EXPECTED=$(grep " ${BINARY}\$" "$SUMS" | awk '{print $1}')
+  [ -n "$EXPECTED" ] || { echo "Missing checksum for ${BINARY}" >&2; exit 1; }
+  printf '%s  %s\n' "$EXPECTED" "$TMP" | sha256sum -c -
+elif command -v shasum >/dev/null 2>&1; then
+  EXPECTED=$(grep " ${BINARY}\$" "$SUMS" | awk '{print $1}')
+  [ -n "$EXPECTED" ] || { echo "Missing checksum for ${BINARY}" >&2; exit 1; }
+  ACTUAL=$(shasum -a 256 "$TMP" | awk '{print $1}')
+  [ "$EXPECTED" = "$ACTUAL" ] || { echo "Checksum mismatch for ${BINARY}" >&2; exit 1; }
+else
+  echo "Warning: no SHA-256 verifier found, skipping checksum validation" >&2
+fi
 
 # Install
 if [ -w "$INSTALL_DIR" ]; then
@@ -50,4 +67,4 @@ else
 fi
 
 echo "ghostchrome ${VERSION} installed to ${INSTALL_DIR}/ghostchrome"
-ghostchrome --version
+"${INSTALL_DIR}/ghostchrome" --version

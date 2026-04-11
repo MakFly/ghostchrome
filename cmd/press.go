@@ -22,44 +22,28 @@ Examples:
 	Args: cobra.RangeArgs(1, 2),
 	Run: func(cmd *cobra.Command, args []string) {
 		key := args[0]
-
-		b, err := engine.NewBrowser(flagConnect, flagHeadless, flagTimeout)
-		if err != nil {
-			exitErr("browser", err)
+		targetURL := ""
+		if len(args) > 1 {
+			targetURL = args[1]
 		}
+
+		b, page := openPage()
 		defer b.Close()
 
-		page, err := b.Page()
-		if err != nil {
-			exitErr("page", err)
-		}
+		snapshot := ensureSnapshot(b, page, targetURL, "load", engine.LevelSkeleton)
 
-		// If URL provided, navigate first.
-		if len(args) > 1 {
-			applyStealthIfNeeded(page)
-			_, err := engine.Navigate(page, args[1], "load")
-			if err != nil {
-				exitErr("navigate", err)
-			}
-			dismissCookiesIfNeeded(page)
-		}
-
-		// Press the key.
-		err = engine.PressKey(page, key, flagPressOn)
+		err := engine.PressKey(page, key, flagPressOn, snapshot)
 		if err != nil {
+			exitIfStaleRef(err, "press")
 			exitErr("press", err)
 		}
 
-		// Extract skeleton after press.
-		result, err := engine.Extract(page, engine.LevelSkeleton, "")
-		if err != nil {
-			exitErr("extract after press", err)
-		}
+		result := snapshotPage(b, page, engine.LevelSkeleton)
 
 		type pressResult struct {
-			Action string                  `json:"action"`
-			Key    string                  `json:"key"`
-			On     string                  `json:"on,omitempty"`
+			Action string                   `json:"action"`
+			Key    string                   `json:"key"`
+			On     string                   `json:"on,omitempty"`
 			Result *engine.ExtractionResult `json:"result"`
 		}
 

@@ -1,8 +1,6 @@
 package cmd
 
 import (
-	"fmt"
-
 	"github.com/MakFly/ghostchrome/engine"
 	"github.com/spf13/cobra"
 )
@@ -30,37 +28,25 @@ Extraction levels:
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		level := engine.ExtractLevel(flagLevel)
-		switch level {
-		case engine.LevelSkeleton, engine.LevelContent, engine.LevelFull:
-			// valid
-		default:
-			exitErr("extract", fmt.Errorf("invalid level %q — use skeleton, content, or full", flagLevel))
+		if err := engine.ValidateExtractLevel(level); err != nil {
+			exitErr("extract", err)
 		}
 
-		b, err := engine.NewBrowser(flagConnect, flagHeadless, flagTimeout)
-		if err != nil {
-			exitErr("browser", err)
-		}
+		b, page := openPage()
 		defer b.Close()
 
-		page, err := b.Page()
-		if err != nil {
-			exitErr("page", err)
-		}
-
-		// If URL provided, apply stealth and navigate first
 		if len(args) > 0 {
-			applyStealthIfNeeded(page)
-			_, err := engine.Navigate(page, args[0], "load")
-			if err != nil {
-				exitErr("navigate", err)
-			}
-			dismissCookiesIfNeeded(page)
+			navigateIfRequested(page, args[0], "load")
 		}
 
 		result, err := engine.Extract(page, level, flagSelector)
 		if err != nil {
 			exitErr("extract", err)
+		}
+		if flagSelector == "" {
+			if err := b.SaveSnapshot(page, result); err != nil {
+				exitErr("snapshot", err)
+			}
 		}
 
 		text := engine.FormatText(result)

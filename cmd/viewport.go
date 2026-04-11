@@ -11,14 +11,14 @@ import (
 var flagDevice string
 
 var devicePresets = map[string][2]int{
-	"iphone-se":          {375, 667},
-	"iphone-14":          {390, 844},
-	"iphone-14-pro-max":  {430, 932},
-	"ipad":               {768, 1024},
-	"ipad-pro":           {1024, 1366},
-	"pixel-7":            {412, 915},
-	"desktop-hd":         {1920, 1080},
-	"desktop-2k":         {2560, 1440},
+	"iphone-se":         {375, 667},
+	"iphone-14":         {390, 844},
+	"iphone-14-pro-max": {430, 932},
+	"ipad":              {768, 1024},
+	"ipad-pro":          {1024, 1366},
+	"pixel-7":           {412, 915},
+	"desktop-hd":        {1920, 1080},
+	"desktop-2k":        {2560, 1440},
 }
 
 var viewportCmd = &cobra.Command{
@@ -71,18 +71,10 @@ Examples:
 			}
 		}
 
-		b, err := engine.NewBrowser(flagConnect, flagHeadless, flagTimeout)
-		if err != nil {
-			exitErr("browser", err)
-		}
+		b, page := openPage()
 		defer b.Close()
 
-		page, err := b.Page()
-		if err != nil {
-			exitErr("page", err)
-		}
-
-		err = engine.SetViewport(page, width, height)
+		err := engine.SetViewport(page, width, height)
 		if err != nil {
 			exitErr("viewport", err)
 		}
@@ -105,21 +97,9 @@ Examples:
 			label = fmt.Sprintf("Viewport set to %dx%d (%s)", width, height, deviceLabel)
 		}
 
-		// If URL provided, navigate and extract skeleton
 		if url != "" {
-			applyStealthIfNeeded(page)
-
-			_, err := engine.Navigate(page, url, "load")
-			if err != nil {
-				exitErr("navigate", err)
-			}
-
-			dismissCookiesIfNeeded(page)
-
-			result, err := engine.Extract(page, engine.LevelSkeleton, "")
-			if err != nil {
-				exitErr("extract", err)
-			}
+			navigateIfRequested(page, url, "load")
+			result := snapshotPage(b, page, engine.LevelSkeleton)
 			vr.Result = result
 			label += "\n" + engine.FormatText(result)
 		}

@@ -18,14 +18,11 @@ Examples:
   ghostchrome tabs --connect ws://127.0.0.1:9222`,
 	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		b, err := engine.NewBrowser(flagConnect, flagHeadless, flagTimeout)
-		if err != nil {
-			exitErr("browser", err)
-		}
+		b, _ := openPage()
 		defer b.Close()
 
 		browser := b.RawBrowser()
-		tabs, err := engine.ListTabs(browser)
+		tabs, err := engine.ListTabs(browser, b.CurrentTargetID())
 		if err != nil {
 			exitErr("list tabs", err)
 		}
@@ -36,7 +33,11 @@ Examples:
 
 		var text string
 		for i, t := range tabs {
-			text += fmt.Sprintf("[%d] %s — %s\n", i, t.Title, t.URL)
+			prefix := ""
+			if t.Active {
+				prefix = "*active* "
+			}
+			text += fmt.Sprintf("[%d] %s%s — %s\n", i, prefix, t.Title, t.URL)
 		}
 
 		output(&tabsResult{Tabs: tabs}, text)
@@ -57,15 +58,15 @@ Examples:
 			exitErr("parse index", err)
 		}
 
-		b, err := engine.NewBrowser(flagConnect, flagHeadless, flagTimeout)
-		if err != nil {
-			exitErr("browser", err)
-		}
+		b, _ := openPage()
 		defer b.Close()
 
 		browser := b.RawBrowser()
-		_, err = engine.SwitchTab(browser, idx)
+		page, err := engine.SwitchTab(browser, idx)
 		if err != nil {
+			exitErr("switch tab", err)
+		}
+		if err := b.SetCurrentPage(page); err != nil {
 			exitErr("switch tab", err)
 		}
 
@@ -93,15 +94,15 @@ Examples:
 			exitErr("parse index", err)
 		}
 
-		b, err := engine.NewBrowser(flagConnect, flagHeadless, flagTimeout)
-		if err != nil {
-			exitErr("browser", err)
-		}
+		b, _ := openPage()
 		defer b.Close()
 
 		browser := b.RawBrowser()
-		err = engine.CloseTab(browser, idx)
+		targetID, err := engine.CloseTab(browser, idx)
 		if err != nil {
+			exitErr("close tab", err)
+		}
+		if err := b.DeleteSnapshot(targetID); err != nil {
 			exitErr("close tab", err)
 		}
 

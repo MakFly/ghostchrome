@@ -8,7 +8,7 @@ import (
 )
 
 var (
-	flagWait      string
+	flagWait       string
 	flagNavExtract string
 )
 
@@ -25,33 +25,15 @@ Examples:
 	Run: func(cmd *cobra.Command, args []string) {
 		targetURL := args[0]
 
-		b, err := engine.NewBrowser(flagConnect, flagHeadless, flagTimeout)
-		if err != nil {
-			exitErr("browser launch", err)
-		}
+		b, page := openPage()
 		defer b.Close()
 
-		page, err := b.Page()
-		if err != nil {
-			exitErr("create page", err)
-		}
-
-		applyStealthIfNeeded(page)
-
-		info, err := engine.Navigate(page, targetURL, flagWait)
-		if err != nil {
-			exitErr("navigate", err)
-		}
-
-		dismissCookiesIfNeeded(page)
+		info := navigateIfRequested(page, targetURL, flagWait)
 
 		// If --extract is set, also extract DOM
 		if flagNavExtract != "" {
 			level := engine.ExtractLevel(flagNavExtract)
-			result, err := engine.Extract(page, level, "")
-			if err != nil {
-				exitErr("extract", err)
-			}
+			result := snapshotPage(b, page, level)
 			text := fmt.Sprintf("[%d] %s — %s (%dms)\n%s", info.Status, info.Title, info.URL, info.TimeMs, engine.FormatText(result))
 			type navigateExtractResult struct {
 				*engine.PageInfo
@@ -60,6 +42,8 @@ Examples:
 			output(&navigateExtractResult{info, result}, text)
 			return
 		}
+
+		_ = snapshotPage(b, page, engine.LevelSkeleton)
 
 		text := fmt.Sprintf("[%d] %s — %s (%dms)", info.Status, info.Title, info.URL, info.TimeMs)
 		output(info, text)

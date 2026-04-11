@@ -18,41 +18,27 @@ Examples:
 	Args: cobra.RangeArgs(1, 2),
 	Run: func(cmd *cobra.Command, args []string) {
 		ref := args[0]
-
-		b, err := engine.NewBrowser(flagConnect, flagHeadless, flagTimeout)
-		if err != nil {
-			exitErr("browser", err)
+		targetURL := ""
+		if len(args) > 1 {
+			targetURL = args[1]
 		}
+
+		b, page := openPage()
 		defer b.Close()
 
-		page, err := b.Page()
-		if err != nil {
-			exitErr("page", err)
-		}
+		snapshot := ensureSnapshot(b, page, targetURL, "load", engine.LevelSkeleton)
 
-		// If URL provided, navigate first.
-		if len(args) > 1 {
-			_, err := engine.Navigate(page, args[1], "load")
-			if err != nil {
-				exitErr("navigate", err)
-			}
-		}
-
-		// Click the ref.
-		err = engine.ClickRef(page, ref)
+		err := engine.ClickRef(page, ref, snapshot)
 		if err != nil {
+			exitIfStaleRef(err, "click")
 			exitErr("click", err)
 		}
 
-		// Extract skeleton after click.
-		result, err := engine.Extract(page, engine.LevelSkeleton, "")
-		if err != nil {
-			exitErr("extract after click", err)
-		}
+		result := snapshotPage(b, page, engine.LevelSkeleton)
 
 		type clickResult struct {
-			Action string                  `json:"action"`
-			Ref    string                  `json:"ref"`
+			Action string                   `json:"action"`
+			Ref    string                   `json:"ref"`
 			Result *engine.ExtractionResult `json:"result"`
 		}
 

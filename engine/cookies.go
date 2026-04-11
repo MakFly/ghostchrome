@@ -39,6 +39,19 @@ var cookieBannerSelectors = []string{
 // DismissCookieBanner attempts to find and click a cookie accept button.
 // Returns true if a banner was found and dismissed.
 func DismissCookieBanner(page *rod.Page) bool {
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if dismissCookieBannerOnce(page) {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+func dismissCookieBannerOnce(page *rod.Page) bool {
 	// Strategy 1: Find buttons by text content
 	for _, pattern := range cookieAcceptPatterns {
 		dismissed := tryClickByText(page, pattern)

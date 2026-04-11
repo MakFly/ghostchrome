@@ -12,16 +12,16 @@ import (
 
 // ErrorEntry represents a single console or network error.
 type ErrorEntry struct {
-	Type    string `json:"type"`               // "console" or "network"
-	Level   string `json:"level"`              // "error", "warning", "4xx", "5xx"
-	Message string `json:"message"`            // error message or URL
-	Source  string `json:"source"`             // file:line for console, URL for network
-	Status  int    `json:"status,omitempty"`   // HTTP status for network errors
-	Method  string `json:"method,omitempty"`   // HTTP method for network
-	TimeMs  int64  `json:"time_ms"`            // timestamp relative to collector start
+	Type    string `json:"type"`             // "console" or "network"
+	Level   string `json:"level"`            // "error", "warning", "4xx", "5xx"
+	Message string `json:"message"`          // error message or URL
+	Source  string `json:"source"`           // file:line for console, URL for network
+	Status  int    `json:"status,omitempty"` // HTTP status for network errors
+	Method  string `json:"method,omitempty"` // HTTP method for network
+	TimeMs  int64  `json:"time_ms"`          // timestamp relative to collector start
 }
 
-// ErrorCollector collects console and network errors from a page via CDP events.
+// ErrorCollector collects console-side errors from a page via CDP events.
 type ErrorCollector struct {
 	mu      sync.Mutex
 	errors  []ErrorEntry
@@ -29,7 +29,7 @@ type ErrorCollector struct {
 }
 
 // NewErrorCollector creates a collector and starts listening on the page.
-// It hooks into RuntimeConsoleAPICalled, RuntimeExceptionThrown, and NetworkResponseReceived.
+// It hooks into RuntimeConsoleAPICalled and RuntimeExceptionThrown.
 func NewErrorCollector(page *rod.Page) *ErrorCollector {
 	c := &ErrorCollector{
 		startAt: time.Now(),
@@ -105,39 +105,30 @@ func NewErrorCollector(page *rod.Page) *ErrorCollector {
 			})
 			c.mu.Unlock()
 		},
-		func(e *proto.NetworkResponseReceived) {
-			status := e.Response.Status
-			if status < 400 {
-				return
-			}
-
-			level := "4xx"
-			if status >= 500 {
-				level = "5xx"
-			}
-
-			// Try to get the HTTP method from the request
-			method := ""
-			if e.Response.RequestHeaders != nil {
-				// Method is on the request, not the response headers.
-				// We approximate via the resource type or leave empty.
-			}
-
-			c.mu.Lock()
-			c.errors = append(c.errors, ErrorEntry{
-				Type:    "network",
-				Level:   level,
-				Message: e.Response.URL,
-				Source:  e.Response.URL,
-				Status:  status,
-				Method:  method,
-				TimeMs:  time.Since(c.startAt).Milliseconds(),
-			})
-			c.mu.Unlock()
-		},
 	)()
 
 	return c
+}
+
+// CollectErrors navigates if needed and returns console plus network errors.
+func CollectErrors(page *rod.Page, url string, waitStrategy string, afterNavigate func(*rod.Page) error) ([]ErrorEntry, error) {
+	consoleCollector := NewErrorCollector(page)
+	requestTracker := newRequestTracker(page)
+	requestTracker.listen(page)
+
+	if url != "" {
+		if _, err := Navigate(page, url, waitStrategy); err != nil {
+			return nil, err
+		}
+		if afterNavigate != nil {
+			if err := afterNavigate(page); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	errors := append(consoleCollector.Errors(), requestTracker.ErrorEntries()...)
+	return errors, nil
 }
 
 // Errors returns all collected errors (snapshot).

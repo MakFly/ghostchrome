@@ -19,42 +19,28 @@ Examples:
 	Run: func(cmd *cobra.Command, args []string) {
 		ref := args[0]
 		text := args[1]
-
-		b, err := engine.NewBrowser(flagConnect, flagHeadless, flagTimeout)
-		if err != nil {
-			exitErr("browser", err)
+		targetURL := ""
+		if len(args) > 2 {
+			targetURL = args[2]
 		}
+
+		b, page := openPage()
 		defer b.Close()
 
-		page, err := b.Page()
-		if err != nil {
-			exitErr("page", err)
-		}
+		snapshot := ensureSnapshot(b, page, targetURL, "load", engine.LevelSkeleton)
 
-		// If URL provided, navigate first.
-		if len(args) > 2 {
-			_, err := engine.Navigate(page, args[2], "load")
-			if err != nil {
-				exitErr("navigate", err)
-			}
-		}
-
-		// Type into the ref.
-		err = engine.TypeRef(page, ref, text)
+		err := engine.TypeRef(page, ref, text, snapshot)
 		if err != nil {
+			exitIfStaleRef(err, "type")
 			exitErr("type", err)
 		}
 
-		// Extract skeleton after type.
-		result, err := engine.Extract(page, engine.LevelSkeleton, "")
-		if err != nil {
-			exitErr("extract after type", err)
-		}
+		result := snapshotPage(b, page, engine.LevelSkeleton)
 
 		type typeResult struct {
-			Action string                  `json:"action"`
-			Ref    string                  `json:"ref"`
-			Text   string                  `json:"text"`
+			Action string                   `json:"action"`
+			Ref    string                   `json:"ref"`
+			Text   string                   `json:"text"`
 			Result *engine.ExtractionResult `json:"result"`
 		}
 
