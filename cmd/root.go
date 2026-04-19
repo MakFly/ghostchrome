@@ -14,6 +14,8 @@ var (
 	flagFormat         string
 	flagStealth        bool
 	flagDismissCookies bool
+	flagWaitSelector   string
+	flagWaitMs         int
 )
 
 var rootCmd = &cobra.Command{
@@ -41,6 +43,8 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&flagFormat, "format", "text", "Output format: json or text")
 	rootCmd.PersistentFlags().BoolVar(&flagStealth, "stealth", false, "Enable stealth mode (hide headless fingerprints)")
 	rootCmd.PersistentFlags().BoolVar(&flagDismissCookies, "dismiss-cookies", false, "Auto-dismiss cookie consent banners")
+	rootCmd.PersistentFlags().StringVar(&flagWaitSelector, "wait-selector", "", "After navigation, wait for this CSS selector to be visible (useful for SPAs)")
+	rootCmd.PersistentFlags().IntVar(&flagWaitMs, "wait-ms", 0, "After navigation (and after --wait-selector if any), sleep this many ms (lets late XHR finish)")
 }
 
 func SetVersion(v string) {

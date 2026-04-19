@@ -364,6 +364,12 @@ func isBotChallenge(page *rod.Page) bool {
 		return true
 	}
 
+	// "Just a moment..." / "Attention Required! | Cloudflare" → CF interstitial.
+	if strings.Contains(info.Title, "Just a moment") ||
+		strings.Contains(info.Title, "Attention Required") {
+		return true
+	}
+
 	html, err := page.HTML()
 	if err != nil {
 		return false
@@ -375,6 +381,9 @@ func isBotChallenge(page *rod.Page) bool {
 		"geo.captcha-delivery.com",
 		"cdn-cgi/challenge-platform",
 		"challenges.cloudflare.com",
+		"cf-turnstile",
+		"_cf-chl-opt",
+		"window._cf_chl_opt",
 	}
 
 	for _, marker := range challengeMarkers {

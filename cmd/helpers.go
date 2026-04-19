@@ -50,6 +50,7 @@ func navigateIfRequested(page *rod.Page, targetURL string, waitStrategy string) 
 	}
 	waitForChallengeIfStealth(page, info)
 	dismissCookiesIfNeeded(page)
+	waitForSelectorOrSleep(page)
 	return info
 }
 
@@ -57,9 +58,25 @@ func waitForChallengeIfStealth(page *rod.Page, info *engine.PageInfo) {
 	if !flagStealth || info == nil {
 		return
 	}
-	// Only attempt challenge wait on 403 responses (common for DataDome)
-	if info.Status == 403 {
-		engine.WaitForBotChallenge(page, 10*time.Second)
+	// 403 is the classic DataDome signal; 503 is Cloudflare's challenge code.
+	if info.Status == 403 || info.Status == 503 {
+		engine.WaitForBotChallenge(page, 30*time.Second)
+	}
+}
+
+// waitForSelectorOrSleep applies --wait-selector then --wait-ms, in that
+// order. Both are no-ops when their flag is empty/zero. The selector wait
+// is bounded by --timeout (default 30s).
+func waitForSelectorOrSleep(page *rod.Page) {
+	if flagWaitSelector != "" {
+		scoped := page.Timeout(time.Duration(flagTimeout) * time.Second)
+		el, err := scoped.Element(flagWaitSelector)
+		if err == nil && el != nil {
+			_ = el.WaitVisible()
+		}
+	}
+	if flagWaitMs > 0 {
+		time.Sleep(time.Duration(flagWaitMs) * time.Millisecond)
 	}
 }
 
