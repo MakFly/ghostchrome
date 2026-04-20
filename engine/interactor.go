@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -78,6 +79,49 @@ func ClickRef(page *rod.Page, ref string, snapshot *PageSnapshot) error {
 	// Wait for page to stabilize after click.
 	_ = page.WaitStable(500 * time.Millisecond)
 
+	return nil
+}
+
+// UploadRef sets the files on a file-input element.
+//
+// The target can be identified either by:
+//   - ref: a @N reference from the current snapshot (works when the input is
+//     a native, visible <input type=file>).
+//   - selector: a CSS selector (use this when the visible widget is a styled
+//     button wrapping a hidden input — common pattern).
+//
+// Exactly one of ref or selector must be non-empty.
+func UploadRef(page *rod.Page, ref string, selector string, files []string, snapshot *PageSnapshot) error {
+	if len(files) == 0 {
+		return fmt.Errorf("upload: need at least one file path")
+	}
+	for _, p := range files {
+		if _, err := os.Stat(p); err != nil {
+			return fmt.Errorf("upload: file %q: %w", p, err)
+		}
+	}
+
+	var el *rod.Element
+	var err error
+	switch {
+	case selector != "":
+		el, err = page.Element(selector)
+		if err != nil {
+			return fmt.Errorf("selector %q: %w", selector, err)
+		}
+	case ref != "":
+		el, err = ResolveRef(page, ref, snapshot)
+		if err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("upload: need either a ref or --selector")
+	}
+
+	if err := el.SetFiles(files); err != nil {
+		return fmt.Errorf("set files: %w", err)
+	}
+	_ = page.WaitStable(300 * time.Millisecond)
 	return nil
 }
 
