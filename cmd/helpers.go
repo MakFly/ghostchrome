@@ -131,3 +131,7 @@ func exitIfStaleRef(err error, action string) {
 func errInvalidArg(name, got, allowed string) error {
 	return fmt.Errorf("invalid %s %q: use %s", name, got, allowed)
 }
+
+func errNeedRefOrLocator() error {
+	return fmt.Errorf("need a @ref or one of --by-role / --by-name / --by-label / --by-text")
+}

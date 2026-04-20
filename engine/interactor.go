@@ -64,21 +64,19 @@ func ClickRef(page *rod.Page, ref string, snapshot *PageSnapshot) error {
 	if err != nil {
 		return err
 	}
+	return ClickElement(page, el)
+}
 
-	// Scroll into view and click.
-	err = el.ScrollIntoView()
-	if err != nil {
+// ClickElement performs a click on an already-resolved element (used by the
+// locator path so the same scroll+click+wait logic is shared).
+func ClickElement(page *rod.Page, el *rod.Element) error {
+	if err := el.ScrollIntoView(); err != nil {
 		return fmt.Errorf("scroll into view: %w", err)
 	}
-
-	err = el.Click(proto.InputMouseButtonLeft, 1)
-	if err != nil {
+	if err := el.Click(proto.InputMouseButtonLeft, 1); err != nil {
 		return fmt.Errorf("click: %w", err)
 	}
-
-	// Wait for page to stabilize after click.
 	_ = page.WaitStable(500 * time.Millisecond)
-
 	return nil
 }
 
@@ -192,30 +190,21 @@ func TypeRef(page *rod.Page, ref string, text string, snapshot *PageSnapshot) er
 	if err != nil {
 		return err
 	}
+	return TypeElement(page, el, text)
+}
 
-	// Focus the element first
-	err = el.Focus()
-	if err != nil {
+// TypeElement writes text into an already-resolved element.
+func TypeElement(page *rod.Page, el *rod.Element, text string) error {
+	if err := el.Focus(); err != nil {
 		return fmt.Errorf("focus: %w", err)
 	}
-
-	// Triple-click to select all existing text; empty fields return an error we can ignore.
 	_ = el.Click(proto.InputMouseButtonLeft, 3)
-
-	// Small delay for React to process the click
 	time.Sleep(50 * time.Millisecond)
-
-	// InsertText dispatches InputEvent which React/Vue/Angular listen to
 	_ = el.SelectAllText()
-
-	err = page.InsertText(text)
-	if err != nil {
+	if err := page.InsertText(text); err != nil {
 		return fmt.Errorf("type text: %w", err)
 	}
-
-	// Trigger blur to finalize (some forms validate on blur)
 	_ = el.Blur()
-
 	return nil
 }
 
@@ -341,12 +330,15 @@ func HoverRef(page *rod.Page, ref string, snapshot *PageSnapshot) error {
 	if err != nil {
 		return err
 	}
-	err = el.ScrollIntoView()
-	if err != nil {
+	return HoverElement(page, el)
+}
+
+// HoverElement hovers on an already-resolved element.
+func HoverElement(page *rod.Page, el *rod.Element) error {
+	if err := el.ScrollIntoView(); err != nil {
 		return fmt.Errorf("scroll: %w", err)
 	}
-	err = el.Hover()
-	if err != nil {
+	if err := el.Hover(); err != nil {
 		return fmt.Errorf("hover: %w", err)
 	}
 	_ = page.WaitStable(300 * time.Millisecond)
