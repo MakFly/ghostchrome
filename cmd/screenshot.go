@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/MakFly/ghostchrome/engine"
@@ -54,11 +55,15 @@ Examples:
 			if flagQuality > 0 && flagElement == "" {
 				ext = "jpg"
 			}
-			outPath = fmt.Sprintf("/tmp/ghostchrome-screenshot-%d.%s", time.Now().UnixMilli(), ext)
+			dir, err := defaultScreenshotDir()
+			if err != nil {
+				exitErr("screenshot dir", err)
+			}
+			outPath = filepath.Join(dir, fmt.Sprintf("ghostchrome-screenshot-%d.%s", time.Now().UnixMilli(), ext))
 		}
 
-		// Write file.
-		err = os.WriteFile(outPath, data, 0644)
+		// Write file with owner-only permissions (may contain sensitive page content).
+		err = os.WriteFile(outPath, data, 0o600)
 		if err != nil {
 			exitErr("write screenshot", err)
 		}
@@ -78,10 +83,22 @@ Examples:
 	},
 }
 
+func defaultScreenshotDir() (string, error) {
+	base, err := os.UserCacheDir()
+	if err != nil {
+		base = os.TempDir()
+	}
+	dir := filepath.Join(base, "ghostchrome", "screenshots")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
 func init() {
 	screenshotCmd.Flags().BoolVar(&flagFull, "full", false, "Capture full scrollable page")
 	screenshotCmd.Flags().StringVar(&flagElement, "element", "", "Capture specific element by @ref")
 	screenshotCmd.Flags().IntVar(&flagQuality, "quality", 80, "JPEG quality 1-100 (PNG if <= 0)")
-	screenshotCmd.Flags().StringVar(&flagOutputPath, "output", "", "Output file path (default: /tmp/ghostchrome-screenshot-<timestamp>.png)")
+	screenshotCmd.Flags().StringVar(&flagOutputPath, "output", "", "Output file path (default: $XDG_CACHE_HOME/ghostchrome/screenshots/*.png)")
 	rootCmd.AddCommand(screenshotCmd)
 }

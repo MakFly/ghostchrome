@@ -4,8 +4,42 @@ import (
 	"fmt"
 
 	"github.com/MakFly/ghostchrome/engine"
+	"github.com/go-rod/rod"
 	"github.com/spf13/cobra"
 )
+
+type navResult struct {
+	Action string `json:"action"`
+	URL    string `json:"url"`
+	Title  string `json:"title"`
+}
+
+func runHistoryStep(action string, step func(*rod.Page) error) {
+	b, page := openPage()
+	defer b.Close()
+
+	if err := step(page); err != nil {
+		exitErr(action, err)
+	}
+
+	if err := engine.WaitForPage(page, "stable"); err != nil {
+		exitErr(action, err)
+	}
+
+	info, err := page.Info()
+	if err != nil {
+		exitErr("page info", err)
+	}
+
+	_ = snapshotPage(b, page, engine.LevelSkeleton)
+
+	text := fmt.Sprintf("[%s] %s — %s", action, info.Title, info.URL)
+	output(&navResult{
+		Action: action,
+		URL:    info.URL,
+		Title:  info.Title,
+	}, text)
+}
 
 var backCmd = &cobra.Command{
 	Use:   "back",
@@ -17,37 +51,7 @@ Examples:
   ghostchrome back --connect ws://127.0.0.1:9222`,
 	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		b, page := openPage()
-		defer b.Close()
-
-		err := page.NavigateBack()
-		if err != nil {
-			exitErr("back", err)
-		}
-
-		if err := engine.WaitForPage(page, "stable"); err != nil {
-			exitErr("back", err)
-		}
-
-		info, err := page.Info()
-		if err != nil {
-			exitErr("page info", err)
-		}
-
-		_ = snapshotPage(b, page, engine.LevelSkeleton)
-
-		type navResult struct {
-			Action string `json:"action"`
-			URL    string `json:"url"`
-			Title  string `json:"title"`
-		}
-
-		text := fmt.Sprintf("[back] %s — %s", info.Title, info.URL)
-		output(&navResult{
-			Action: "back",
-			URL:    info.URL,
-			Title:  info.Title,
-		}, text)
+		runHistoryStep("back", (*rod.Page).NavigateBack)
 	},
 }
 
@@ -61,37 +65,7 @@ Examples:
   ghostchrome forward --connect ws://127.0.0.1:9222`,
 	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		b, page := openPage()
-		defer b.Close()
-
-		err := page.NavigateForward()
-		if err != nil {
-			exitErr("forward", err)
-		}
-
-		if err := engine.WaitForPage(page, "stable"); err != nil {
-			exitErr("forward", err)
-		}
-
-		info, err := page.Info()
-		if err != nil {
-			exitErr("page info", err)
-		}
-
-		_ = snapshotPage(b, page, engine.LevelSkeleton)
-
-		type navResult struct {
-			Action string `json:"action"`
-			URL    string `json:"url"`
-			Title  string `json:"title"`
-		}
-
-		text := fmt.Sprintf("[forward] %s — %s", info.Title, info.URL)
-		output(&navResult{
-			Action: "forward",
-			URL:    info.URL,
-			Title:  info.Title,
-		}, text)
+		runHistoryStep("forward", (*rod.Page).NavigateForward)
 	},
 }
 

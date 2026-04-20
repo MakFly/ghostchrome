@@ -53,18 +53,23 @@ Examples:
 
 			switch flagErrLevel {
 			case "error":
-				// Only console errors, uncaught exceptions, 5xx
+				// Only console errors, uncaught exceptions, 5xx and failed requests
 				if e.Type == "console" && e.Level != "error" {
 					continue
 				}
-				if e.Type == "network" && e.Level != "5xx" {
+				if e.Type == "network" && e.Level != "5xx" && e.Level != "error" {
 					continue
 				}
 			case "warning":
-				// errors + warnings + 4xx
-				// everything passes except nothing to exclude at this level
+				// Only soft issues: console warnings + 4xx (exclude errors and 5xx)
+				if e.Type == "console" && e.Level != "warning" {
+					continue
+				}
+				if e.Type == "network" && e.Level != "4xx" {
+					continue
+				}
 			case "all":
-				// everything
+				// everything passes
 			}
 
 			filtered = append(filtered, e)
@@ -89,7 +94,7 @@ Examples:
 }
 
 func init() {
-	errorsCmd.Flags().StringVar(&flagErrLevel, "level", "error", "Filter level: error, warning, all")
+	errorsCmd.Flags().StringVar(&flagErrLevel, "level", "error", "Filter level: error (errors + 5xx), warning (warnings + 4xx only), all")
 	errorsCmd.Flags().BoolVar(&flagErrWithNetwork, "with-network", true, "Include network errors (4xx/5xx)")
 	rootCmd.AddCommand(errorsCmd)
 }

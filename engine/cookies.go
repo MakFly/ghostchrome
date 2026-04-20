@@ -68,6 +68,10 @@ func dismissCookieBannerOnce(page *rod.Page) bool {
 			continue
 		}
 		for _, el := range elements {
+			visible, _ := el.Visible()
+			if !visible {
+				continue
+			}
 			text, _ := el.Text()
 			textLower := strings.ToLower(strings.TrimSpace(text))
 			for _, pattern := range cookieAcceptPatterns {

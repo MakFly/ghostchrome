@@ -39,7 +39,8 @@ func sessionStatePath(connectURL string) (string, error) {
 
 	hash := sha1.Sum([]byte(connectURL))
 	dir := filepath.Join(cacheDir, "ghostchrome", "sessions")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	// 0o700: snapshots may reference URLs with tokens — keep owner-only.
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
 
@@ -77,7 +78,7 @@ func saveSessionState(path string, state *sessionState) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	return os.WriteFile(path, data, 0o600)
 }
 
 func snapshotFromResult(page *rod.Page, result *ExtractionResult) (*PageSnapshot, error) {

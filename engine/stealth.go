@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -9,13 +11,125 @@ import (
 	"github.com/ysmood/gson"
 )
 
-const chromeVersion = "146"
-const chromeFull = "146.0.7680.177"
-const userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" + chromeFull + " Safari/537.36"
+// Fallback values used if runtime detection fails.
+const (
+	fallbackChromeVersion = "146"
+	fallbackChromeFull    = "146.0.7680.177"
+)
+
+// stealthProfile holds the values interpolated into the stealth script and CDP overrides.
+type stealthProfile struct {
+	chromeMajor    string // e.g. "146"
+	chromeFull     string // e.g. "146.0.7680.177"
+	userAgent      string
+	acceptLanguage string   // e.g. "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7"
+	navLanguages   []string // e.g. ["fr-FR", "fr", "en-US", "en"]
+	primaryLang    string   // e.g. "fr-FR"
+}
+
+func newStealthProfile(page *rod.Page) stealthProfile {
+	major, full := detectChromeVersion(page)
+	ua := fmt.Sprintf(
+		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/%s Safari/537.36",
+		full,
+	)
+	primary, navLangs, acceptLang := detectLocale()
+	return stealthProfile{
+		chromeMajor:    major,
+		chromeFull:     full,
+		userAgent:      ua,
+		acceptLanguage: acceptLang,
+		navLanguages:   navLangs,
+		primaryLang:    primary,
+	}
+}
+
+// detectChromeVersion queries the connected Chrome for its version. Falls back
+// to package constants if the query fails.
+func detectChromeVersion(page *rod.Page) (major, full string) {
+	if page == nil {
+		return fallbackChromeVersion, fallbackChromeFull
+	}
+	v, err := page.Browser().Version()
+	if err != nil || v == nil || v.Product == "" {
+		return fallbackChromeVersion, fallbackChromeFull
+	}
+	// v.Product looks like "HeadlessChrome/146.0.7680.177" or "Chrome/146.0.7680.177".
+	_, rest, ok := strings.Cut(v.Product, "/")
+	if !ok || rest == "" {
+		return fallbackChromeVersion, fallbackChromeFull
+	}
+	full = rest
+	if dot := strings.IndexByte(full, '.'); dot > 0 {
+		major = full[:dot]
+	} else {
+		major = full
+	}
+	return major, full
+}
+
+// detectLocale derives navigator.languages + Accept-Language from LANG / LC_ALL.
+// Falls back to en-US/en when nothing is set (safer default than fr-FR for CI).
+func detectLocale() (primary string, navLangs []string, acceptLang string) {
+	raw := firstNonEmpty(os.Getenv("LC_ALL"), os.Getenv("LANG"), "en_US.UTF-8")
+	// Trim encoding suffix, e.g. "fr_FR.UTF-8" → "fr_FR"
+	if idx := strings.IndexByte(raw, '.'); idx > 0 {
+		raw = raw[:idx]
+	}
+	raw = strings.ReplaceAll(raw, "_", "-")
+	if raw == "" || raw == "C" || raw == "POSIX" {
+		raw = "en-US"
+	}
+	primary = raw
+	base := raw
+	if idx := strings.IndexByte(raw, '-'); idx > 0 {
+		base = raw[:idx]
+	}
+	navLangs = []string{primary, base, "en-US", "en"}
+	navLangs = dedupeStrings(navLangs)
+	acceptLang = fmt.Sprintf("%s,%s;q=0.9,en-US;q=0.8,en;q=0.7", primary, base)
+	return primary, navLangs, acceptLang
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func dedupeStrings(in []string) []string {
+	seen := make(map[string]bool, len(in))
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	return out
+}
+
+// jsStringList formats a Go []string as a JavaScript array literal of single-quoted strings.
+func jsStringList(items []string) string {
+	parts := make([]string, 0, len(items))
+	for _, s := range items {
+		parts = append(parts, "'"+strings.ReplaceAll(s, "'", "\\'")+"'")
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}
 
 // ApplyStealth applies anti-detection patches to a page via CDP.
 // Targets DataDome, Akamai, and similar bot-detection systems.
 func ApplyStealth(page *rod.Page) error {
+	profile := newStealthProfile(page)
+	return applyStealthWithProfile(page, profile)
+}
+
+func applyStealthWithProfile(page *rod.Page, profile stealthProfile) error {
 	// 1. Disable automation flag at the C++ level (prevents navigator.webdriver = true)
 	_ = proto.EmulationSetAutomationOverride{Enabled: true}.Call(page)
 
@@ -51,9 +165,13 @@ func ApplyStealth(page *rod.Page) error {
 		cleanObj(document);
 		cleanObj(window);
 
-		// Periodic cleanup (catches late CDP injections)
-		const timer = setInterval(() => { cleanObj(document); cleanObj(window); }, 50);
-		setTimeout(() => clearInterval(timer), 5000);
+		// Reactive cleanup via MutationObserver — no leaked timers on SPA navigations.
+		try {
+			const observer = new MutationObserver(() => { cleanObj(document); cleanObj(window); });
+			observer.observe(document, { childList: true, subtree: true, attributes: false });
+			// Safety net: stop observing after 10s, by then any late CDP injection has fired.
+			setTimeout(() => { try { observer.disconnect(); } catch(e) {} }, 10000);
+		} catch(e) {}
 	})();
 
 	// --- webdriver ---
@@ -158,8 +276,8 @@ func ApplyStealth(page *rod.Page) error {
 	});
 
 	// --- languages ---
-	Object.defineProperty(navigator, 'languages', { get: () => ['fr-FR', 'fr', 'en-US', 'en'] });
-	Object.defineProperty(navigator, 'language', { get: () => 'fr-FR' });
+	Object.defineProperty(navigator, 'languages', { get: () => __NAV_LANGUAGES__ });
+	Object.defineProperty(navigator, 'language', { get: () => '__PRIMARY_LANG__' });
 
 	// --- platform ---
 	Object.defineProperty(navigator, 'platform', { get: () => 'MacIntel' });
@@ -265,6 +383,10 @@ func ApplyStealth(page *rod.Page) error {
 	};
 	`
 
+	// Template runtime values into the script.
+	script = strings.ReplaceAll(script, "__NAV_LANGUAGES__", jsStringList(profile.navLanguages))
+	script = strings.ReplaceAll(script, "__PRIMARY_LANG__", profile.primaryLang)
+
 	_, err := page.EvalOnNewDocument(script)
 	if err != nil {
 		return err
@@ -272,21 +394,21 @@ func ApplyStealth(page *rod.Page) error {
 
 	// Set realistic user-agent + Client Hints (critical for DataDome)
 	err = proto.NetworkSetUserAgentOverride{
-		UserAgent:      userAgent,
-		AcceptLanguage: "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
+		UserAgent:      profile.userAgent,
+		AcceptLanguage: profile.acceptLanguage,
 		Platform:       "MacIntel",
 		UserAgentMetadata: &proto.EmulationUserAgentMetadata{
 			Brands: []*proto.EmulationUserAgentBrandVersion{
-				{Brand: "Chromium", Version: chromeVersion},
-				{Brand: "Google Chrome", Version: chromeVersion},
+				{Brand: "Chromium", Version: profile.chromeMajor},
+				{Brand: "Google Chrome", Version: profile.chromeMajor},
 				{Brand: "Not?A_Brand", Version: "99"},
 			},
 			FullVersionList: []*proto.EmulationUserAgentBrandVersion{
-				{Brand: "Chromium", Version: chromeFull},
-				{Brand: "Google Chrome", Version: chromeFull},
+				{Brand: "Chromium", Version: profile.chromeFull},
+				{Brand: "Google Chrome", Version: profile.chromeFull},
 				{Brand: "Not?A_Brand", Version: "99.0.0.0"},
 			},
-			FullVersion:     chromeFull,
+			FullVersion:     profile.chromeFull,
 			Platform:        "macOS",
 			PlatformVersion: "15.3.0",
 			Architecture:    "arm",
@@ -301,9 +423,10 @@ func ApplyStealth(page *rod.Page) error {
 	}
 
 	// Set extra HTTP headers to match real Chrome
+	secChUA := fmt.Sprintf(`"Chromium";v="%s", "Google Chrome";v="%s", "Not?A_Brand";v="99"`, profile.chromeMajor, profile.chromeMajor)
 	err = proto.NetworkSetExtraHTTPHeaders{
 		Headers: proto.NetworkHeaders{
-			"Sec-CH-UA":                 gson.New(`"Chromium";v="` + chromeVersion + `", "Google Chrome";v="` + chromeVersion + `", "Not?A_Brand";v="99"`),
+			"Sec-CH-UA":                 gson.New(secChUA),
 			"Sec-CH-UA-Mobile":          gson.New("?0"),
 			"Sec-CH-UA-Platform":        gson.New(`"macOS"`),
 			"Upgrade-Insecure-Requests": gson.New("1"),

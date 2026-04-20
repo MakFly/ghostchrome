@@ -21,7 +21,7 @@ Examples:
 		b, _ := openPage()
 		defer b.Close()
 
-		browser := b.RawBrowser()
+		browser := b.RodBrowser()
 		tabs, err := engine.ListTabs(browser, b.CurrentTargetID())
 		if err != nil {
 			exitErr("list tabs", err)
@@ -61,7 +61,7 @@ Examples:
 		b, _ := openPage()
 		defer b.Close()
 
-		browser := b.RawBrowser()
+		browser := b.RodBrowser()
 		page, err := engine.SwitchTab(browser, idx)
 		if err != nil {
 			exitErr("switch tab", err)
@@ -97,7 +97,7 @@ Examples:
 		b, _ := openPage()
 		defer b.Close()
 
-		browser := b.RawBrowser()
+		browser := b.RodBrowser()
 		targetID, err := engine.CloseTab(browser, idx)
 		if err != nil {
 			exitErr("close tab", err)

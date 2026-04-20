@@ -7,7 +7,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var flagCollectLimit int
+var (
+	flagCollectLimit    int
+	flagCollectParallel int
+)
 
 var collectCmd = &cobra.Command{
 	Use:   "collect <url> [url2] [url3...]",
@@ -65,7 +68,7 @@ func runMultiCollect(urls []string) {
 		exitErr("collect", errors.New("no browser available"))
 	}
 
-	result := engine.MultiCollect(rodBrowser, urls, flagCollectLimit, flagStealth)
+	result := engine.MultiCollect(rodBrowser, urls, flagCollectLimit, flagStealth, flagCollectParallel)
 
 	text := engine.FormatMultiCollect(result)
 	output(result, text)
@@ -73,5 +76,6 @@ func runMultiCollect(urls []string) {
 
 func init() {
 	collectCmd.Flags().IntVar(&flagCollectLimit, "limit", 50, "Maximum number of items to collect per site")
+	collectCmd.Flags().IntVar(&flagCollectParallel, "parallel", 5, "Maximum number of tabs opened concurrently in multi-URL mode")
 	rootCmd.AddCommand(collectCmd)
 }

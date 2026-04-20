@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/MakFly/ghostchrome/engine"
@@ -71,8 +72,10 @@ func waitForSelectorOrSleep(page *rod.Page) {
 	if flagWaitSelector != "" {
 		scoped := page.Timeout(time.Duration(flagTimeout) * time.Second)
 		el, err := scoped.Element(flagWaitSelector)
-		if err == nil && el != nil {
-			_ = el.WaitVisible()
+		if err != nil || el == nil {
+			fmt.Fprintf(os.Stderr, "wait-selector %q not found: %v\n", flagWaitSelector, err)
+		} else if err := el.WaitVisible(); err != nil {
+			fmt.Fprintf(os.Stderr, "wait-selector %q never became visible: %v\n", flagWaitSelector, err)
 		}
 	}
 	if flagWaitMs > 0 {

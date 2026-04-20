@@ -8,6 +8,27 @@ import (
 	"github.com/go-rod/rod/lib/proto"
 )
 
+// LauncherOpts configures a stealth-flavored Chrome launcher.
+type LauncherOpts struct {
+	Headless   bool
+	RemotePort int // 0 = random
+}
+
+// NewLauncher returns a configured launcher with the shared anti-detection
+// flags used by both auto-launch (NewBrowser) and the `serve` command.
+func NewLauncher(opts LauncherOpts) *launcher.Launcher {
+	l := launcher.New().
+		Headless(false).
+		HeadlessNew(opts.Headless).
+		Set("disable-blink-features", "AutomationControlled").
+		Set("window-size", "1920,1080").
+		Delete("enable-automation")
+	if opts.RemotePort > 0 {
+		l = l.RemoteDebuggingPort(opts.RemotePort)
+	}
+	return l
+}
+
 // Browser wraps a Rod browser with connect/launch logic.
 type Browser struct {
 	browser    *rod.Browser
@@ -43,14 +64,7 @@ func NewBrowser(connectURL string, headless bool, timeoutSec int) (*Browser, err
 			return nil, err
 		}
 	} else {
-		l := launcher.New().
-			Headless(false).
-			HeadlessNew(headless).
-			// Anti-detection flags
-			Set("disable-blink-features", "AutomationControlled").
-			Set("window-size", "1920,1080").
-			Delete("enable-automation")
-		u, err := l.Launch()
+		u, err := NewLauncher(LauncherOpts{Headless: headless}).Launch()
 		if err != nil {
 			return nil, err
 		}

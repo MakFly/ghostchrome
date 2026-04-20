@@ -276,15 +276,26 @@ type MultiCollectResult struct {
 
 // MultiCollect scrapes multiple URLs in parallel using separate browser tabs.
 // Each URL gets its own tab, navigates, collects, and closes.
-func MultiCollect(browser *rod.Browser, urls []string, limit int, stealth bool) *MultiCollectResult {
+// maxParallel caps the number of concurrent tabs; <= 0 falls back to 5.
+func MultiCollect(browser *rod.Browser, urls []string, limit int, stealth bool, maxParallel int) *MultiCollectResult {
 	start := time.Now()
 	results := make([]SiteResult, len(urls))
 	var wg sync.WaitGroup
+
+	if maxParallel <= 0 {
+		maxParallel = 5
+	}
+	if maxParallel > len(urls) {
+		maxParallel = len(urls)
+	}
+	sem := make(chan struct{}, maxParallel)
 
 	for i, u := range urls {
 		wg.Add(1)
 		go func(idx int, targetURL string) {
 			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 			siteStart := time.Now()
 
 			// Open a new tab
@@ -372,11 +383,5 @@ func FormatMultiCollect(r *MultiCollectResult) string {
 }
 
 func truncateCollectURL(u string) string {
-	u = strings.TrimPrefix(u, "https://www.")
-	u = strings.TrimPrefix(u, "https://")
-	u = strings.TrimPrefix(u, "http://")
-	if len(u) > 60 {
-		return u[:57] + "..."
-	}
-	return u
+	return TruncateURL(u, 60)
 }

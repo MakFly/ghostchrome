@@ -8,7 +8,6 @@ import (
 
 	"github.com/MakFly/ghostchrome/engine"
 	"github.com/go-rod/rod"
-	"github.com/go-rod/rod/lib/launcher"
 	"github.com/go-rod/rod/lib/proto"
 	"github.com/spf13/cobra"
 )
@@ -31,33 +30,17 @@ Then in another terminal:
   ghostchrome collect https://... --connect ws://127.0.0.1:9222/...
   ghostchrome preview https://... --connect ws://127.0.0.1:9222/...`,
 	Run: func(cmd *cobra.Command, args []string) {
-		l := launcher.New().
-			Headless(false).
-			HeadlessNew(flagHeadless).
-			Set("disable-blink-features", "AutomationControlled").
-			Set("window-size", "1920,1080").
-			Delete("enable-automation")
-
-		if flagPort > 0 {
-			l = l.RemoteDebuggingPort(flagPort)
-		}
-
-		wsURL, err := l.Launch()
+		wsURL, err := engine.NewLauncher(engine.LauncherOpts{
+			Headless:   flagHeadless,
+			RemotePort: flagPort,
+		}).Launch()
 		if err != nil {
 			exitErr("launch chrome", err)
 		}
 
 		// Apply stealth to a warm-up page
 		if flagStealth {
-			b := rod.New().ControlURL(wsURL)
-			if err := b.Connect(); err != nil {
-				exitErr("connect", err)
-			}
-			page, err := b.Page(proto.TargetCreateTarget{})
-			if err != nil {
-				exitErr("page", err)
-			}
-			if err := engine.ApplyStealth(page); err != nil {
+			if err := warmUpStealth(wsURL); err != nil {
 				exitErr("stealth", err)
 			}
 		}
@@ -72,6 +55,22 @@ Then in another terminal:
 
 		fmt.Fprintln(os.Stderr, "\nshutting down")
 	},
+}
+
+func warmUpStealth(wsURL string) error {
+	b := rod.New().ControlURL(wsURL)
+	if err := b.Connect(); err != nil {
+		return fmt.Errorf("connect: %w", err)
+	}
+	defer b.Close()
+
+	page, err := b.Page(proto.TargetCreateTarget{})
+	if err != nil {
+		return fmt.Errorf("page: %w", err)
+	}
+	defer page.Close()
+
+	return engine.ApplyStealth(page)
 }
 
 func init() {

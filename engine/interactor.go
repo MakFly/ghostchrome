@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strconv"
@@ -94,21 +95,14 @@ func TypeRef(page *rod.Page, ref string, text string, snapshot *PageSnapshot) er
 		return fmt.Errorf("focus: %w", err)
 	}
 
-	// Triple-click to select all existing text
-	err = el.Click(proto.InputMouseButtonLeft, 3)
-	if err != nil {
-		// Ignore — field may be empty
-		_ = err
-	}
+	// Triple-click to select all existing text; empty fields return an error we can ignore.
+	_ = el.Click(proto.InputMouseButtonLeft, 3)
 
 	// Small delay for React to process the click
 	time.Sleep(50 * time.Millisecond)
 
 	// InsertText dispatches InputEvent which React/Vue/Angular listen to
-	err = el.SelectAllText()
-	if err != nil {
-		_ = err
-	}
+	_ = el.SelectAllText()
 
 	err = page.InsertText(text)
 	if err != nil {
@@ -147,8 +141,6 @@ func TakeScreenshot(page *rod.Page, fullPage bool, elementRef string, quality in
 		if err != nil {
 			return nil, fmt.Errorf("get layout metrics: %w", err)
 		}
-		oldClip := req.Clip
-		_ = oldClip
 		req.Clip = &proto.PageViewport{
 			X:      0,
 			Y:      0,
@@ -399,42 +391,60 @@ type DialogResult struct {
 }
 
 // HandleNextDialog waits for the next JavaScript dialog and handles it.
+// The timeout is propagated via context so wait() unblocks cleanly on timeout
+// and no goroutine is leaked.
 func HandleNextDialog(page *rod.Page, accept bool, promptText string, timeout time.Duration) (*DialogResult, error) {
-	wait, handle := page.HandleDialog()
+	ctx, cancel := context.WithTimeout(page.GetContext(), timeout)
+	defer cancel()
+	scoped := page.Context(ctx)
 
-	resultCh := make(chan *DialogResult, 1)
-	errCh := make(chan error, 1)
+	wait, handle := scoped.HandleDialog()
+
+	type outcome struct {
+		result *DialogResult
+		err    error
+	}
+	done := make(chan outcome, 1)
 
 	go func() {
+		defer func() {
+			// wait() may panic if the context is cancelled mid-call
+			if r := recover(); r != nil {
+				select {
+				case done <- outcome{err: fmt.Errorf("dialog wait cancelled: %v", r)}:
+				default:
+				}
+			}
+		}()
 		event := wait()
-		err := handle(&proto.PageHandleJavaScriptDialog{
+		if event == nil {
+			return
+		}
+		if err := handle(&proto.PageHandleJavaScriptDialog{
 			Accept:     accept,
 			PromptText: promptText,
-		})
-		if err != nil {
-			errCh <- err
+		}); err != nil {
+			done <- outcome{err: err}
 			return
 		}
 		action := "accept"
 		if !accept {
 			action = "dismiss"
 		}
-		resultCh <- &DialogResult{
+		done <- outcome{result: &DialogResult{
 			Handled:       true,
 			Action:        action,
 			Type:          string(event.Type),
 			Message:       event.Message,
 			URL:           event.URL,
 			DefaultPrompt: event.DefaultPrompt,
-		}
+		}}
 	}()
 
 	select {
-	case result := <-resultCh:
-		return result, nil
-	case err := <-errCh:
-		return nil, err
-	case <-time.After(timeout):
+	case o := <-done:
+		return o.result, o.err
+	case <-ctx.Done():
 		action := "accept"
 		if !accept {
 			action = "dismiss"
