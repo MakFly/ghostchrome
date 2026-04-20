@@ -12,6 +12,7 @@ var (
 	flagHeadless       bool
 	flagTimeout        int
 	flagFormat         string
+	flagProfile        string
 	flagStealth        bool
 	flagDismissCookies bool
 	flagWaitSelector   string
@@ -29,9 +30,14 @@ Use 'ghostchrome serve' to start a persistent Chrome, then --connect to reuse it
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		switch flagFormat {
 		case "text", "json":
-			return nil
 		default:
 			return fmt.Errorf("invalid format %q: use text or json", flagFormat)
+		}
+		switch flagProfile {
+		case "auto", "human", "agent":
+			return nil
+		default:
+			return fmt.Errorf("invalid profile %q: use auto, human, or agent", flagProfile)
 		}
 	},
 }
@@ -41,6 +47,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&flagHeadless, "headless", true, "Run Chrome in headless mode")
 	rootCmd.PersistentFlags().IntVar(&flagTimeout, "timeout", 30, "Timeout in seconds for operations")
 	rootCmd.PersistentFlags().StringVar(&flagFormat, "format", "text", "Output format: json or text")
+	rootCmd.PersistentFlags().StringVar(&flagProfile, "profile", "auto", "Output profile: auto (detect agent env), human, or agent (compact)")
 	rootCmd.PersistentFlags().BoolVar(&flagStealth, "stealth", false, "Enable stealth mode (hide headless fingerprints)")
 	rootCmd.PersistentFlags().BoolVar(&flagDismissCookies, "dismiss-cookies", false, "Auto-dismiss cookie consent banners")
 	rootCmd.PersistentFlags().StringVar(&flagWaitSelector, "wait-selector", "", "After navigation, wait for this CSS selector to be visible (useful for SPAs)")

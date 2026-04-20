@@ -34,7 +34,7 @@ Examples:
 		if flagNavExtract != "" {
 			level := engine.ExtractLevel(flagNavExtract)
 			result := snapshotPage(b, page, level)
-			text := fmt.Sprintf("[%d] %s — %s (%dms)\n%s", info.Status, info.Title, info.URL, info.TimeMs, engine.FormatText(result))
+			text := fmt.Sprintf("[%d] %s — %s (%dms)\n%s", info.Status, info.Title, info.URL, info.TimeMs, engine.FormatTextProfile(result, renderProfile()))
 			type navigateExtractResult struct {
 				*engine.PageInfo
 				DOM *engine.ExtractionResult `json:"dom"`

@@ -43,7 +43,7 @@ Examples:
 			exitErr("snapshot", err)
 		}
 
-		text := engine.FormatPreview(result)
+		text := engine.FormatPreviewProfile(result, renderProfile())
 		output(result, text)
 	},
 }

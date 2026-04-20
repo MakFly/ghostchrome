@@ -48,8 +48,9 @@ func Preview(page *rod.Page, url string, waitStrategy string, extractLevel Extra
 		return nil, err
 	}
 
-	// If stealth mode and we got a bot challenge, wait for it to resolve
-	if stealth && info.Status == 403 {
+	// If stealth mode and we got a bot challenge, wait for it to resolve.
+	// 403 is typical of DataDome; 503 is Cloudflare's "Just a moment" page.
+	if stealth && (info.Status == 403 || info.Status == 503) {
 		if WaitForBotChallenge(page, 10*time.Second) {
 			// Challenge resolved — re-capture page info
 			pageInfo, err := page.Info()
@@ -107,64 +108,107 @@ func Preview(page *rod.Page, url string, waitStrategy string, extractLevel Extra
 	}, nil
 }
 
-// FormatPreview renders a compact text report.
+// FormatPreview renders a compact text report (human profile).
 func FormatPreview(r *PreviewResult) string {
+	return FormatPreviewProfile(r, ProfileHuman("text"))
+}
+
+// FormatPreviewProfile renders the preview using the given profile. In agent
+// mode, empty sections and zero-stat headers are dropped, failed requests are
+// grouped by status code and the DOM dump uses one-letter role tags.
+func FormatPreviewProfile(r *PreviewResult, p RenderProfile) string {
 	var sb strings.Builder
 
 	sb.WriteString(fmt.Sprintf("[%d] %s — %s (%dms)\n", r.PageInfo.Status, r.PageInfo.Title, r.PageInfo.URL, r.PageInfo.TimeMs))
 
+	writePreviewErrors(&sb, r, p)
+	writePreviewNetwork(&sb, r, p)
+	writePreviewDOM(&sb, r, p)
+
+	return strings.TrimRight(sb.String(), "\n")
+}
+
+func writePreviewErrors(sb *strings.Builder, r *PreviewResult, p RenderProfile) {
 	if len(r.Errors) == 0 {
+		if p.DropEmptyStats {
+			return
+		}
 		sb.WriteString("[errors] none\n")
-	} else {
-		sb.WriteString(fmt.Sprintf("[errors] %d error(s), %d warning(s)\n", r.Summary.ErrorCount, r.Summary.WarningCount))
-		for _, e := range r.Errors {
-			switch e.Type {
-			case "console":
-				src := ""
-				if e.Source != "" {
-					src = fmt.Sprintf(" (%s)", truncateURL(e.Source))
-				}
-				sb.WriteString(fmt.Sprintf("  [%s] %s%s\n", e.Level, truncate(e.Message, 120), src))
-			case "network":
-				if e.Status > 0 {
-					sb.WriteString(fmt.Sprintf("  [%d] %s %s\n", e.Status, defaultMethod(e.Method), truncateURL(e.Message)))
-				} else {
-					sb.WriteString(fmt.Sprintf("  [error] %s %s (%s)\n", defaultMethod(e.Method), truncateURL(e.Message), truncate(e.Source, 80)))
-				}
-			}
-		}
+		return
 	}
-
-	if len(r.Network) == 0 {
-		sb.WriteString("[network] no requests\n")
-	} else {
-		sb.WriteString(fmt.Sprintf("[network] %d reqs, %d failed\n", r.Summary.TotalRequests, r.Summary.FailedRequests))
-		count := 0
-		for _, n := range r.Network {
-			if n.Status < 400 && n.Error == "" {
-				continue
+	sb.WriteString(fmt.Sprintf("[errors] %d error(s), %d warning(s)\n", r.Summary.ErrorCount, r.Summary.WarningCount))
+	for _, e := range r.Errors {
+		switch e.Type {
+		case "console":
+			src := ""
+			if e.Source != "" {
+				src = fmt.Sprintf(" (%s)", truncateURL(e.Source))
 			}
-			if n.Status > 0 {
-				sb.WriteString(fmt.Sprintf("  [%d] %s (%dms)\n", n.Status, truncateURL(n.URL), n.TimeMs))
+			sb.WriteString(fmt.Sprintf("  [%s] %s%s\n", e.Level, truncate(e.Message, 120), src))
+		case "network":
+			if e.Status > 0 {
+				sb.WriteString(fmt.Sprintf("  [%d] %s %s\n", e.Status, defaultMethod(e.Method), truncateURL(e.Message)))
 			} else {
-				sb.WriteString(fmt.Sprintf("  [error] %s (%dms)\n", truncateURL(n.URL), n.TimeMs))
-			}
-			count++
-			if count >= 5 {
-				break
+				sb.WriteString(fmt.Sprintf("  [error] %s %s (%s)\n", defaultMethod(e.Method), truncateURL(e.Message), truncate(e.Source, 80)))
 			}
 		}
 	}
+}
 
-	sb.WriteString("[dom]\n")
-	domText := FormatText(r.DOM)
+func writePreviewNetwork(sb *strings.Builder, r *PreviewResult, p RenderProfile) {
+	if len(r.Network) == 0 {
+		if p.DropEmptyStats {
+			return
+		}
+		sb.WriteString("[network] no requests\n")
+		return
+	}
+	if r.Summary.FailedRequests == 0 {
+		if p.DropEmptyStats {
+			return
+		}
+		sb.WriteString(fmt.Sprintf("[network] %d reqs, 0 failed\n", r.Summary.TotalRequests))
+		return
+	}
+	sb.WriteString(fmt.Sprintf("[network] %d reqs, %d failed\n", r.Summary.TotalRequests, r.Summary.FailedRequests))
+	count := 0
+	for _, n := range r.Network {
+		if n.Status < 400 && n.Error == "" {
+			continue
+		}
+		if n.Status > 0 {
+			sb.WriteString(fmt.Sprintf("  [%d] %s (%dms)\n", n.Status, truncateURL(n.URL), n.TimeMs))
+		} else {
+			sb.WriteString(fmt.Sprintf("  [error] %s (%dms)\n", truncateURL(n.URL), n.TimeMs))
+		}
+		count++
+		if count >= 5 {
+			break
+		}
+	}
+}
+
+func writePreviewDOM(sb *strings.Builder, r *PreviewResult, p RenderProfile) {
+	if r.DOM == nil || len(r.DOM.Nodes) == 0 {
+		if !p.DropEmptyStats {
+			sb.WriteString("[dom] empty\n")
+		}
+		return
+	}
+	if !p.Agent {
+		sb.WriteString("[dom]\n")
+	}
+	domText := FormatTextProfile(r.DOM, p)
 	for _, line := range strings.Split(domText, "\n") {
-		if line != "" {
+		if line == "" {
+			continue
+		}
+		if p.Agent {
+			sb.WriteString(line + "\n")
+		} else {
 			sb.WriteString("  " + line + "\n")
 		}
 	}
-
-	return strings.TrimRight(sb.String(), "\n")
 }
 
 func defaultMethod(method string) string {
@@ -174,18 +218,15 @@ func defaultMethod(method string) string {
 	return method
 }
 
-// truncate shortens a string to maxLen.
+// truncateURL shortens URLs for preview display (80-char budget).
+func truncateURL(u string) string {
+	return TruncateURL(u, 80)
+}
+
+// truncate shortens a string to maxLen with a trailing ellipsis.
 func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	if maxLen <= 3 || len(s) <= maxLen {
 		return s
 	}
 	return s[:maxLen-3] + "..."
-}
-
-// truncateURL shortens URLs for display.
-func truncateURL(u string) string {
-	u = strings.TrimPrefix(u, "http://localhost")
-	u = strings.TrimPrefix(u, "https://")
-	u = strings.TrimPrefix(u, "http://")
-	return truncate(u, 80)
 }
