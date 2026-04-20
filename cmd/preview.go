@@ -6,7 +6,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var flagPreviewLevel string
+var (
+	flagPreviewLevel string
+	flagPreviewHAR   string
+)
 
 var previewCmd = &cobra.Command{
 	Use:   "preview <url>",
@@ -43,6 +46,13 @@ Examples:
 			exitErr("snapshot", err)
 		}
 
+		if flagPreviewHAR != "" {
+			har := engine.BuildHAR(result.Network, result.PageInfo.URL, result.PageInfo.Title, appVersion())
+			if err := engine.WriteHAR(har, flagPreviewHAR); err != nil {
+				exitErr("preview har", err)
+			}
+		}
+
 		text := engine.FormatPreviewProfile(result, renderProfile())
 		output(result, text)
 	},
@@ -50,5 +60,15 @@ Examples:
 
 func init() {
 	previewCmd.Flags().StringVar(&flagPreviewLevel, "level", "skeleton", "DOM extraction level: skeleton, content, or full")
+	previewCmd.Flags().StringVar(&flagPreviewHAR, "har", "", "Also write a HAR 1.2 file with all network entries at this path")
 	rootCmd.AddCommand(previewCmd)
+}
+
+// appVersion returns the CLI version (set by main via SetVersion, empty in go
+// test or dev builds).
+func appVersion() string {
+	if v := rootCmd.Version; v != "" {
+		return v
+	}
+	return "dev"
 }
