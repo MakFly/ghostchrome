@@ -25,6 +25,9 @@ func TestBrowserPersistsActiveTabAndSnapshots(t *testing.T) {
 	defer server.Close()
 
 	l := launcher.New().Headless(true).Leakless(false)
+	if needsNoSandbox() {
+		l = l.NoSandbox(true)
+	}
 	controlURL, err := l.Launch()
 	if err != nil {
 		t.Fatalf("launch browser: %v", err)
@@ -192,6 +195,9 @@ func testBrowser(t *testing.T) (*Browser, func()) {
 	t.Helper()
 
 	l := launcher.New().Headless(true).Leakless(false)
+	if needsNoSandbox() {
+		l = l.NoSandbox(true)
+	}
 	controlURL, err := l.Launch()
 	if err != nil {
 		t.Fatalf("launch browser: %v", err)

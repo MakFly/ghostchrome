@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"os"
 	"time"
 
 	"github.com/go-rod/rod"
@@ -16,6 +17,9 @@ type LauncherOpts struct {
 
 // NewLauncher returns a configured launcher with the shared anti-detection
 // flags used by both auto-launch (NewBrowser) and the `serve` command.
+// --no-sandbox is auto-enabled when running inside a CI runner (env
+// GITHUB_ACTIONS / CI) or as root, because those environments disable the
+// Chrome sandbox.
 func NewLauncher(opts LauncherOpts) *launcher.Launcher {
 	l := launcher.New().
 		Headless(false).
@@ -23,10 +27,27 @@ func NewLauncher(opts LauncherOpts) *launcher.Launcher {
 		Set("disable-blink-features", "AutomationControlled").
 		Set("window-size", "1920,1080").
 		Delete("enable-automation")
+	if needsNoSandbox() {
+		l = l.NoSandbox(true)
+	}
 	if opts.RemotePort > 0 {
 		l = l.RemoteDebuggingPort(opts.RemotePort)
 	}
 	return l
+}
+
+// needsNoSandbox reports whether Chrome should be launched with --no-sandbox.
+// We check common CI environment markers and root UID (common in containers).
+func needsNoSandbox() bool {
+	if os.Geteuid() == 0 {
+		return true
+	}
+	for _, key := range []string{"GITHUB_ACTIONS", "CI", "GHOSTCHROME_NO_SANDBOX"} {
+		if v := os.Getenv(key); v != "" && v != "0" && v != "false" {
+			return true
+		}
+	}
+	return false
 }
 
 // Browser wraps a Rod browser with connect/launch logic.
