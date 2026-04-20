@@ -82,6 +82,66 @@ func ClickRef(page *rod.Page, ref string, snapshot *PageSnapshot) error {
 	return nil
 }
 
+// HasSelector reports whether at least one element matches selector.
+// It is a non-throwing alternative to page.Element used by polling loops.
+func HasSelector(page *rod.Page, selector string) bool {
+	_, err := page.Element(selector)
+	return err == nil
+}
+
+// CountSelector returns the number of elements matching selector. Errors are
+// swallowed and reported as 0 so the polling caller can distinguish
+// "not-yet-rendered" from "match count below threshold".
+func CountSelector(page *rod.Page, selector string) int {
+	elements, err := page.Elements(selector)
+	if err != nil {
+		return 0
+	}
+	return len(elements)
+}
+
+// ScrollToRef scrolls the element at the given ref into view without
+// performing any other interaction.
+func ScrollToRef(page *rod.Page, ref string, snapshot *PageSnapshot) error {
+	el, err := ResolveRef(page, ref, snapshot)
+	if err != nil {
+		return err
+	}
+	if err := el.ScrollIntoView(); err != nil {
+		return fmt.Errorf("scroll into view: %w", err)
+	}
+	_ = page.WaitStable(200 * time.Millisecond)
+	return nil
+}
+
+// ScrollToY scrolls the page to an absolute Y pixel position. When
+// bottomSentinel is true, the page is scrolled to document.body.scrollHeight
+// regardless of the y argument — use this for "scroll-to bottom".
+// Returns the final window.scrollY as observed after the scroll.
+func ScrollToY(page *rod.Page, y int, bottomSentinel bool) (int, error) {
+	script := fmt.Sprintf(`() => { window.scrollTo(0, %d); return Math.round(window.scrollY); }`, y)
+	if bottomSentinel {
+		script = `() => { window.scrollTo(0, document.body.scrollHeight); return Math.round(window.scrollY); }`
+	}
+	res, err := page.Eval(script)
+	if err != nil {
+		return 0, fmt.Errorf("scroll eval: %w", err)
+	}
+	_ = page.WaitStable(200 * time.Millisecond)
+	return int(res.Value.Num()), nil
+}
+
+// ScrollBy scrolls by a relative Y offset. Returns the final scrollY.
+func ScrollBy(page *rod.Page, dy int) (int, error) {
+	script := fmt.Sprintf(`() => { window.scrollBy(0, %d); return Math.round(window.scrollY); }`, dy)
+	res, err := page.Eval(script)
+	if err != nil {
+		return 0, fmt.Errorf("scroll-by eval: %w", err)
+	}
+	_ = page.WaitStable(200 * time.Millisecond)
+	return int(res.Value.Num()), nil
+}
+
 // UploadRef sets the files on a file-input element.
 //
 // The target can be identified either by:

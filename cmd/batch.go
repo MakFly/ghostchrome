@@ -185,6 +185,12 @@ func (r *batchRunner) dispatch(verb, rest string) (any, error) {
 		return r.cmdExtract(rest)
 	case "preview":
 		return r.cmdPreview(rest)
+	case "emulate":
+		return nil, r.cmdEmulate(rest)
+	case "scroll-to":
+		return nil, r.cmdScrollTo(rest)
+	case "scroll":
+		return nil, r.cmdScroll(rest)
 	default:
 		return nil, fmt.Errorf("unknown verb %q", verb)
 	}
@@ -274,6 +280,57 @@ func (r *batchRunner) cmdWaitSelector(args string) error {
 		}
 	}
 	return engine.WaitForSelector(r.page, sel, timeoutSec)
+}
+
+func (r *batchRunner) cmdEmulate(args string) error {
+	_, kv := parseArgs(args)
+	if name := kv["device"]; name != "" {
+		d, ok := engine.DeviceByName(name)
+		if !ok {
+			return fmt.Errorf("emulate: unknown device %q", name)
+		}
+		if err := engine.ApplyDevice(r.page, d); err != nil {
+			return err
+		}
+	}
+	if ua := kv["user-agent"]; ua != "" {
+		if err := engine.ApplyUserAgent(r.page, ua); err != nil {
+			return err
+		}
+	}
+	if cs := kv["color-scheme"]; cs != "" {
+		if err := engine.ApplyColorScheme(r.page, cs); err != nil {
+			return err
+		}
+	}
+	if tz := kv["timezone"]; tz != "" {
+		if err := engine.ApplyTimezone(r.page, tz); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *batchRunner) cmdScroll(args string) error {
+	ref := strings.TrimSpace(args)
+	if ref == "" {
+		return errors.New("scroll: missing @ref")
+	}
+	snap := r.browser.Snapshot(r.page)
+	return engine.ScrollToRef(r.page, ref, snap)
+}
+
+func (r *batchRunner) cmdScrollTo(args string) error {
+	target := strings.TrimSpace(args)
+	if target == "" {
+		return errors.New("scroll-to: missing target (top|bottom|<y>)")
+	}
+	y, err := scrollTargetToY(target)
+	if err != nil {
+		return err
+	}
+	_, err = engine.ScrollToY(r.page, y, target == "bottom")
+	return err
 }
 
 func (r *batchRunner) cmdWaitMs(args string) error {
