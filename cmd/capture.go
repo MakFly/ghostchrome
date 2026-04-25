@@ -76,6 +76,7 @@ Examples:
 
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+		defer signal.Stop(sig)
 
 		var timeoutCh <-chan time.Time
 		if flagCaptureWait > 0 {
