@@ -67,6 +67,11 @@ Examples:
 
 		if flagCaptureScroll > 0 {
 			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						fmt.Fprintf(os.Stderr, "[capture] scroll error: %v\n", r)
+					}
+				}()
 				for i := 0; i < flagCaptureScroll; i++ {
 					time.Sleep(time.Duration(flagCaptureScrollMs) * time.Millisecond)
 					_, _ = page.Eval(`() => window.scrollBy(0, window.innerHeight * 2)`)
