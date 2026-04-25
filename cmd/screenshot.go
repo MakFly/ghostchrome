@@ -11,10 +11,10 @@ import (
 )
 
 var (
-	flagFull             bool
-	flagElement          string
-	flagQuality          int
-	flagOutputPath       string
+	flagFull                bool
+	flagElement             string
+	flagQuality             int
+	flagOutputPath          string
 	flagScreenshotBaseline  string
 	flagScreenshotThreshold float64
 	flagScreenshotTolerance int
@@ -65,6 +65,13 @@ Examples:
 				exitErr("screenshot dir", err)
 			}
 			outPath = filepath.Join(dir, fmt.Sprintf("ghostchrome-screenshot-%d.%s", time.Now().UnixMilli(), ext))
+		} else {
+			// Validate user-supplied output path
+			validated, err := validateOutputPath(outPath)
+			if err != nil {
+				exitErr("output path", err)
+			}
+			outPath = validated
 		}
 
 		// Write file with owner-only permissions (may contain sensitive page content).
@@ -113,21 +120,27 @@ func defaultScreenshotDir() (string, error) {
 // exits 1 when the diff ratio exceeds --threshold. If --update is set, the
 // current PNG replaces the baseline and the function returns nil.
 func runScreenshotDiff(currentPath string, current []byte) *engine.ImageDiffResult {
+	// Validate baseline path
+	baselinePath, err := validateOutputPath(flagScreenshotBaseline)
+	if err != nil {
+		exitErr("baseline path", err)
+	}
+
 	if flagScreenshotUpdate {
-		if err := os.WriteFile(flagScreenshotBaseline, current, 0o600); err != nil {
+		if err := os.WriteFile(baselinePath, current, 0o600); err != nil {
 			exitErr("screenshot baseline update", err)
 		}
-		fmt.Fprintf(os.Stderr, "[screenshot] baseline updated: %s\n", flagScreenshotBaseline)
+		fmt.Fprintf(os.Stderr, "[screenshot] baseline updated: %s\n", baselinePath)
 		return nil
 	}
 
-	baseline, err := os.ReadFile(flagScreenshotBaseline)
+	baseline, err := os.ReadFile(baselinePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			if err := os.WriteFile(flagScreenshotBaseline, current, 0o600); err != nil {
+			if err := os.WriteFile(baselinePath, current, 0o600); err != nil {
 				exitErr("screenshot baseline create", err)
 			}
-			fmt.Fprintf(os.Stderr, "[screenshot] baseline created: %s (first run)\n", flagScreenshotBaseline)
+			fmt.Fprintf(os.Stderr, "[screenshot] baseline created: %s (first run)\n", baselinePath)
 			return nil
 		}
 		exitErr("screenshot baseline read", err)
@@ -136,6 +149,13 @@ func runScreenshotDiff(currentPath string, current []byte) *engine.ImageDiffResu
 	diffPath := flagScreenshotDiffOut
 	if diffPath == "" {
 		diffPath = currentPath + ".diff.png"
+	} else {
+		// Validate diff-output path if user-supplied
+		validatedDiffPath, err := validateOutputPath(diffPath)
+		if err != nil {
+			exitErr("diff-output path", err)
+		}
+		diffPath = validatedDiffPath
 	}
 
 	res, err := engine.DiffImages(baseline, current, flagScreenshotTolerance, diffPath)
