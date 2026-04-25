@@ -45,6 +45,7 @@ type CapturedEntry struct {
 	PostData     string            `json:"post_data,omitempty"`
 	Body         string            `json:"body,omitempty"`
 	BodyBase64   bool              `json:"body_base64,omitempty"`
+	BodyError    string            `json:"body_error,omitempty"`
 	StartedAt    string            `json:"started_at"`
 }
 
@@ -140,7 +141,9 @@ func StartCapture(page *rod.Page, spec CaptureSpec) (*CaptureSession, error) {
 			}
 			if spec.IncludeBody {
 				body, err := proto.NetworkGetResponseBody{RequestID: e.RequestID}.Call(page)
-				if err == nil && body != nil {
+				if err != nil {
+					entry.BodyError = err.Error()
+				} else if body != nil {
 					entry.Body = body.Body
 					entry.BodyBase64 = body.Base64Encoded
 				}
