@@ -280,8 +280,13 @@ func EvalJS(page *rod.Page, expr string, elementRef string, snapshot *PageSnapsh
 		return formatEvalResult(res), nil
 	}
 
-	// Wrap as async arrow function to support await
-	wrapped := fmt.Sprintf("async () => { return %s }", expr)
+	// Wrap as async arrow function to support await. Wrap the body in parens
+	// so that expressions starting with a leading comment don't trigger ASI
+	// after `return` (e.g. scripts loaded from --script files). Trim trailing
+	// whitespace/semicolons so a script body that ends with `})();` still
+	// fits inside the parenthesised expression context.
+	body := strings.TrimRight(expr, " \t\r\n;")
+	wrapped := fmt.Sprintf("async () => { return (\n%s\n); }", body)
 	res, err := page.Eval(wrapped)
 	if err != nil {
 		return "", fmt.Errorf("eval: %w", err)
