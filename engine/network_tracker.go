@@ -13,6 +13,7 @@ type requestTracker struct {
 	requests              map[proto.NetworkRequestID]*trackedRequest
 	mainDocumentRequestID proto.NetworkRequestID
 	mainFrameID           proto.PageFrameID
+	stop                  func()
 }
 
 type trackedRequest struct {
@@ -39,7 +40,7 @@ func newRequestTracker(page *rod.Page) *requestTracker {
 }
 
 func (t *requestTracker) listen(page *rod.Page) {
-	go page.EachEvent(
+	t.stop = page.EachEvent(
 		func(e *proto.NetworkRequestWillBeSent) {
 			t.mu.Lock()
 			defer t.mu.Unlock()
@@ -110,7 +111,13 @@ func (t *requestTracker) listen(page *rod.Page) {
 				req.timeMs = int64((float64(e.Timestamp) - req.startedAt) * 1000)
 			}
 		},
-	)()
+	)
+}
+
+func (t *requestTracker) close() {
+	if t.stop != nil {
+		t.stop()
+	}
 }
 
 func (t *requestTracker) MainDocumentStatus() int {

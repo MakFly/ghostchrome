@@ -40,8 +40,11 @@ type PreviewSummary struct {
 // Preview performs a full page analysis: navigate + collect errors + collect network + extract DOM.
 func Preview(page *rod.Page, url string, waitStrategy string, extractLevel ExtractLevel, afterNavigate func(*rod.Page) error, stealth bool) (*PreviewResult, error) {
 	errorCollector := NewErrorCollector(page)
+	defer errorCollector.Close()
+
 	requestTracker := newRequestTracker(page)
 	requestTracker.listen(page)
+	defer requestTracker.close()
 
 	info, err := Navigate(page, url, waitStrategy)
 	if err != nil {

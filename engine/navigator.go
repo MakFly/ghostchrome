@@ -19,6 +19,7 @@ func Navigate(page *rod.Page, rawURL string, waitStrategy string) (*PageInfo, er
 	start := time.Now()
 	requestTracker := newRequestTracker(page)
 	requestTracker.listen(page)
+	defer requestTracker.close()
 
 	err := page.Navigate(rawURL)
 	if err != nil {

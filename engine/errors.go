@@ -26,16 +26,18 @@ type ErrorCollector struct {
 	mu      sync.Mutex
 	errors  []ErrorEntry
 	startAt time.Time
+	stop    func()
 }
 
 // NewErrorCollector creates a collector and starts listening on the page.
 // It hooks into RuntimeConsoleAPICalled and RuntimeExceptionThrown.
+// The caller must call Close() to detach the listeners.
 func NewErrorCollector(page *rod.Page) *ErrorCollector {
 	c := &ErrorCollector{
 		startAt: time.Now(),
 	}
 
-	go page.EachEvent(
+	c.stop = page.EachEvent(
 		func(e *proto.RuntimeConsoleAPICalled) {
 			typ := string(e.Type)
 			if typ != "error" && typ != "warning" {
@@ -105,16 +107,26 @@ func NewErrorCollector(page *rod.Page) *ErrorCollector {
 			})
 			c.mu.Unlock()
 		},
-	)()
+	)
 
 	return c
+}
+
+// Close detaches the error listeners.
+func (c *ErrorCollector) Close() {
+	if c.stop != nil {
+		c.stop()
+	}
 }
 
 // CollectErrors navigates if needed and returns console plus network errors.
 func CollectErrors(page *rod.Page, url string, waitStrategy string, afterNavigate func(*rod.Page) error) ([]ErrorEntry, error) {
 	consoleCollector := NewErrorCollector(page)
+	defer consoleCollector.Close()
+
 	requestTracker := newRequestTracker(page)
 	requestTracker.listen(page)
+	defer requestTracker.close()
 
 	if url != "" {
 		if _, err := Navigate(page, url, waitStrategy); err != nil {
