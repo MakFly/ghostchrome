@@ -85,11 +85,9 @@ Examples:
 		start := time.Now()
 		var lastErr string
 		for {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+			req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, target, nil)
 			resp, err := client.Do(req)
-			cancel()
-			if err == nil {
+			if err == nil && resp != nil {
 				statusMatches := resp.StatusCode == flagWaitURLStatus
 				resp.Body.Close()
 				if statusMatches {
