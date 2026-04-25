@@ -8,6 +8,38 @@ import (
 	"github.com/go-rod/rod/lib/proto"
 )
 
+// xpathLiteral safely escapes a string for use as an XPath string literal.
+// It handles strings containing both single and double quotes by using the
+// concat() function to build a safe literal that cannot be injected.
+func xpathLiteral(s string) string {
+	// If no quotes, simple case
+	if !strings.Contains(s, "'") && !strings.Contains(s, "\"") {
+		return "'" + s + "'"
+	}
+	// If only double quotes, wrap in single quotes
+	if !strings.Contains(s, "'") {
+		return "'" + s + "'"
+	}
+	// If only single quotes, wrap in double quotes
+	if !strings.Contains(s, "\"") {
+		return "\"" + s + "\""
+	}
+	// Mixed quotes: use concat() to build a literal safely
+	parts := strings.Split(s, "'")
+	var b strings.Builder
+	b.WriteString("concat(")
+	for i, p := range parts {
+		if i > 0 {
+			b.WriteString(", \"'\", ")
+		}
+		b.WriteString("'")
+		b.WriteString(p)
+		b.WriteString("'")
+	}
+	b.WriteString(")")
+	return b.String()
+}
+
 // Locator describes a semantic element match. At least one field must be set.
 // When multiple fields are set, the match is conjunctive (all must hold).
 type Locator struct {
@@ -139,10 +171,11 @@ func normaliseRole(r string) string {
 // resolveByText uses an XPath text() match to locate the first visible node
 // whose text content contains the target (case-insensitive, trim-aware).
 func resolveByText(page *rod.Page, text string) (*rod.Element, error) {
-	lower := strings.ReplaceAll(text, "'", "\\'")
+	// Use xpathLiteral to safely escape the search text
+	literal := xpathLiteral(strings.ToLower(text))
 	xpath := fmt.Sprintf(
-		`//*[self::button or self::a or self::label or self::span or self::div or self::li or self::p or self::h1 or self::h2 or self::h3 or self::h4 or self::h5 or self::h6][contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZÀÂÄÉÈÊËÏÎÔÙÛÜÇ', 'abcdefghijklmnopqrstuvwxyzàâäéèêëïîôùûüç'), '%s')]`,
-		strings.ToLower(lower),
+		`//*[self::button or self::a or self::label or self::span or self::div or self::li or self::p or self::h1 or self::h2 or self::h3 or self::h4 or self::h5 or self::h6][contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZÀÂÄÉÈÊËÏÎÔÙÛÜÇ', 'abcdefghijklmnopqrstuvwxyzàâäéèêëïîôùûüç'), %s)]`,
+		literal,
 	)
 	els, err := page.ElementsX(xpath)
 	if err != nil {
