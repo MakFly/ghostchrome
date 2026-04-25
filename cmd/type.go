@@ -68,20 +68,19 @@ Examples:
 		result := snapshotPage(b, page, engine.LevelSkeleton)
 
 		type typeResult struct {
-			Action  string                   `json:"action"`
-			Ref     string                   `json:"ref,omitempty"`
-			Locator string                   `json:"locator,omitempty"`
-			Text    string                   `json:"text"`
-			Result  *engine.ExtractionResult `json:"result"`
+			actionResult
+			Text string `json:"text"`
 		}
 
 		textOutput := engine.FormatTextProfile(result, renderProfile())
 		output(&typeResult{
-			Action:  "type",
-			Ref:     ref,
-			Locator: typeLocator.Describe(),
-			Text:    text,
-			Result:  result,
+			actionResult: actionResult{
+				Action:  "type",
+				Ref:     ref,
+				Locator: typeLocator.Describe(),
+				Result:  result,
+			},
+			Text: text,
 		}, textOutput)
 	},
 }

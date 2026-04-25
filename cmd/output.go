@@ -8,6 +8,14 @@ import (
 	"github.com/MakFly/ghostchrome/engine"
 )
 
+// actionResult is a common result struct for interaction commands (click, hover, type).
+type actionResult struct {
+	Action  string                   `json:"action"`
+	Ref     string                   `json:"ref,omitempty"`
+	Locator string                   `json:"locator,omitempty"`
+	Result  *engine.ExtractionResult `json:"result"`
+}
+
 // renderProfile resolves the current render profile once per invocation.
 func renderProfile() engine.RenderProfile {
 	return engine.ResolveProfile(flagProfile, flagFormat)

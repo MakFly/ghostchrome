@@ -60,15 +60,8 @@ Examples:
 
 		result := snapshotPage(b, page, engine.LevelSkeleton)
 
-		type clickResult struct {
-			Action  string                   `json:"action"`
-			Ref     string                   `json:"ref,omitempty"`
-			Locator string                   `json:"locator,omitempty"`
-			Result  *engine.ExtractionResult `json:"result"`
-		}
-
 		text := engine.FormatTextProfile(result, renderProfile())
-		output(&clickResult{
+		output(&actionResult{
 			Action:  "click",
 			Ref:     ref,
 			Locator: clickLocator.Describe(),

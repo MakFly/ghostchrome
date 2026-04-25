@@ -54,15 +54,8 @@ Examples:
 
 		result := snapshotPage(b, page, engine.LevelSkeleton)
 
-		type hoverResult struct {
-			Action  string                   `json:"action"`
-			Ref     string                   `json:"ref,omitempty"`
-			Locator string                   `json:"locator,omitempty"`
-			Result  *engine.ExtractionResult `json:"result"`
-		}
-
 		text := engine.FormatTextProfile(result, renderProfile())
-		output(&hoverResult{
+		output(&actionResult{
 			Action:  "hover",
 			Ref:     ref,
 			Locator: hoverLocator.Describe(),
