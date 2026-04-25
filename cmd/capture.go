@@ -95,7 +95,10 @@ Examples:
 			fmt.Fprintf(os.Stderr, "[capture] wait timeout (%ds)\n", flagCaptureWait)
 		}
 
-		entries := session.Stop()
+		entries, writeErr := session.Stop()
+		if writeErr != nil {
+			exitErr("ndjson write", writeErr)
+		}
 
 		if flagCaptureOutput != "" {
 			data, err := json.MarshalIndent(entries, "", "  ")

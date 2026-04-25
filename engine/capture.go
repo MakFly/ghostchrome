@@ -58,6 +58,7 @@ type CaptureSession struct {
 	stop       func()
 	outFile    *os.File
 	outMu      sync.Mutex
+	writeErr   error
 	mu         sync.Mutex
 	pending    map[proto.NetworkRequestID]*CapturedEntry
 	matched    []*CapturedEntry
@@ -178,9 +179,21 @@ func (s *CaptureSession) record(e *CapturedEntry) {
 
 	if s.outFile != nil {
 		s.outMu.Lock()
-		if data, err := json.Marshal(e); err == nil {
-			s.outFile.Write(data)
-			s.outFile.Write([]byte("\n"))
+		if s.writeErr == nil {
+			data, err := json.Marshal(e)
+			if err != nil {
+				s.writeErr = fmt.Errorf("marshal: %w", err)
+			} else {
+				_, err := s.outFile.Write(data)
+				if err != nil {
+					s.writeErr = fmt.Errorf("write data: %w", err)
+				} else {
+					_, err := s.outFile.Write([]byte("\n"))
+					if err != nil {
+						s.writeErr = fmt.Errorf("write newline: %w", err)
+					}
+				}
+			}
 		}
 		s.outMu.Unlock()
 	}
@@ -198,17 +211,20 @@ func (s *CaptureSession) record(e *CapturedEntry) {
 // ReachedMax fires once Max matches have been collected.
 func (s *CaptureSession) ReachedMax() <-chan struct{} { return s.reachedMax }
 
-// Stop detaches listeners and closes the output file.
-func (s *CaptureSession) Stop() []*CapturedEntry {
+// Stop detaches listeners, closes the output file, and returns any write errors.
+func (s *CaptureSession) Stop() ([]*CapturedEntry, error) {
 	if s.stop != nil {
 		s.stop()
 	}
 	if s.outFile != nil {
 		s.outFile.Close()
 	}
+	s.outMu.Lock()
+	writeErr := s.writeErr
+	s.outMu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.matched
+	return s.matched, writeErr
 }
 
 // Entries returns a snapshot of collected entries.
