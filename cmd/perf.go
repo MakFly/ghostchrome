@@ -82,9 +82,12 @@ Examples:
 // collectPerfMetrics runs a tiny polyfill to observe LCP + CLS then reads
 // navigation timings + paint entries synchronously.
 func collectPerfMetrics(page any) (*perfMetrics, error) {
-	p := page.(interface {
+	p, ok := page.(interface {
 		Eval(js string, params ...interface{}) (*proto.RuntimeRemoteObject, error)
 	})
+	if !ok {
+		return nil, fmt.Errorf("page does not support Eval")
+	}
 
 	// Give LCP/CLS observers ~500 ms of idle to settle.
 	res, err := p.Eval(`async () => {
