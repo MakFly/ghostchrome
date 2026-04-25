@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/go-rod/rod/lib/proto"
@@ -13,16 +14,16 @@ import (
 var flagPerfBudget string
 
 type perfMetrics struct {
-	URL     string             `json:"url"`
-	Title   string             `json:"title"`
-	TTFB    float64            `json:"ttfb_ms"`
-	FCP     float64            `json:"fcp_ms"`
-	LCP     float64            `json:"lcp_ms"`
-	CLS     float64            `json:"cls"`
-	DOM     float64            `json:"dom_ms"`
-	Load    float64            `json:"load_ms"`
-	Budget  map[string]float64 `json:"budget,omitempty"`
-	Misses  []string           `json:"misses,omitempty"`
+	URL    string             `json:"url"`
+	Title  string             `json:"title"`
+	TTFB   float64            `json:"ttfb_ms"`
+	FCP    float64            `json:"fcp_ms"`
+	LCP    float64            `json:"lcp_ms"`
+	CLS    float64            `json:"cls"`
+	DOM    float64            `json:"dom_ms"`
+	Load   float64            `json:"load_ms"`
+	Budget map[string]float64 `json:"budget,omitempty"`
+	Misses []string           `json:"misses,omitempty"`
 }
 
 var perfCmd = &cobra.Command{
@@ -149,7 +150,31 @@ func parsePerfBudget(raw string) (map[string]float64, error) {
 		return nil, nil
 	}
 	if strings.HasPrefix(raw, "@") {
-		data, err := os.ReadFile(raw[1:])
+		filePath := raw[1:]
+
+		// Reject paths with ".." to prevent directory traversal
+		cleaned := filepath.Clean(filePath)
+		if strings.Contains(cleaned, "..") {
+			return nil, fmt.Errorf("budget file path %q contains parent directory references", filePath)
+		}
+
+		// Ensure the path is within the current working directory
+		cwd, err := os.Getwd()
+		if err != nil {
+			return nil, fmt.Errorf("cannot determine working directory: %w", err)
+		}
+
+		absPath, err := filepath.Abs(cleaned)
+		if err != nil {
+			return nil, fmt.Errorf("cannot resolve budget file path %q: %w", filePath, err)
+		}
+
+		// Check that absPath is within CWD
+		if !strings.HasPrefix(absPath, cwd+string(os.PathSeparator)) && absPath != cwd {
+			return nil, fmt.Errorf("budget file path %q is outside current working directory", filePath)
+		}
+
+		data, err := os.ReadFile(absPath)
 		if err != nil {
 			return nil, fmt.Errorf("budget file: %w", err)
 		}

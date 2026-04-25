@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/MakFly/ghostchrome/engine"
@@ -134,4 +136,55 @@ func errInvalidArg(name, got, allowed string) error {
 
 func errNeedRefOrLocator() error {
 	return fmt.Errorf("need a @ref or one of --by-role / --by-name / --by-label / --by-text")
+}
+
+// validateOutputPath ensures that a user-supplied path is safe to write to.
+// It rejects paths containing ".." or paths that resolve outside the current
+// working directory (unless they are under os.UserCacheDir()/ghostchrome/).
+func validateOutputPath(p string) (string, error) {
+	if p == "" {
+		return "", fmt.Errorf("output path cannot be empty")
+	}
+
+	// Reject paths with ".." to prevent directory traversal
+	cleaned := filepath.Clean(p)
+	if strings.Contains(cleaned, "..") {
+		return "", fmt.Errorf("output path %q contains parent directory references", p)
+	}
+
+	// If the path is absolute, check it's within allowed directories
+	if filepath.IsAbs(cleaned) {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("cannot determine working directory: %w", err)
+		}
+
+		// Allow paths under the current working directory
+		if strings.HasPrefix(cleaned, cwd+string(os.PathSeparator)) {
+			return cleaned, nil
+		}
+
+		// Allow paths under the ghostchrome cache directory
+		cacheDir, err := os.UserCacheDir()
+		if err == nil {
+			ghostchromeCache := filepath.Join(cacheDir, "ghostchrome")
+			if strings.HasPrefix(cleaned, ghostchromeCache+string(os.PathSeparator)) {
+				return cleaned, nil
+			}
+		}
+
+		return "", fmt.Errorf("output path %q is outside current directory and cache directory", p)
+	}
+
+	// For relative paths, resolve to absolute and check against CWD
+	abs := filepath.Join(".", cleaned)
+	if !filepath.IsAbs(abs) {
+		// Double-check: filepath.Join with "." should give absolute path in most cases
+		var err error
+		abs, err = filepath.Abs(abs)
+		if err != nil {
+			return "", fmt.Errorf("cannot resolve relative path: %w", err)
+		}
+	}
+	return abs, nil
 }
