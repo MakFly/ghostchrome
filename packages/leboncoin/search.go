@@ -31,9 +31,13 @@ var txtLineRe = regexp.MustCompile(`^\s*txt\s+(.+?)\s*$`)
 // priceLineRe captures the numeric price out of a "Prix: 1 200 €." line
 // (with optional ".. Baisse de prix" suffix). Spaces in the number can
 // be ASCII or U+00A0.
-// `\s` in Go's RE2 is ASCII-only, but leboncoin uses U+00A0 between the
-// number and the euro sign. We accept either explicitly.
-var priceLineRe = regexp.MustCompile(`^Prix\s*:[\s\x{00A0}]*((?:\d{1,3}(?:[\s\x{00A0}]\d{3})*|\d+)[\s\x{00A0}]*€)`)
+// `\s` in Go's RE2 is ASCII-only, and leboncoin uses two distinct
+// non-ASCII spaces in price strings: U+202F (NARROW NO-BREAK SPACE) as
+// the thousands separator inside the number ("4 800") and U+00A0
+// (NO-BREAK SPACE) before the euro sign ("4 800 €"). The class
+// below accepts both, plus regular ASCII space, so we cover all
+// observed render variants.
+var priceLineRe = regexp.MustCompile(`^Prix\s*:[\s\x{00A0}\x{202F}]*((?:\d{1,3}(?:[\s\x{00A0}\x{202F}]\d{3})*|\d+)[\s\x{00A0}\x{202F}]*€)`)
 
 // ParseSearchResults walks the rendered text and extracts one AdRecord
 // per `/ad/<slug>/<id>` anchor. The card's metadata sits in the lines
