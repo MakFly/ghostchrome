@@ -32,6 +32,7 @@ Subcommands:
   search   Keyword/location/category search → CSV`,
 	}
 	root.AddCommand(f.searchCmd())
+	root.AddCommand(f.importCookiesCmd())
 	parent.AddCommand(root)
 }
 
