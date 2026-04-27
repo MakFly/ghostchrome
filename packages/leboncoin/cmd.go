@@ -11,6 +11,7 @@ import (
 
 	"github.com/MakFly/ghostchrome/engine"
 	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/proto"
 	"github.com/spf13/cobra"
 )
 
@@ -65,6 +66,7 @@ func (f *CommandFactory) searchCmd() *cobra.Command {
 
 			page, b := openSession(opts)
 			defer b.Close()
+			defer snapshotCookies(page, opts.UserDataDir)
 
 			seen := loadState(statePath)
 			seenInit := len(seen)
@@ -161,6 +163,47 @@ func openSession(opts engine.BrowserOpts) (*rod.Page, *engine.Browser) {
 		}
 	}
 	return pg, br
+}
+
+// snapshotCookies pulls the current cookie jar via CDP and rewrites the
+// profile snapshot. Datadome rotates its `datadome` cookie ~every 30
+// minutes; persisting the latest value lets the next run re-inject a
+// still-fresh token instead of replaying a stale one (which Datadome
+// rejects with a 403). Best-effort: any failure is logged and ignored
+// so a parse hiccup never breaks the scrape itself.
+func snapshotCookies(page *rod.Page, profileDir string) {
+	if profileDir == "" {
+		return
+	}
+	got, err := proto.NetworkGetAllCookies{}.Call(page)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  [cookies] snapshot skipped: %v\n", err)
+		return
+	}
+	out := make([]engine.CookieRecord, 0, len(got.Cookies))
+	for _, c := range got.Cookies {
+		// Keep only cookies that belong to the leboncoin domain — we
+		// don't want third-party trackers (doubleclick, criteo, ...)
+		// to bloat the snapshot.
+		if !strings.Contains(c.Domain, "leboncoin.fr") {
+			continue
+		}
+		out = append(out, engine.CookieRecord{
+			Name:     c.Name,
+			Value:    c.Value,
+			Domain:   c.Domain,
+			Path:     c.Path,
+			Expires:  float64(c.Expires),
+			Secure:   c.Secure,
+			HTTPOnly: c.HTTPOnly,
+			SameSite: string(c.SameSite),
+		})
+	}
+	if err := engine.SaveCookiesJSON(profileDir, out); err != nil {
+		fmt.Fprintf(os.Stderr, "  [cookies] save failed: %v\n", err)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "  [cookies] refreshed snapshot (%d entries) → %s\n", len(out), profileDir)
 }
 
 func autoScroll(page *rod.Page) {
