@@ -76,7 +76,7 @@ func (f *CommandFactory) searchCmd() *cobra.Command {
 			w := csv.NewWriter(out)
 			defer w.Flush()
 			if !appendCSV || isEmpty(output) {
-				_ = w.Write([]string{"ad_id", "ad_url", "category_slug", "title", "price", "price_drop", "location", "category", "seller", "delivery", "first_seen"})
+				_ = w.Write([]string{"ad_id", "ad_url", "category_slug", "title", "price", "price_drop", "location", "category", "seller", "delivery", "sponsored", "first_seen"})
 			}
 
 			now := time.Now().Format(time.RFC3339)
@@ -111,7 +111,7 @@ func (f *CommandFactory) searchCmd() *cobra.Command {
 					_ = w.Write([]string{
 						ad.AdID, ad.AdURL, ad.CategorySlug, ad.Title, ad.Price,
 						boolStr(ad.PriceDrop), ad.Location, ad.Category, ad.Seller,
-						boolStr(ad.Delivery), now,
+						boolStr(ad.Delivery), boolStr(ad.Sponsored), now,
 					})
 					added++
 					total++

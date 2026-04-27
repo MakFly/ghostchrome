@@ -17,6 +17,7 @@ type AdRecord struct {
 	Delivery     bool   // true if "Livraison possible" present
 	PriceDrop    bool   // true if ".. Baisse de prix" annotation present
 	Category     string // human-readable, e.g. "Ordinateurs"
+	Sponsored    bool   // true for "Annonce à la une." / "Sponsorisé" pinned slots
 }
 
 // adAnchorRe matches the line that opens an ad block:
@@ -99,6 +100,10 @@ func ParseSearchResults(text string) []AdRecord {
 				rec.Delivery = true
 			case body == "Ajouter l’annonce aux favoris" || body == "l’annonce" || body == "l'annonce":
 				// noise from anchor labels, skip
+			case body == "Annonce à la une." || body == "Sponsorisé" || body == "Annonce sponsorisée.":
+				// promoted-slot markers — flag and keep scanning so the
+				// real product title (next txt line) wins.
+				rec.Sponsored = true
 			case rec.Title == "":
 				// First non-noise text line after the anchor is the title.
 				rec.Title = body
