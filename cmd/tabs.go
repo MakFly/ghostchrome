@@ -12,10 +12,11 @@ var tabsCmd = &cobra.Command{
 	Use:   "tabs",
 	Short: "List open browser tabs",
 	Long: `List all open tabs in the browser with their index, title, and URL.
-The active tab is marked with *active*.
+Use the reported index with page commands via --tab when connected to a shared browser session.
 
 Examples:
-  ghostchrome tabs --connect ws://127.0.0.1:9222`,
+  ghostchrome tabs --connect ws://127.0.0.1:9222
+  ghostchrome preview --connect ws://127.0.0.1:9222 --tab 1`,
 	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		b, _ := openPage()

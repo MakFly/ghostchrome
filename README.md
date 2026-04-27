@@ -57,7 +57,7 @@ Prebuilt binaries on [Releases](https://github.com/MakFly/ghostchrome/releases) 
 
 ```bash
 # Full health report (status + errors + network + DOM)
-ghostchrome preview <url> [--level skeleton|content|full]
+ghostchrome preview <url> [--level skeleton|content|full] [--wait load|stable|idle|none]
 
 # Navigate and get page info
 ghostchrome navigate <url> [--wait load|stable|idle|none] [--extract skeleton|content|full]
@@ -124,6 +124,7 @@ ghostchrome serve [--port 9222]        # Persistent Chrome session
 
 ```
 --connect ws://...   Connect to existing Chrome
+--tab 2             Target a visible tab index when using --connect
 --headless=false     Show browser window
 --timeout 30         Operation timeout (seconds)
 --format json        Output as JSON (default: text)
@@ -139,13 +140,18 @@ For multi-step workflows, use a persistent Chrome:
 # Terminal 1: start Chrome
 ghostchrome serve --port 9222
 
-# Terminal 2: interact
-ghostchrome navigate --connect ws://... https://app.com/login
-ghostchrome type @1 "user@test.com" --connect ws://...
-ghostchrome type @2 "password" --connect ws://...
-ghostchrome click @3 --connect ws://...
-ghostchrome preview --connect ws://...
+# Terminal 2: inspect tabs and pick one index
+ghostchrome tabs --connect ws://...
+
+# Terminal 2: interact deterministically with that tab
+ghostchrome navigate --connect ws://... --tab 0 https://app.com/login
+ghostchrome type @1 "user@test.com" --connect ws://... --tab 0
+ghostchrome type @2 "password" --connect ws://... --tab 0
+ghostchrome click @3 --connect ws://... --tab 0
+ghostchrome preview --connect ws://... --tab 0
 ```
+
+If multiple non-blank tabs exist in a connected browser, page commands require `--tab`.
 
 ## Use with LLM agents
 
