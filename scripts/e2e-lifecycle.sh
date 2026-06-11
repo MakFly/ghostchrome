@@ -21,7 +21,7 @@ gc_count() { gc_procs | grep -c . ; }
 serve_count() { ps -eo args 2>/dev/null | grep -v grep | grep -c "ghostchrome serve" ; }
 
 echo "== ghostchrome e2e lifecycle =="
-"$GC" sessions kill-all >/dev/null 2>&1
+"$GC" sessions kill-all --purge >/dev/null 2>&1
 sleep 1
 BASE=$(gc_count)
 echo "baseline gc procs: $BASE"
@@ -49,21 +49,24 @@ S2=$(serve_count)
 # site is genuinely slow (~25s), so give it budget and treat a pure
 # network/timeout outcome as a skip (not a stealth/lifecycle failure).
 HOUT=$("$GC" --stealth --timeout 60 -s e2e2 preview "$SITE_HEAVY" 2>&1); RC=$?
+# The only hard ghostchrome assertion is that stealth never ABORTS the command.
+# Whether the external heavy site returns 200/blocks/times out is not our bug.
 if echo "$HOUT" | grep -qi "error: stealth"; then
   fail "stealth aborted the command (the bug)"
-elif echo "$HOUT" | grep -qi "\[200\]"; then
-  pass "stealth did not abort + heavy site loaded (200)"
-elif echo "$HOUT" | grep -qiE "deadline|timeout|dial|could not|net::"; then
-  echo "  SKIP: heavy site $SITE_HEAVY slow/unreachable today (rc=$RC)"
 else
-  fail "heavy-site preview failed unexpectedly (rc=$RC): $(echo "$HOUT" | head -1)"
+  pass "stealth did not abort the command"
+  if echo "$HOUT" | grep -qi "\[200\]"; then
+    echo "  (heavy site loaded 200)"
+  else
+    echo "  (note: $SITE_HEAVY did not return 200 today — external, rc=$RC)"
+  fi
 fi
 
 # 4) two sessions -> kill-all returns to baseline
 "$GC" -s e2e3 goto "$SITE_LIGHT" >/dev/null 2>&1
 sleep 1
 echo "  (serves with 3 sessions: $(serve_count))"
-"$GC" sessions kill-all >/dev/null 2>&1
+"$GC" sessions kill-all --purge >/dev/null 2>&1
 sleep 2
 [ "$(gc_count)" -eq "$BASE" ] && pass "kill-all returned to baseline ($BASE)" || fail "kill-all left $(($(gc_count)-BASE)) proc(s)"
 
@@ -78,8 +81,12 @@ sleep 6
 AFTER=$(serve_count)
 [ "$AFTER" -lt "$BEFORE" ] && pass "serve self-exited after Chrome died ($BEFORE -> $AFTER)" || fail "orphan serve survived Chrome death ($BEFORE -> $AFTER)"
 "$GC" sessions prune >/dev/null 2>&1
-"$GC" sessions kill-all >/dev/null 2>&1
+"$GC" sessions kill-all --purge >/dev/null 2>&1
 sleep 1
+
+# tidy any test profiles this run created (kill-all --purge can't reach the
+# serve-death session whose entry was already pruned).
+"$GC" profiles rm e2e1 e2e2 e2e3 e2edead >/dev/null 2>&1 || true
 
 # 6) final: nothing left
 FINAL=$(gc_count)

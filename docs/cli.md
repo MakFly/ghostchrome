@@ -302,8 +302,30 @@ GHOSTCHROME_SESSION=work ghostchrome extract    # env var = default session
 | Subcommand | Effect |
 |---|---|
 | `sessions list` | Show sessions with port, PID, liveness |
-| `sessions stop <name>` | Terminate a session's Chrome and remove it |
-| `sessions kill-all` | Stop every registered session |
+| `sessions stop <name> [--purge]` | Terminate a session's Chrome; `--purge` also deletes its profile |
+| `sessions prune` | Drop dead sessions (Chrome unreachable) from the registry |
+| `sessions kill-all [--purge]` | Stop every session; `--purge` also deletes each profile |
+
+### `profiles`
+
+Persistent Chrome profiles (`~/.ghostchrome/profiles/<name>`) store cookies and
+cache so logins/sessions survive. They accumulate disk — list and remove them.
+
+| Subcommand | Effect |
+|---|---|
+| `profiles list` | Show profiles sorted by on-disk size (+ total) |
+| `profiles rm <name> [name...]` | Delete profiles and reclaim their disk |
+
+### `uninstall`
+
+Stop all sessions and remove the ghostchrome binary. `--purge` also deletes the
+data directories (profiles, sessions, contexts, cache). Dry-run unless `--yes`.
+
+```bash
+ghostchrome uninstall                # print what would be removed
+ghostchrome uninstall --yes          # remove the binary
+ghostchrome uninstall --purge --yes  # remove the binary AND all data
+```
 
 A session resolves to `--connect` internally; `--user-profile`/`--proxy`/
 `--stealth` are applied when the session's Chrome is first spawned.

@@ -44,8 +44,22 @@ ghostchrome sessions stop work       # tear the session down (or: sessions kill-
 ```
 
 `$GHOSTCHROME_SESSION=work` sets the default so you can drop the flag. Add
-`--stealth` on the **first** call (it's baked into the spawned Chrome). Per-call
-latency after the first spawn is ~50 ms.
+`--stealth` on the **first** call only (it's baked into the spawned Chrome);
+add `--timeout 60` for slow sites. Per-call latency after the first spawn is
+~50 ms.
+
+**Clean up when done** — a session is a persistent background Chrome plus an
+on-disk profile, so tear it down so neither piles up:
+
+```bash
+ghostchrome sessions kill-all --purge   # stop every session AND delete its profile
+ghostchrome sessions prune              # drop dead sessions from the registry
+ghostchrome profiles list               # see profiles and their disk size
+ghostchrome profiles rm <name>          # reclaim a profile's disk
+```
+
+Keep `--purge` for throwaway sessions; omit it when you want cookies to persist
+for a later `-s <name>` call.
 
 ## Recipe surface (one-shot, structured JSON)
 
@@ -152,7 +166,8 @@ Default to: `--stealth --dismiss-cookies --human`. If the site still blocks:
 
 ## Common mistakes
 
-- **Don't call `ghostchrome` once per click** — that re-spawns Chrome each time (~4 s). Use the `agent` loop instead.
+- **Don't call `ghostchrome` per action *without* `-s`/`--connect`** — a bare call cold-spawns Chrome each time (~4 s) and leaves nothing to reuse. With `-s <name>` (or the `agent` loop) per-call is fine and fast (~50 ms) — the browser is reused.
+- **Don't leave sessions running** — a forgotten `-s` session is a background Chrome + a growing profile. End with `sessions kill-all --purge` (or `--purge` on `stop`).
 - **Don't parse the a11y tree as text when a recipe exists**. If the site has a recipe, use it.
 - **Don't use `eval` to scrape big data sets** — use `extract` with `selector` if you need a subtree, or write a recipe (see `packages/autoscout24/` for a template; the cleanest pattern is reading `window.__NEXT_DATA__` from Next.js sites).
 - **Don't ignore stderr** — recipes log progress and warnings there; only stdout is the structured payload.
