@@ -1,0 +1,114 @@
+{
+  "name": "codex-claude-browser-bakeoff",
+  "description": "Example suite showing how to compare ghostchrome and Playwright across Codex and Claude Code.",
+  "weights": {
+    "success": 50,
+    "tokens": 25,
+    "duration": 15,
+    "tool_calls": 10
+  },
+  "tasks": [
+    {
+      "id": "inspect-home",
+      "title": "Inspect home page",
+      "group": "inspection",
+      "description": "Open a site and list the main interactive elements."
+    },
+    {
+      "id": "find-price",
+      "title": "Find product price",
+      "group": "ecommerce",
+      "description": "Locate one product and return price + URL."
+    }
+  ],
+  "runs": [
+    {
+      "task_id": "inspect-home",
+      "agent": "codex",
+      "browser": "ghostchrome",
+      "run_id": "codex-ghostchrome-001",
+      "success": true,
+      "duration_ms": 1800,
+      "tool_calls": 2,
+      "input_tokens": 900,
+      "output_tokens": 200
+    },
+    {
+      "task_id": "find-price",
+      "agent": "codex",
+      "browser": "ghostchrome",
+      "run_id": "codex-ghostchrome-002",
+      "success": true,
+      "duration_ms": 3200,
+      "tool_calls": 4,
+      "input_tokens": 1300,
+      "output_tokens": 250
+    },
+    {
+      "task_id": "inspect-home",
+      "agent": "codex",
+      "browser": "playwright",
+      "run_id": "codex-playwright-001",
+      "success": true,
+      "duration_ms": 2600,
+      "tool_calls": 3,
+      "input_tokens": 1700,
+      "output_tokens": 500
+    },
+    {
+      "task_id": "find-price",
+      "agent": "codex",
+      "browser": "playwright",
+      "run_id": "codex-playwright-002",
+      "success": false,
+      "duration_ms": 5400,
+      "tool_calls": 6,
+      "input_tokens": 2200,
+      "output_tokens": 400
+    },
+    {
+      "task_id": "inspect-home",
+      "agent": "claude-code",
+      "browser": "ghostchrome",
+      "run_id": "claude-ghostchrome-001",
+      "success": true,
+      "duration_ms": 2100,
+      "tool_calls": 2,
+      "input_chars": 4400,
+      "output_chars": 1200
+    },
+    {
+      "task_id": "find-price",
+      "agent": "claude-code",
+      "browser": "ghostchrome",
+      "run_id": "claude-ghostchrome-002",
+      "success": true,
+      "duration_ms": 3500,
+      "tool_calls": 4,
+      "input_chars": 5200,
+      "output_chars": 1600
+    },
+    {
+      "task_id": "inspect-home",
+      "agent": "claude-code",
+      "browser": "playwright",
+      "run_id": "claude-playwright-001",
+      "success": true,
+      "duration_ms": 2900,
+      "tool_calls": 3,
+      "input_tokens": 1800,
+      "output_tokens": 450
+    },
+    {
+      "task_id": "find-price",
+      "agent": "claude-code",
+      "browser": "playwright",
+      "run_id": "claude-playwright-002",
+      "success": true,
+      "duration_ms": 4700,
+      "tool_calls": 5,
+      "input_tokens": 2100,
+      "output_tokens": 550
+    }
+  ]
+}

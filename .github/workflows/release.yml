@@ -1,0 +1,96 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Smoke build & vet
+        # Tests run in ci.yml on every push; release only re-checks that the
+        # tag compiles cleanly. Some tests need a real browser (engine/) and
+        # can't run on a stock GH runner.
+        run: |
+          go build ./...
+          go vet ./...
+
+      - name: Build binaries
+        run: |
+          mkdir -p dist
+          VER="${{ github.ref_name }}"
+
+          # ghostchrome CLI
+          GOOS=linux   GOARCH=amd64 go build -ldflags="-s -w -X main.version=$VER" -o dist/ghostchrome-linux-amd64 .
+          GOOS=linux   GOARCH=arm64 go build -ldflags="-s -w -X main.version=$VER" -o dist/ghostchrome-linux-arm64 .
+          GOOS=darwin  GOARCH=amd64 go build -ldflags="-s -w -X main.version=$VER" -o dist/ghostchrome-darwin-amd64 .
+          GOOS=darwin  GOARCH=arm64 go build -ldflags="-s -w -X main.version=$VER" -o dist/ghostchrome-darwin-arm64 .
+          GOOS=windows GOARCH=amd64 go build -ldflags="-s -w -X main.version=$VER" -o dist/ghostchrome-windows-amd64.exe .
+
+          # ghostchrome-mcp standalone MCP server
+          GOOS=linux   GOARCH=amd64 go build -ldflags="-s -w" -o dist/ghostchrome-mcp-linux-amd64 ./cmd/ghostchrome-mcp
+          GOOS=linux   GOARCH=arm64 go build -ldflags="-s -w" -o dist/ghostchrome-mcp-linux-arm64 ./cmd/ghostchrome-mcp
+          GOOS=darwin  GOARCH=amd64 go build -ldflags="-s -w" -o dist/ghostchrome-mcp-darwin-amd64 ./cmd/ghostchrome-mcp
+          GOOS=darwin  GOARCH=arm64 go build -ldflags="-s -w" -o dist/ghostchrome-mcp-darwin-arm64 ./cmd/ghostchrome-mcp
+          GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o dist/ghostchrome-mcp-windows-amd64.exe ./cmd/ghostchrome-mcp
+
+      - name: Create checksums
+        run: |
+          cd dist
+          sha256sum * > checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/ghostchrome-*
+            dist/checksums.txt
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Assemble & publish npm packages (@ghostchrome/cli)
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NPM_TOKEN" ]; then
+            echo "NPM_TOKEN secret not set — skipping npm publish."
+            exit 0
+          fi
+          VER="${{ github.ref_name }}"; VER="${VER#v}"   # v0.3.0 -> 0.3.0
+          NPM_DIR=packages/npm
+
+          # Copy the matching Go binary into each platform package.
+          copy_bin() { mkdir -p "$NPM_DIR/$1/bin"; cp "dist/$2" "$NPM_DIR/$1/bin/$3"; chmod +x "$NPM_DIR/$1/bin/$3"; }
+          copy_bin cli-linux-x64    ghostchrome-linux-amd64        ghostchrome
+          copy_bin cli-linux-arm64  ghostchrome-linux-arm64        ghostchrome
+          copy_bin cli-darwin-x64   ghostchrome-darwin-amd64       ghostchrome
+          copy_bin cli-darwin-arm64 ghostchrome-darwin-arm64       ghostchrome
+          copy_bin cli-win32-x64    ghostchrome-windows-amd64.exe  ghostchrome.exe
+
+          # Stamp the tag version into every package.json (and the meta package's
+          # optionalDependencies) so they all match the release.
+          for d in cli cli-linux-x64 cli-linux-arm64 cli-darwin-x64 cli-darwin-arm64 cli-win32-x64; do
+            f="$NPM_DIR/$d/package.json"; tmp=$(mktemp)
+            jq --arg v "$VER" '.version=$v | (if .optionalDependencies then .optionalDependencies |= with_entries(.value=$v) else . end)' "$f" > "$tmp" && mv "$tmp" "$f"
+          done
+
+          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
+          # Publish platform packages first so the meta package's optional deps resolve.
+          for d in cli-linux-x64 cli-linux-arm64 cli-darwin-x64 cli-darwin-arm64 cli-win32-x64 cli; do
+            (cd "$NPM_DIR/$d" && bun publish --access public)
+          done

@@ -1,0 +1,14 @@
+{
+  "name": "@ghostchrome/cli-darwin-arm64",
+  "version": "0.2.0",
+  "description": "ghostchrome prebuilt binary for darwin-arm64.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MakFly/ghostchrome.git",
+    "directory": "packages/npm/cli-darwin-arm64"
+  },
+  "license": "MIT",
+  "os": ["darwin"],
+  "cpu": ["arm64"],
+  "files": ["bin/ghostchrome"]
+}

@@ -1,0 +1,14 @@
+{
+  "name": "@ghostchrome/cli-linux-arm64",
+  "version": "0.2.0",
+  "description": "ghostchrome prebuilt binary for linux-arm64.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MakFly/ghostchrome.git",
+    "directory": "packages/npm/cli-linux-arm64"
+  },
+  "license": "MIT",
+  "os": ["linux"],
+  "cpu": ["arm64"],
+  "files": ["bin/ghostchrome"]
+}

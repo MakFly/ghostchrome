@@ -1,0 +1,558 @@
+[
+  {
+    "name": "back",
+    "summary": "Navigate back in browser history.",
+    "args": [],
+    "surfaces": [
+      "jsonl",
+      "mcp"
+    ]
+  },
+  {
+    "name": "check",
+    "summary": "Tick a checkbox or radio by @ref (idempotent — no-op if already checked).",
+    "args": [
+      {
+        "name": "ref",
+        "type": "string",
+        "required": true,
+        "description": "@ref of the checkbox/radio"
+      }
+    ],
+    "surfaces": [
+      "jsonl"
+    ]
+  },
+  {
+    "name": "click",
+    "summary": "Click an element by its @ref from the last extract/snapshot.",
+    "args": [
+      {
+        "name": "ref",
+        "type": "string",
+        "required": true,
+        "description": "@ref of the element, e.g. @5"
+      }
+    ],
+    "surfaces": [
+      "jsonl",
+      "mcp",
+      "ai"
+    ]
+  },
+  {
+    "name": "close",
+    "summary": "Close the browser session and exit the agent loop.",
+    "args": [],
+    "surfaces": [
+      "jsonl"
+    ]
+  },
+  {
+    "name": "dblclick",
+    "summary": "Double-click an element by its @ref from the last extract/snapshot.",
+    "args": [
+      {
+        "name": "ref",
+        "type": "string",
+        "required": true,
+        "description": "@ref of the element, e.g. @5"
+      }
+    ],
+    "surfaces": [
+      "jsonl"
+    ]
+  },
+  {
+    "name": "done",
+    "summary": "Signal that the goal is complete (AI surface only — no CDP side-effect).",
+    "args": [
+      {
+        "name": "answer",
+        "type": "string",
+        "required": true,
+        "description": "Final answer or short summary of the outcome"
+      }
+    ],
+    "surfaces": [
+      "ai"
+    ]
+  },
+  {
+    "name": "drag",
+    "summary": "Drag an element from one @ref to another (full mouse drag-and-drop). MCP surface only.",
+    "args": [
+      {
+        "name": "from",
+        "type": "string",
+        "required": true,
+        "description": "Source element @ref"
+      },
+      {
+        "name": "to",
+        "type": "string",
+        "required": true,
+        "description": "Target element @ref"
+      },
+      {
+        "name": "steps",
+        "type": "number",
+        "required": false,
+        "description": "Intermediate mouse move steps (default 10)"
+      }
+    ],
+    "surfaces": [
+      "mcp"
+    ]
+  },
+  {
+    "name": "errors",
+    "summary": "Return console and network errors observed on the current page.",
+    "args": [],
+    "surfaces": [
+      "jsonl",
+      "ai"
+    ]
+  },
+  {
+    "name": "eval",
+    "summary": "Evaluate a JavaScript expression on the page and return the stringified result.",
+    "args": [
+      {
+        "name": "expr",
+        "type": "string",
+        "required": true,
+        "description": "JS expression (JSONL/AI key); MCP uses 'expression'"
+      },
+      {
+        "name": "ref",
+        "type": "string",
+        "required": false,
+        "description": "Optional @ref to bind as `this`"
+      },
+      {
+        "name": "timeout_ms",
+        "type": "number",
+        "required": false,
+        "description": "Per-call deadline in ms (MCP surface only, default 8000)"
+      }
+    ],
+    "surfaces": [
+      "jsonl",
+      "mcp",
+      "ai"
+    ]
+  },
+  {
+    "name": "extract",
+    "summary": "Return a compact accessibility tree of the current page with @refs.",
+    "args": [
+      {
+        "name": "level",
+        "type": "string",
+        "required": false,
+        "description": "skeleton | content | full (default: content)"
+      },
+      {
+        "name": "selector",
+        "type": "string",
+        "required": false,
+        "description": "Optional CSS selector to scope extraction"
+      }
+    ],
+    "surfaces": [
+      "jsonl",
+      "ai"
+    ]
+  },
+  {
+    "name": "fill",
+    "summary": "Fill multiple form fields in one call (JSONL convenience wrapper over type).",
+    "args": [
+      {
+        "name": "fields",
+        "type": "object",
+        "required": true,
+        "description": "Map of @ref → value strings"
+      }
+    ],
+    "surfaces": [
+      "jsonl"
+    ]
+  },
+  {
+    "name": "fill_form",
+    "summary": "Fill multiple form fields in one call (MCP surface name for the JSONL 'fill' op).",
+    "args": [
+      {
+        "name": "fields",
+        "type": "string",
+        "required": true,
+        "description": "JSON object mapping @ref to text value"
+      }
+    ],
+    "surfaces": [
+      "mcp"
+    ]
+  },
+  {
+    "name": "forward",
+    "summary": "Navigate forward in browser history.",
+    "args": [],
+    "surfaces": [
+      "jsonl",
+      "mcp"
+    ]
+  },
+  {
+    "name": "hover",
+    "summary": "Hover over an element by @ref (reveals dropdowns, tooltips).",
+    "args": [
+      {
+        "name": "ref",
+        "type": "string",
+        "required": true,
+        "description": "@ref of the element"
+      }
+    ],
+    "surfaces": [
+      "jsonl",
+      "mcp",
+      "ai"
+    ]
+  },
+  {
+    "name": "init",
+    "summary": "Open the browser (no-op if already open). JSONL session lifecycle op.",
+    "args": [],
+    "surfaces": [
+      "jsonl"
+    ]
+  },
+  {
+    "name": "navigate",
+    "summary": "Load a URL in the current tab.",
+    "args": [
+      {
+        "name": "url",
+        "type": "string",
+        "required": true,
+        "description": "Absolute URL"
+      },
+      {
+        "name": "wait",
+        "type": "string",
+        "required": false,
+        "description": "load | stable | idle | none | domcontentloaded (default: load for JSONL/AI, domcontentloaded for MCP)"
+      }
+    ],
+    "surfaces": [
+      "jsonl",
+      "mcp",
+      "ai"
+    ]
+  },
+  {
+    "name": "press",
+    "summary": "Press a keyboard key; optionally focus an element by @ref first.",
+    "args": [
+      {
+        "name": "key",
+        "type": "string",
+        "required": true,
+        "description": "Key name, e.g. Enter, Escape, ArrowDown"
+      },
+      {
+        "name": "ref",
+        "type": "string",
+        "required": false,
+        "description": "Optional @ref to focus before pressing"
+      }
+    ],
+    "surfaces": [
+      "jsonl",
+      "mcp",
+      "ai"
+    ]
+  },
+  {
+    "name": "reload",
+    "summary": "Reload (refresh) the current page.",
+    "args": [],
+    "surfaces": [
+      "jsonl"
+    ]
+  },
+  {
+    "name": "screenshot",
+    "summary": "Capture the current viewport (or element) as a PNG/JPEG/WebP image.",
+    "args": [
+      {
+        "name": "full_page",
+        "type": "boolean",
+        "required": false,
+        "description": "Capture full scrollable page (default: false)"
+      },
+      {
+        "name": "ref",
+        "type": "string",
+        "required": false,
+        "description": "Capture only this element by @ref"
+      },
+      {
+        "name": "quality",
+        "type": "integer",
+        "required": false,
+        "description": "JPEG quality 1-100 (JSONL/AI); also used for WebP in MCP"
+      },
+      {
+        "name": "format",
+        "type": "string",
+        "required": false,
+        "description": "webp | jpeg | png (MCP surface only, default: webp)"
+      }
+    ],
+    "surfaces": [
+      "jsonl",
+      "mcp"
+    ]
+  },
+  {
+    "name": "scroll_by",
+    "summary": "Scroll the viewport vertically by dy pixels (positive = down).",
+    "args": [
+      {
+        "name": "dy",
+        "type": "integer",
+        "required": true,
+        "description": "Pixels to scroll (signed)"
+      }
+    ],
+    "surfaces": [
+      "jsonl",
+      "ai"
+    ]
+  },
+  {
+    "name": "scroll_to",
+    "summary": "Scroll to an absolute Y position or to the bottom of the page.",
+    "args": [
+      {
+        "name": "y",
+        "type": "integer",
+        "required": false,
+        "description": "Absolute Y coordinate"
+      },
+      {
+        "name": "bottom",
+        "type": "boolean",
+        "required": false,
+        "description": "If true, scroll to the page bottom"
+      }
+    ],
+    "surfaces": [
+      "jsonl",
+      "ai"
+    ]
+  },
+  {
+    "name": "select",
+    "summary": "Pick one or more options in a \u003cselect\u003e element by @ref.",
+    "args": [
+      {
+        "name": "ref",
+        "type": "string",
+        "required": true,
+        "description": "@ref of the \u003cselect\u003e element"
+      },
+      {
+        "name": "values",
+        "type": "array",
+        "required": true,
+        "description": "Option values to select (JSONL/AI: string array; MCP: 'value' string or JSON-array string)"
+      }
+    ],
+    "surfaces": [
+      "jsonl",
+      "mcp",
+      "ai"
+    ]
+  },
+  {
+    "name": "snapshot",
+    "summary": "All-in-one page report: navigate (optional) + errors + DOM extract. MCP surface only.",
+    "args": [
+      {
+        "name": "url",
+        "type": "string",
+        "required": false,
+        "description": "URL to navigate to before snapshotting (optional)"
+      },
+      {
+        "name": "wait",
+        "type": "string",
+        "required": false,
+        "description": "Wait strategy: domcontentloaded | load | stable | idle | none"
+      },
+      {
+        "name": "level",
+        "type": "string",
+        "required": false,
+        "description": "skeleton | content | full (default: content)"
+      },
+      {
+        "name": "selector",
+        "type": "string",
+        "required": false,
+        "description": "Optional CSS selector to scope DOM extraction"
+      }
+    ],
+    "surfaces": [
+      "mcp"
+    ]
+  },
+  {
+    "name": "tabs",
+    "summary": "List, switch, or close browser tabs. MCP surface only (JSONL/CLI use dedicated commands).",
+    "args": [
+      {
+        "name": "action",
+        "type": "string",
+        "required": false,
+        "description": "list (default) | switch | close"
+      },
+      {
+        "name": "index",
+        "type": "number",
+        "required": false,
+        "description": "Tab index for switch/close actions"
+      }
+    ],
+    "surfaces": [
+      "mcp"
+    ]
+  },
+  {
+    "name": "type",
+    "summary": "Type text into an input/textarea identified by @ref.",
+    "args": [
+      {
+        "name": "ref",
+        "type": "string",
+        "required": true,
+        "description": "@ref of the input element"
+      },
+      {
+        "name": "text",
+        "type": "string",
+        "required": true,
+        "description": "Text to type (field is cleared first)"
+      },
+      {
+        "name": "submit",
+        "type": "boolean",
+        "required": false,
+        "description": "If true, press Enter after typing (submit the form)"
+      }
+    ],
+    "surfaces": [
+      "jsonl",
+      "mcp",
+      "ai"
+    ]
+  },
+  {
+    "name": "uncheck",
+    "summary": "Untick a checkbox by @ref (idempotent — no-op if already unchecked).",
+    "args": [
+      {
+        "name": "ref",
+        "type": "string",
+        "required": true,
+        "description": "@ref of the checkbox"
+      }
+    ],
+    "surfaces": [
+      "jsonl"
+    ]
+  },
+  {
+    "name": "upload",
+    "summary": "Upload file(s) to a file \u003cinput\u003e element by @ref. MCP surface only.",
+    "args": [
+      {
+        "name": "ref",
+        "type": "string",
+        "required": true,
+        "description": "File input element @ref"
+      },
+      {
+        "name": "paths",
+        "type": "string",
+        "required": true,
+        "description": "File path or JSON array of file paths"
+      }
+    ],
+    "surfaces": [
+      "mcp"
+    ]
+  },
+  {
+    "name": "url",
+    "summary": "Return the current page URL and title.",
+    "args": [],
+    "surfaces": [
+      "jsonl",
+      "ai"
+    ]
+  },
+  {
+    "name": "wait",
+    "summary": "Wait for a CSS selector to appear or a fixed delay in ms.",
+    "args": [
+      {
+        "name": "selector",
+        "type": "string",
+        "required": false,
+        "description": "CSS selector to wait for"
+      },
+      {
+        "name": "ms",
+        "type": "integer",
+        "required": false,
+        "description": "Fixed delay in milliseconds"
+      }
+    ],
+    "surfaces": [
+      "jsonl",
+      "ai"
+    ]
+  },
+  {
+    "name": "wait_for",
+    "summary": "Wait for a selector, text, or timeout. MCP surface only (JSONL uses 'wait').",
+    "args": [
+      {
+        "name": "selector",
+        "type": "string",
+        "required": false,
+        "description": "CSS selector to wait for"
+      },
+      {
+        "name": "text",
+        "type": "string",
+        "required": false,
+        "description": "Visible text substring to wait for"
+      },
+      {
+        "name": "timeout_ms",
+        "type": "number",
+        "required": false,
+        "description": "Maximum wait time in ms (default 5000, max 30000)"
+      }
+    ],
+    "surfaces": [
+      "mcp"
+    ]
+  }
+]

@@ -1,0 +1,14 @@
+{
+  "name": "@ghostchrome/cli-win32-x64",
+  "version": "0.2.0",
+  "description": "ghostchrome prebuilt binary for win32-x64.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MakFly/ghostchrome.git",
+    "directory": "packages/npm/cli-win32-x64"
+  },
+  "license": "MIT",
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "files": ["bin/ghostchrome.exe"]
+}

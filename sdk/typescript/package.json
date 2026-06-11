@@ -1,0 +1,41 @@
+{
+  "name": "@ghostchrome/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for ghostchrome — typed JSONL agent client",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ghostchrome/ghostchrome.git",
+    "directory": "sdk/typescript"
+  },
+  "scripts": {
+    "build": "bunx tsc",
+    "typecheck": "bunx tsc --noEmit",
+    "test": "bun test",
+    "prepublishOnly": "bun run build"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {},
+  "keywords": ["ghostchrome", "browser-automation", "cdp", "llm"],
+  "license": "MIT"
+}

@@ -1,0 +1,294 @@
+{
+  "suite_name": "codex-claude-browser-bakeoff",
+  "description": "Example suite showing how to compare ghostchrome and Playwright across Codex and Claude Code.",
+  "generated_at": "2026-04-27T10:25:37.859961Z",
+  "weights": {
+    "success": 50,
+    "tokens": 25,
+    "duration": 15,
+    "tool_calls": 10
+  },
+  "tasks": [
+    {
+      "id": "inspect-home",
+      "title": "Inspect home page",
+      "group": "inspection",
+      "description": "Open a site and list the main interactive elements."
+    },
+    {
+      "id": "find-price",
+      "title": "Find product price",
+      "group": "ecommerce",
+      "description": "Locate one product and return price + URL."
+    }
+  ],
+  "overview": {
+    "run_count": 8,
+    "task_count": 2,
+    "exact_usage_runs": 6,
+    "mixed_usage_runs": 0,
+    "estimated_usage_runs": 2,
+    "invalid_runs": 0,
+    "successful_runs": 7,
+    "failed_runs": 1,
+    "competitor_count": 4
+  },
+  "competitors": [
+    {
+      "key": "codex + ghostchrome",
+      "agent": "codex",
+      "browser": "ghostchrome",
+      "runs": 2,
+      "successes": 2,
+      "failures": 0,
+      "success_rate": 100,
+      "total_tokens": 2650,
+      "tokens_per_success": 1325,
+      "median_duration_ms": 2500,
+      "p95_duration_ms": 3130,
+      "median_tool_calls": 3,
+      "usage_breakdown": {
+        "exact": 2,
+        "mixed": 0,
+        "estimated": 0
+      },
+      "score": 100
+    },
+    {
+      "key": "claude-code + ghostchrome",
+      "agent": "claude-code",
+      "browser": "ghostchrome",
+      "runs": 2,
+      "successes": 2,
+      "failures": 0,
+      "success_rate": 100,
+      "total_tokens": 3100,
+      "tokens_per_success": 1550,
+      "median_duration_ms": 2800,
+      "p95_duration_ms": 3430,
+      "median_tool_calls": 3,
+      "usage_breakdown": {
+        "exact": 0,
+        "mixed": 0,
+        "estimated": 2
+      },
+      "score": 94.91975650249032
+    },
+    {
+      "key": "claude-code + playwright",
+      "agent": "claude-code",
+      "browser": "playwright",
+      "runs": 2,
+      "successes": 2,
+      "failures": 0,
+      "success_rate": 100,
+      "total_tokens": 4900,
+      "tokens_per_success": 2450,
+      "median_duration_ms": 3800,
+      "p95_duration_ms": 4610,
+      "median_tool_calls": 4,
+      "usage_breakdown": {
+        "exact": 2,
+        "mixed": 0,
+        "estimated": 0
+      },
+      "score": 66.90647482014388
+    },
+    {
+      "key": "codex + playwright",
+      "agent": "codex",
+      "browser": "playwright",
+      "runs": 2,
+      "successes": 1,
+      "failures": 1,
+      "success_rate": 50,
+      "total_tokens": 4800,
+      "tokens_per_success": 4800,
+      "median_duration_ms": 2600,
+      "p95_duration_ms": 2600,
+      "median_tool_calls": 3,
+      "usage_breakdown": {
+        "exact": 2,
+        "mixed": 0,
+        "estimated": 0
+      },
+      "score": 23.846153846153847
+    }
+  ],
+  "task_summaries": [
+    {
+      "task_id": "find-price",
+      "title": "Find product price",
+      "group": "ecommerce",
+      "competitors": [
+        {
+          "key": "codex + ghostchrome",
+          "agent": "codex",
+          "browser": "ghostchrome",
+          "runs": 1,
+          "successes": 1,
+          "failures": 0,
+          "success_rate": 100,
+          "total_tokens": 1550,
+          "tokens_per_success": 1550,
+          "median_duration_ms": 3200,
+          "p95_duration_ms": 3200,
+          "median_tool_calls": 4,
+          "usage_breakdown": {
+            "exact": 1,
+            "mixed": 0,
+            "estimated": 0
+          },
+          "score": 100
+        },
+        {
+          "key": "claude-code + ghostchrome",
+          "agent": "claude-code",
+          "browser": "ghostchrome",
+          "runs": 1,
+          "successes": 1,
+          "failures": 0,
+          "success_rate": 100,
+          "total_tokens": 1700,
+          "tokens_per_success": 1700,
+          "median_duration_ms": 3500,
+          "p95_duration_ms": 3500,
+          "median_tool_calls": 4,
+          "usage_breakdown": {
+            "exact": 0,
+            "mixed": 0,
+            "estimated": 1
+          },
+          "score": 93.5909090909091
+        },
+        {
+          "key": "claude-code + playwright",
+          "agent": "claude-code",
+          "browser": "playwright",
+          "runs": 1,
+          "successes": 1,
+          "failures": 0,
+          "success_rate": 100,
+          "total_tokens": 2650,
+          "tokens_per_success": 2650,
+          "median_duration_ms": 4700,
+          "p95_duration_ms": 4700,
+          "median_tool_calls": 5,
+          "usage_breakdown": {
+            "exact": 1,
+            "mixed": 0,
+            "estimated": 0
+          },
+          "score": 50
+        },
+        {
+          "key": "codex + playwright",
+          "agent": "codex",
+          "browser": "playwright",
+          "runs": 1,
+          "successes": 0,
+          "failures": 1,
+          "success_rate": 0,
+          "total_tokens": 2600,
+          "tokens_per_success": 0,
+          "median_duration_ms": 0,
+          "p95_duration_ms": 0,
+          "median_tool_calls": 0,
+          "usage_breakdown": {
+            "exact": 1,
+            "mixed": 0,
+            "estimated": 0
+          },
+          "score": 0
+        }
+      ]
+    },
+    {
+      "task_id": "inspect-home",
+      "title": "Inspect home page",
+      "group": "inspection",
+      "competitors": [
+        {
+          "key": "codex + ghostchrome",
+          "agent": "codex",
+          "browser": "ghostchrome",
+          "runs": 1,
+          "successes": 1,
+          "failures": 0,
+          "success_rate": 100,
+          "total_tokens": 1100,
+          "tokens_per_success": 1100,
+          "median_duration_ms": 1800,
+          "p95_duration_ms": 1800,
+          "median_tool_calls": 2,
+          "usage_breakdown": {
+            "exact": 1,
+            "mixed": 0,
+            "estimated": 0
+          },
+          "score": 100
+        },
+        {
+          "key": "claude-code + ghostchrome",
+          "agent": "claude-code",
+          "browser": "ghostchrome",
+          "runs": 1,
+          "successes": 1,
+          "failures": 0,
+          "success_rate": 100,
+          "total_tokens": 1400,
+          "tokens_per_success": 1400,
+          "median_duration_ms": 2100,
+          "p95_duration_ms": 2100,
+          "median_tool_calls": 2,
+          "usage_breakdown": {
+            "exact": 0,
+            "mixed": 0,
+            "estimated": 1
+          },
+          "score": 89.38735177865613
+        },
+        {
+          "key": "codex + playwright",
+          "agent": "codex",
+          "browser": "playwright",
+          "runs": 1,
+          "successes": 1,
+          "failures": 0,
+          "success_rate": 100,
+          "total_tokens": 2200,
+          "tokens_per_success": 2200,
+          "median_duration_ms": 2600,
+          "p95_duration_ms": 2600,
+          "median_tool_calls": 3,
+          "usage_breakdown": {
+            "exact": 1,
+            "mixed": 0,
+            "estimated": 0
+          },
+          "score": 55.177865612648226
+        },
+        {
+          "key": "claude-code + playwright",
+          "agent": "claude-code",
+          "browser": "playwright",
+          "runs": 1,
+          "successes": 1,
+          "failures": 0,
+          "success_rate": 100,
+          "total_tokens": 2250,
+          "tokens_per_success": 2250,
+          "median_duration_ms": 2900,
+          "p95_duration_ms": 2900,
+          "median_tool_calls": 3,
+          "usage_breakdown": {
+            "exact": 1,
+            "mixed": 0,
+            "estimated": 0
+          },
+          "score": 50
+        }
+      ]
+    }
+  ]
+}

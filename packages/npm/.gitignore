@@ -1,0 +1,6 @@
+# Prebuilt binaries are injected by CI at publish time, never committed.
+cli-*/bin/ghostchrome
+cli-*/bin/ghostchrome.exe
+# Local install/pack artifacts
+**/node_modules/
+*.tgz

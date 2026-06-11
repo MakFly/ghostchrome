@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test -short -count=1 -race ./...
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          # Build golangci-lint from source with the runner's Go (1.26.x) so its
+          # build-Go isn't older than go.mod's target (prebuilt binaries lag and
+          # are rejected: "go version used to build golangci-lint is lower").
+          # Pinned to the last v1 release — .golangci.yml is v1-format config.
+          version: v1.64.8
+          install-mode: goinstall
+
+  integration:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+      - uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+      - run: go test -count=1 -race ./...

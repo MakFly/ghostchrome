@@ -1,0 +1,679 @@
+package engine
+
+import (
+	"context"
+	"fmt"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"runtime"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/launcher"
+	"github.com/go-rod/rod/lib/proto"
+)
+
+// LauncherOpts configures a stealth-flavored Chrome launcher.
+type LauncherOpts struct {
+	Headless   bool
+	RemotePort int // 0 = random
+
+	// Invisible forces headful Chrome (real rendering pipeline, harder to
+	// fingerprint as a bot) but positions the window far off-screen so it
+	// stays out of sight. Overrides Headless when set.
+	Invisible bool
+
+	// UserDataDir is the absolute Chrome --user-data-dir path. Empty means
+	// ephemeral. Use ResolveProfileDir to convert a short profile name into
+	// the canonical path under ~/.ghostchrome/profiles/<name>.
+	UserDataDir string
+
+	// Proxy is the upstream proxy URL passed to Chrome via --proxy-server.
+	// Examples: "http://user:pass@host:port", "socks5://host:1080".
+	// Empty means no proxy.
+	Proxy string
+
+	// Extensions is a list of absolute paths to unpacked Chrome extensions
+	// (each path must contain a manifest.json at its root). When non-empty,
+	// Chrome is launched with --load-extension and --disable-extensions-except
+	// so only the listed extensions are active. Note: requires HeadlessNew
+	// (the modern headless mode); old --headless ignores extensions.
+	Extensions []string
+
+	// SystemChrome forces the launcher to use the system's Google Chrome
+	// binary (com.google.Chrome bundle) instead of rod's bundled Chromium.
+	// Required when reusing a profile imported from the user's real Chrome
+	// — only com.google.Chrome can decrypt cookies sealed by macOS Keychain
+	// "Chrome Safe Storage". Auto-detected via the .ghostchrome-system-chrome
+	// marker file in the profile dir.
+	SystemChrome bool
+}
+
+// FindSystemChromeBinary returns the absolute path to a real, installed
+// Google Chrome / Chromium binary, or "" if none is found. Preferring the
+// system Chrome over rod's bundled Chromium matters for anti-bot: the
+// bundled build can lag many versions behind, and an outdated Chrome
+// version is itself a signal Cloudflare-style challenges score against.
+func FindSystemChromeBinary() string {
+	candidates := []string{
+		// macOS
+		"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+		"/Applications/Google Chrome Beta.app/Contents/MacOS/Google Chrome Beta",
+		"/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+		// Linux — real Google Chrome first (most "normal" fingerprint),
+		// then Chromium variants.
+		"/usr/bin/google-chrome",
+		"/usr/bin/google-chrome-stable",
+		"/opt/google/chrome/chrome",
+		"/usr/bin/chromium",
+		"/usr/bin/chromium-browser",
+		"/snap/bin/chromium",
+	}
+	for _, c := range candidates {
+		if _, err := os.Stat(c); err == nil {
+			return c
+		}
+	}
+	// Fall back to a PATH lookup for less common install layouts.
+	for _, name := range []string{"google-chrome", "google-chrome-stable", "chromium", "chromium-browser"} {
+		if p, err := exec.LookPath(name); err == nil {
+			return p
+		}
+	}
+	return ""
+}
+
+// ProfileUsesSystemChrome returns true when the profile dir was created by
+// `ghostchrome import-profile` and is bound to the system Chrome binary.
+// We keep this for backward compatibility but with the cookie decryption
+// path it's no longer required — the bundled Chromium can now read the
+// imported cookies because they were rewritten as plaintext.
+func ProfileUsesSystemChrome(userDataDir string) bool {
+	if userDataDir == "" {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(userDataDir, ".ghostchrome-system-chrome"))
+	return err == nil
+}
+
+// DefaultExtensionNames lists the bundled extension slugs ghostchrome looks
+// for under ~/.ghostchrome/extensions/<name>/ when --default-extensions is
+// set. Mirrors browser-use's defaults.
+var DefaultExtensionNames = []string{"ublock", "icdc", "force-bg"}
+
+// DefaultExtensionsDir returns the absolute path to the per-user extensions
+// directory: ~/.ghostchrome/extensions.
+func DefaultExtensionsDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home dir: %w", err)
+	}
+	return filepath.Join(home, ".ghostchrome", "extensions"), nil
+}
+
+// DefaultExtensionPaths returns absolute paths to the bundled extensions
+// (uBlock Origin Lite, "I still don't care about cookies", Force Background
+// Tab) that exist on disk. Missing entries are silently skipped. When none
+// are found a hint is printed to stderr.
+func DefaultExtensionPaths() ([]string, error) {
+	base, err := DefaultExtensionsDir()
+	if err != nil {
+		return nil, err
+	}
+	paths := make([]string, 0, len(DefaultExtensionNames))
+	for _, name := range DefaultExtensionNames {
+		dir := filepath.Join(base, name)
+		manifest := filepath.Join(dir, "manifest.json")
+		if _, err := os.Stat(manifest); err == nil {
+			paths = append(paths, dir)
+		}
+	}
+	if len(paths) == 0 {
+		fmt.Fprintf(os.Stderr,
+			"warning: no default extensions found under %s — run `ghostchrome extensions install` for setup instructions\n",
+			base)
+	}
+	return paths, nil
+}
+
+// validProfileName matches sluggified profile names accepted by
+// ResolveProfileDir. Anything else is rejected up-front.
+var validProfileName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// ResolveProfileDir converts a short profile name into the canonical
+// persistent Chrome user_data_dir path under ~/.ghostchrome/profiles/<name>.
+// The directory is created with 0700 perms if missing.
+func ResolveProfileDir(name string) (string, error) {
+	if name == "" {
+		return "", nil
+	}
+	if !validProfileName.MatchString(name) {
+		return "", fmt.Errorf("invalid profile name %q: use [A-Za-z0-9_-]", name)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home dir: %w", err)
+	}
+	dir := filepath.Join(home, ".ghostchrome", "profiles", name)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("create profile dir %s: %w", dir, err)
+	}
+	return dir, nil
+}
+
+// NewLauncher returns a configured launcher with the shared anti-detection
+// flags used by both auto-launch (NewBrowser) and the `serve` command.
+// --no-sandbox is auto-enabled when running inside a CI runner (env
+// GITHUB_ACTIONS / CI) or as root, because those environments disable the
+// Chrome sandbox.
+func NewLauncher(opts LauncherOpts) *launcher.Launcher {
+	// macOS contract: either fully visible or fully invisible — no flicker.
+	// --headless=new registers the app in the Dock during startup, causing
+	// a visible bounce/flash. The Invisible off-screen trick is even worse:
+	// WindowServer animates window creation before the position is applied.
+	// On darwin we collapse both "headless" and "invisible" to the legacy
+	// --headless mode, which is 100% UI-silent. Anti-bot fingerprint is
+	// slightly worse than --headless=new but the UX contract wins.
+	wantInvisible := opts.Headless || opts.Invisible
+	useLegacyHeadless := runtime.GOOS == "darwin" && wantInvisible
+	headlessNew := opts.Headless && !opts.Invisible && !useLegacyHeadless
+	l := launcher.New().
+		Headless(useLegacyHeadless).
+		HeadlessNew(headlessNew).
+		Set("disable-blink-features", "AutomationControlled").
+		Set("window-size", "1920,1080").
+		Delete("enable-automation")
+
+	// Prefer the system's real Chrome over rod's bundled Chromium. The
+	// bundled build can be many versions behind (an outdated Chrome version
+	// is itself an anti-bot signal), and a real install carries a more
+	// "normal" fingerprint. The GHOSTCHROME_BUNDLED_CHROME env var opts back
+	// into rod's download if that is ever needed.
+	if os.Getenv("GHOSTCHROME_BUNDLED_CHROME") == "" {
+		if bin := FindSystemChromeBinary(); bin != "" {
+			l = l.Bin(bin).
+				Set("no-first-run").
+				Set("no-default-browser-check")
+		}
+	}
+	if opts.Invisible && !useLegacyHeadless {
+		// Off-screen window: Chrome renders normally (full GPU/WebGL/fonts)
+		// so anti-bot fingerprints match a real browser, but no UI is visible.
+		// Skipped on macOS (handled by useLegacyHeadless above).
+		l = l.Set("window-position", "-32000,-32000")
+	}
+	if needsNoSandbox() {
+		l = l.NoSandbox(true)
+	}
+	if opts.RemotePort > 0 {
+		l = l.RemoteDebuggingPort(opts.RemotePort)
+	}
+	if opts.UserDataDir != "" {
+		l = l.UserDataDir(opts.UserDataDir)
+	}
+	if opts.Proxy != "" {
+		// Chrome's --proxy-server does not support user:pass in the URL;
+		// strip credentials here and let ApplyProxyAuth handle auth via CDP.
+		proxyForChrome := opts.Proxy
+		if u, err := url.Parse(opts.Proxy); err == nil && u.User != nil {
+			u.User = nil
+			proxyForChrome = u.String()
+		}
+		l = l.Proxy(proxyForChrome)
+		l = l.Set("ignore-certificate-errors")
+	}
+	if len(opts.Extensions) > 0 {
+		joined := strings.Join(opts.Extensions, ",")
+		l = l.Set("load-extension", joined).
+			Set("disable-extensions-except", joined)
+	}
+	// (System Chrome is now preferred unconditionally above; opts.SystemChrome
+	// and the imported-profile marker are kept in the struct for explicit
+	// callers but no longer gate binary resolution.)
+	// When the profile was imported via `ghostchrome import-profile`, cookies
+	// have been rewritten as plaintext. Chrome on macOS would normally still
+	// query the Keychain for the os_crypt key and wipe plaintext cookies it
+	// considers "stale". Forcing the basic password store disables Keychain
+	// integration, so Chrome accepts our plaintext cookies as authoritative.
+	if opts.UserDataDir != "" && profileHasDecryptedCookies(opts.UserDataDir) {
+		l = l.Set("password-store", "basic").
+			Set("use-mock-keychain")
+	}
+	return l
+}
+
+func profileHasDecryptedCookies(userDataDir string) bool {
+	if userDataDir == "" {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(userDataDir, ".ghostchrome-cookies-decrypted"))
+	return err == nil
+}
+
+// needsNoSandbox reports whether Chrome should be launched with --no-sandbox.
+// We check common CI environment markers, root UID (common in containers), and
+// Ubuntu 23.10+ AppArmor's restriction on unprivileged user namespaces — which
+// otherwise crashes Chrome with "No usable sandbox!". This mirrors Playwright's
+// default of disabling the Chromium sandbox: the trust boundary in automation
+// is the operator code, not the rendered page.
+func needsNoSandbox() bool {
+	if os.Geteuid() == 0 {
+		return true
+	}
+	for _, key := range []string{"GITHUB_ACTIONS", "CI", "GHOSTCHROME_NO_SANDBOX"} {
+		if v := os.Getenv(key); v != "" && v != "0" && v != "false" {
+			return true
+		}
+	}
+	if data, err := os.ReadFile("/proc/sys/kernel/apparmor_restrict_unprivileged_userns"); err == nil {
+		if strings.TrimSpace(string(data)) == "1" {
+			return true
+		}
+	}
+	return false
+}
+
+// Browser wraps a Rod browser with connect/launch logic.
+type Browser struct {
+	browser      *rod.Browser
+	page         *rod.Page
+	timeout      time.Duration
+	connected    bool // true if connected to external Chrome (don't close it)
+	attachFresh  bool // true when ConnectURL points at a foreign Chrome we must not disturb
+	connectURL   string
+	statePath    string
+	state        *sessionState
+	targetTab    *int
+	applyProfile bool
+	contextName  string // non-empty when operating inside a named BrowserContext
+
+	// providerCleanup releases provider-owned Chrome resources (set only
+	// when the browser was provisioned via BrowserOpts.ProviderFunc).
+	providerCleanup func()
+}
+
+// BrowserOpts configures NewBrowserWith. It supersedes the positional
+// parameters of NewBrowser and adds persistent profile + upstream proxy
+// support for auto-launch.
+type BrowserOpts struct {
+	ConnectURL   string
+	Headless     bool
+	Invisible    bool
+	TimeoutSec   int
+	UserDataDir  string   // absolute path; ignored when ConnectURL is set
+	Proxy        string   // upstream proxy URL; ignored when ConnectURL is set
+	Extensions   []string // absolute paths to unpacked extensions; ignored when ConnectURL is set
+	SystemChrome bool     // force /Applications/Google Chrome.app binary; ignored when ConnectURL is set
+
+	// AttachFresh is set when ConnectURL points at a Chrome we don't own
+	// (the user's personal browser, discovered via DiscoverCDP). In that
+	// case we must NOT reuse any existing tab — every command works in a
+	// freshly created background target so the user's foreground tab is
+	// left untouched. Ignored in auto-launch mode.
+	AttachFresh bool
+
+	// ContextName, when non-empty, routes all page operations through a
+	// named isolated BrowserContext (incognito). The name→contextID mapping
+	// is persisted in ~/.ghostchrome/contexts.json across CLI invocations.
+	// Only meaningful in connected mode (ConnectURL != ""). In auto-launch
+	// mode each process already gets its own profile; the flag is ignored.
+	ContextName string
+
+	// TargetTabIndex selects an explicit tab index in connected mode.
+	// Nil means "use persisted state or auto-select when unambiguous".
+	TargetTabIndex *int
+
+	// ApplyProfile, when true, installs ghostchrome's default UA / viewport
+	// profile on whichever page Page() resolves to. In auto-launch mode it
+	// is on by default (the page is ours). In connected mode it must be
+	// explicit — mutating a foreign Chrome tab violates the runtime policy
+	// stated in CLAUDE.md.
+	ApplyProfile bool
+
+	// ProviderFunc, when set, replaces the local launcher for Chrome
+	// provisioning. Returns a WS URL and a cleanup function. Ignored
+	// when ConnectURL is set (direct connection takes precedence).
+	ProviderFunc func(ctx context.Context) (wsURL string, cleanup func(), err error)
+}
+
+// NewBrowser creates a browser instance.
+// If connectURL is set, connects to an existing Chrome via CDP.
+// Otherwise, auto-launches a new Chrome process.
+func NewBrowser(connectURL string, headless bool, timeoutSec int) (*Browser, error) {
+	return NewBrowserWith(BrowserOpts{
+		ConnectURL: connectURL,
+		Headless:   headless,
+		TimeoutSec: timeoutSec,
+	})
+}
+
+// NewBrowserWith creates a browser instance with full options. Persistent
+// user_data_dir and upstream proxy only apply in auto-launch mode (i.e.,
+// when opts.ConnectURL is empty).
+func NewBrowserWith(opts BrowserOpts) (*Browser, error) {
+	connectURL := opts.ConnectURL
+	timeout := time.Duration(opts.TimeoutSec) * time.Second
+
+	var b *rod.Browser
+	var state *sessionState
+	var providerCleanup func()
+	var statePath string
+	if connectURL != "" {
+		var err error
+		statePath, err = sessionStatePath(connectURL)
+		if err != nil {
+			return nil, err
+		}
+		state, err = loadSessionState(statePath)
+		if err != nil {
+			return nil, err
+		}
+		b = rod.New().ControlURL(connectURL).Timeout(timeout)
+		if err := b.Connect(); err != nil {
+			return nil, err
+		}
+		if opts.ContextName != "" {
+			b, err = AcquireContext(b, opts.ContextName)
+			if err != nil {
+				return nil, fmt.Errorf("context %q: %w", opts.ContextName, err)
+			}
+		}
+	} else if opts.ProviderFunc != nil {
+		ctx := context.Background()
+		if timeout > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, timeout)
+			defer cancel()
+		}
+		u, cleanup, err := opts.ProviderFunc(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("provider: %w", err)
+		}
+		providerCleanup = cleanup
+		b = rod.New().ControlURL(u).Timeout(timeout)
+		if err := b.Connect(); err != nil {
+			if cleanup != nil {
+				cleanup()
+			}
+			return nil, err
+		}
+	} else {
+		u, err := NewLauncher(LauncherOpts{
+			Headless:     opts.Headless,
+			Invisible:    opts.Invisible,
+			UserDataDir:  opts.UserDataDir,
+			Proxy:        opts.Proxy,
+			Extensions:   opts.Extensions,
+			SystemChrome: opts.SystemChrome,
+		}).Launch()
+		if err != nil {
+			return nil, err
+		}
+		b = rod.New().ControlURL(u).Timeout(timeout)
+		if err := b.Connect(); err != nil {
+			return nil, err
+		}
+	}
+
+	// Auto-launch always applies our profile (the page is ours). Connected
+	// mode only applies it when the caller explicitly asked — never on a
+	// foreign user tab by default.
+	applyProfile := opts.ApplyProfile || connectURL == ""
+
+	return &Browser{
+		browser:      b,
+		timeout:      timeout,
+		connected:    connectURL != "",
+		attachFresh:  connectURL != "" && opts.AttachFresh,
+		connectURL:   connectURL,
+		statePath:    statePath,
+		state:        state,
+		targetTab:    opts.TargetTabIndex,
+		applyProfile: applyProfile,
+		contextName:  opts.ContextName,
+
+		providerCleanup: providerCleanup,
+	}, nil
+}
+
+// maybeApplyProfile is a no-op unless the browser was constructed with
+// ApplyProfile=true (auto-launch always sets this).
+func (b *Browser) maybeApplyProfile(p *rod.Page) {
+	if b == nil || !b.applyProfile {
+		return
+	}
+	_ = ApplyDefaultPageProfile(p)
+}
+
+// Page returns the active page or creates a new one.
+// When connected to an existing Chrome, it prefers the persisted active tab.
+func (b *Browser) Page() (*rod.Page, error) {
+	if b.page != nil {
+		return b.page, nil
+	}
+
+	if b.connected && !b.attachFresh {
+		if b.targetTab != nil {
+			p, err := pageAtIndex(b.browser, *b.targetTab)
+			if err != nil {
+				return nil, err
+			}
+			b.page = p
+			_ = b.setCurrentTargetID(p.TargetID)
+			b.maybeApplyProfile(p)
+			return b.page, nil
+		}
+
+		if b.state != nil && b.state.CurrentTargetID != "" {
+			p, err := b.browser.PageFromTarget(proto.TargetTargetID(b.state.CurrentTargetID))
+			if err == nil {
+				b.page = p
+				b.maybeApplyProfile(p)
+				return b.page, nil
+			}
+		}
+
+		pages, err := b.browser.Pages()
+		if err != nil {
+			return nil, err
+		}
+		nonBlank := nonBlankPages(pages)
+		switch len(nonBlank) {
+		case 1:
+			b.page = nonBlank[0]
+			b.maybeApplyProfile(b.page)
+			return b.page, nil
+		case 0:
+			if len(pages) > 0 {
+				b.page = pages[0]
+				b.maybeApplyProfile(b.page)
+				return b.page, nil
+			}
+		default:
+			// Legacy escape hatch: GHOSTCHROME_TAB_AUTO=first preserves the
+			// pre-multi-tab behavior of grabbing pages[0] silently. New
+			// callers should use --tab <index> instead.
+			if os.Getenv("GHOSTCHROME_TAB_AUTO") == "first" {
+				b.page = nonBlank[0]
+				b.maybeApplyProfile(b.page)
+				return b.page, nil
+			}
+			return nil, fmt.Errorf("multiple connected tabs available; run `ghostchrome tabs --connect ...` and pass --tab <index> (or set GHOSTCHROME_TAB_AUTO=first)")
+		}
+	}
+
+	// When attached to an external Chrome we create the new tab in the
+	// background so we don't steal focus from whatever the user is doing.
+	// In auto-launch mode the field is irrelevant (no visible UI), so we
+	// pass the same struct unconditionally.
+	p, err := b.browser.Page(proto.TargetCreateTarget{Background: b.connected})
+	if err != nil {
+		return nil, err
+	}
+	b.page = p
+	_ = b.setCurrentTargetID(p.TargetID)
+	b.maybeApplyProfile(p)
+	return p, nil
+}
+
+func pageAtIndex(browser *rod.Browser, index int) (*rod.Page, error) {
+	pages, err := browser.Pages()
+	if err != nil {
+		return nil, err
+	}
+	if index < 0 || index >= len(pages) {
+		return nil, fmt.Errorf("tab index %d out of range (0-%d)", index, len(pages)-1)
+	}
+	return pages[index], nil
+}
+
+func nonBlankPages(pages rod.Pages) rod.Pages {
+	if len(pages) == 0 {
+		return nil
+	}
+	// Each page.Info() is a sync CDP roundtrip. With many tabs this becomes
+	// the dominant cost of every command; fan out and keep the returned
+	// order stable.
+	keep := make([]bool, len(pages))
+	var wg sync.WaitGroup
+	wg.Add(len(pages))
+	for i, page := range pages {
+		i, page := i, page
+		go func() {
+			defer wg.Done()
+			info, err := page.Info()
+			if err != nil || info == nil {
+				return
+			}
+			if info.URL == "" || info.URL == "about:blank" {
+				return
+			}
+			keep[i] = true
+		}()
+	}
+	wg.Wait()
+
+	out := make(rod.Pages, 0, len(pages))
+	for i, page := range pages {
+		if keep[i] {
+			out = append(out, page)
+		}
+	}
+	return out
+}
+
+// Connected returns true if connected to external Chrome (not launched by us).
+func (b *Browser) Connected() bool {
+	return b.connected
+}
+
+// RodBrowser returns the underlying rod.Browser for advanced operations.
+func (b *Browser) RodBrowser() *rod.Browser {
+	return b.browser
+}
+
+// SetCurrentPage marks the provided page as the current tab for the session.
+func (b *Browser) SetCurrentPage(page *rod.Page) error {
+	if page == nil {
+		return nil
+	}
+	b.page = page
+	return b.setCurrentTargetID(page.TargetID)
+}
+
+// SaveSnapshot persists the latest ref snapshot for the page.
+func (b *Browser) SaveSnapshot(page *rod.Page, result *ExtractionResult) error {
+	if !b.connected || b.state == nil || page == nil || result == nil {
+		return nil
+	}
+	snapshot, err := snapshotFromResult(page, result)
+	if err != nil {
+		return err
+	}
+	b.state.Snapshots[snapshot.TargetID] = *snapshot
+	b.state.CurrentTargetID = snapshot.TargetID
+	b.page = page
+	return saveSessionState(b.statePath, b.state)
+}
+
+// Snapshot returns the last persisted snapshot for the current page.
+func (b *Browser) Snapshot(page *rod.Page) *PageSnapshot {
+	if !b.connected || b.state == nil || page == nil {
+		return nil
+	}
+	return b.snapshotByTarget(page.TargetID)
+}
+
+// CurrentTargetID returns the persisted current tab target, if any.
+func (b *Browser) CurrentTargetID() string {
+	if b.connected && b.state != nil {
+		return b.state.CurrentTargetID
+	}
+	if b.page != nil {
+		return string(b.page.TargetID)
+	}
+	return ""
+}
+
+func (b *Browser) snapshotByTarget(targetID proto.TargetTargetID) *PageSnapshot {
+	if b.state == nil {
+		return nil
+	}
+	snapshot, ok := b.state.Snapshots[string(targetID)]
+	if !ok {
+		return nil
+	}
+	copy := snapshot
+	return &copy
+}
+
+func (b *Browser) setCurrentTargetID(targetID proto.TargetTargetID) error {
+	if !b.connected || b.state == nil {
+		return nil
+	}
+	b.state.CurrentTargetID = string(targetID)
+	return saveSessionState(b.statePath, b.state)
+}
+
+func (b *Browser) deleteSnapshot(targetID proto.TargetTargetID) error {
+	if !b.connected || b.state == nil {
+		return nil
+	}
+	delete(b.state.Snapshots, string(targetID))
+	if b.state.CurrentTargetID == string(targetID) {
+		b.state.CurrentTargetID = ""
+	}
+	return saveSessionState(b.statePath, b.state)
+}
+
+// DeleteSnapshot removes stored ref state for a closed page target.
+func (b *Browser) DeleteSnapshot(targetID proto.TargetTargetID) error {
+	return b.deleteSnapshot(targetID)
+}
+
+// Close cleans up the browser resources.
+// External Chrome keeps running; the CLI process owns the websocket lifetime.
+func (b *Browser) Close() {
+	if b.browser != nil {
+		if b.connected {
+			// In attach-fresh mode (`--connect` without --tab) the tab was
+			// opened by this command, so close it — otherwise every command
+			// leaks a renderer into the shared Chrome and the instance slows
+			// to a crawl. The user's own tabs and the Chrome process itself
+			// are left untouched.
+			if b.attachFresh && b.page != nil {
+				_ = b.page.Close()
+			}
+			return
+		}
+		_ = b.browser.Close()
+	}
+	if b.providerCleanup != nil {
+		b.providerCleanup()
+	}
+}
