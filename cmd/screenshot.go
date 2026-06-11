@@ -21,6 +21,7 @@ var (
 	flagScreenshotDiffOut   string
 	flagScreenshotUpdate    bool
 	flagAnnotate            bool
+	flagScale               float64
 )
 
 var screenshotCmd = &cobra.Command{
@@ -53,7 +54,7 @@ Examples:
 		if flagAnnotate {
 			quality = 0
 		}
-		data, err := engine.TakeScreenshot(page, flagFull, flagElement, quality, snapshot)
+		data, err := engine.TakeScreenshotScaled(page, flagFull, flagElement, quality, flagScale, snapshot)
 		if err != nil {
 			exitIfStaleRef(err, "screenshot")
 			exitErr("screenshot", err)
@@ -197,5 +198,6 @@ func init() {
 	screenshotCmd.Flags().StringVar(&flagScreenshotDiffOut, "diff-output", "", "Path for the diff overlay PNG (default: <output>.diff.png)")
 	screenshotCmd.Flags().BoolVar(&flagScreenshotUpdate, "update", false, "Overwrite the baseline with the new screenshot (no diff)")
 	screenshotCmd.Flags().BoolVar(&flagAnnotate, "annotate", false, "Overlay numbered borders on interactive elements (forces PNG output)")
+	screenshotCmd.Flags().Float64Var(&flagScale, "scale", 1.0, "Device scale factor for full-page captures (0.5 = half resolution, smaller file)")
 	rootCmd.AddCommand(screenshotCmd)
 }

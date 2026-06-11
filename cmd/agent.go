@@ -644,9 +644,10 @@ func (s *agentSession) opEval(raw json.RawMessage) (interface{}, error) {
 
 func (s *agentSession) opScreenshot(raw json.RawMessage) (interface{}, error) {
 	var a struct {
-		FullPage bool   `json:"full_page"`
-		Ref      string `json:"ref"`
-		Quality  int    `json:"quality"`
+		FullPage bool    `json:"full_page"`
+		Ref      string  `json:"ref"`
+		Quality  int     `json:"quality"`
+		Scale    float64 `json:"scale"`
 	}
 	_ = unmarshalArgs(raw, &a)
 	b, page, err := s.ensurePage()
@@ -655,7 +656,7 @@ func (s *agentSession) opScreenshot(raw json.RawMessage) (interface{}, error) {
 	}
 	var data []byte
 	err = s.withRefRetry(b, page, func(snap *engine.PageSnapshot) error {
-		d, err := engine.TakeScreenshot(page, a.FullPage, a.Ref, a.Quality, snap)
+		d, err := engine.TakeScreenshotScaled(page, a.FullPage, a.Ref, a.Quality, a.Scale, snap)
 		data = d
 		return err
 	})

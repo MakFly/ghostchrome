@@ -290,7 +290,14 @@ func SubmitOnElement(page *rod.Page, el *rod.Element) error {
 // If fullPage is true, captures the full scrollable page.
 // quality controls JPEG/WebP quality (1-100); PNG is used if quality <= 0.
 func TakeScreenshot(page *rod.Page, fullPage bool, elementRef string, quality int, snapshot *PageSnapshot) ([]byte, error) {
-	return TakeScreenshotFormat(page, fullPage, elementRef, "", quality, snapshot)
+	return TakeScreenshotScaled(page, fullPage, elementRef, quality, 0, snapshot)
+}
+
+// TakeScreenshotScaled is like TakeScreenshot but accepts a device scale
+// factor. scale <= 0 or == 1 means native resolution. scale = 0.5 halves both
+// dimensions (quartering pixel count and file size).
+func TakeScreenshotScaled(page *rod.Page, fullPage bool, elementRef string, quality int, scale float64, snapshot *PageSnapshot) ([]byte, error) {
+	return takeScreenshotImpl(page, fullPage, elementRef, "", quality, scale, snapshot)
 }
 
 // TakeScreenshotFormat is the explicit-format variant. format is "png", "jpeg",
@@ -298,7 +305,15 @@ func TakeScreenshot(page *rod.Page, fullPage bool, elementRef string, quality in
 // q=60 is typically 30-50% smaller than JPEG at the same visual quality —
 // preferred when the consumer is an LLM agent that pays per byte.
 func TakeScreenshotFormat(page *rod.Page, fullPage bool, elementRef string, format string, quality int, snapshot *PageSnapshot) ([]byte, error) {
+	return takeScreenshotImpl(page, fullPage, elementRef, format, quality, 0, snapshot)
+}
+
+func takeScreenshotImpl(page *rod.Page, fullPage bool, elementRef string, format string, quality int, scale float64, snapshot *PageSnapshot) ([]byte, error) {
 	fmtChoice := resolveScreenshotFormat(format, quality)
+
+	if scale <= 0 {
+		scale = 1
+	}
 
 	if elementRef != "" {
 		el, err := ResolveRef(page, elementRef, snapshot)
@@ -327,7 +342,7 @@ func TakeScreenshotFormat(page *rod.Page, fullPage bool, elementRef string, form
 			X: 0, Y: 0,
 			Width:  metrics.ContentSize.Width,
 			Height: metrics.ContentSize.Height,
-			Scale:  1,
+			Scale:  scale,
 		}
 		req.CaptureBeyondViewport = true
 	}

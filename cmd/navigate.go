@@ -50,7 +50,10 @@ Examples:
 			return
 		}
 
-		_ = snapshotPage(b, page, engine.LevelSkeleton)
+		// Best-effort snapshot for later ref-based commands (click, type).
+		// On heavy pages the extraction can time out after a long navigation;
+		// that must not fail the goto itself — the user can always extract later.
+		trySnapshot(b, page, engine.LevelSkeleton)
 
 		text := fmt.Sprintf("[%d] %s — %s (%dms)", info.Status, info.Title, info.URL, info.TimeMs)
 		flush("navigate", true, durationMs, fmt.Sprintf("[%d] %s", info.Status, info.URL))

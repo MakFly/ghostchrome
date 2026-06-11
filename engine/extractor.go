@@ -3,10 +3,13 @@ package engine
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/proto"
 )
+
+const defaultExtractTimeout = 30 * time.Second
 
 // ExtractLevel controls how much of the accessibility tree is returned.
 type ExtractLevel string
@@ -92,14 +95,30 @@ var contentRoles = map[string]bool{
 }
 
 // Extract retrieves the accessibility tree from the page and filters it.
+// The CDP call uses its own 30 s timeout so a slow navigation doesn't eat
+// into the extraction budget.
 func Extract(page *rod.Page, level ExtractLevel, selector string) (*ExtractionResult, error) {
+	return ExtractWithTimeout(page, level, selector, defaultExtractTimeout)
+}
+
+// ExtractWithTimeout is like Extract but accepts an explicit timeout for the
+// CDP AccessibilityGetFullAXTree call. Use 0 to inherit the page's context
+// deadline (previous behavior).
+func ExtractWithTimeout(page *rod.Page, level ExtractLevel, selector string, timeout time.Duration) (*ExtractionResult, error) {
 	if err := ValidateExtractLevel(level); err != nil {
 		return nil, err
 	}
 
+	// Scope the CDP call to its own timeout so a slow page load doesn't
+	// starve the extraction.
+	p := page
+	if timeout > 0 {
+		p = page.Timeout(timeout)
+	}
+
 	// Get the full accessibility tree via CDP.
-	_ = proto.AccessibilityEnable{}.Call(page)
-	result, err := proto.AccessibilityGetFullAXTree{}.Call(page)
+	_ = proto.AccessibilityEnable{}.Call(p)
+	result, err := proto.AccessibilityGetFullAXTree{}.Call(p)
 	if err != nil {
 		return nil, fmt.Errorf("get accessibility tree: %w", err)
 	}
