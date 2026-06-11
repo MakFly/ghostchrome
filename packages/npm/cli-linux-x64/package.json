@@ -1,6 +1,6 @@
 {
   "name": "@ghostchrome/cli-linux-x64",
-  "version": "0.2.0",
+  "version": "0.1.0",
   "description": "ghostchrome prebuilt binary for linux-x64.",
   "repository": {
     "type": "git",
@@ -8,7 +8,13 @@
     "directory": "packages/npm/cli-linux-x64"
   },
   "license": "MIT",
-  "os": ["linux"],
-  "cpu": ["x64"],
-  "files": ["bin/ghostchrome"]
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin/ghostchrome"
+  ]
 }

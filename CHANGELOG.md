@@ -3,7 +3,10 @@
 All notable changes to ghostchrome are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/); the project follows SemVer.
 
-## [Unreleased]
+## [0.1.0] — 2026-06-11
+
+First release of the project. Single static Go binary that drives Chrome over
+CDP for LLM agents.
 
 ### Added
 - **Managed sessions (`-s` / `--session`)** — playwright-cli `-s` parity. A named
@@ -36,11 +39,6 @@ All notable changes to ghostchrome are documented here. The format is based on
   the 16 tools the MCP server actually registers.
 - sdk(ts): escalate `SIGTERM` → `SIGKILL` on dispose; default per-op timeout 30s.
 - sdk(py): read agent stdout line-buffered instead of byte-by-byte.
-
-## [0.1.0] — 2026-06-03
-
-Baseline release of the ghostchrome monorepo. Versioning was reset at this tag;
-earlier `v0.x`–`v1.0.0` tags were retired.
 
 ### Core
 - Single static Go binary that drives Chrome over CDP (via Rod) and returns

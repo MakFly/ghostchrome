@@ -6,18 +6,46 @@ description: Native browser automation for LLM agents. Use whenever the user ask
 # ghostchrome — native browser automation for agents
 
 `ghostchrome` is a single Go binary that controls Chrome via CDP. It exposes
-two surfaces useful to an agent: a **JSONL agent loop** (`ghostchrome agent`)
-for interactive multi-step flows, and **site-specific recipes** that return
-structured JSON in a single call.
+three surfaces useful to an agent: **per-call CLI commands with a managed
+`-s` session** (the simplest for a shell-driven agent), a **JSONL agent loop**
+(`ghostchrome agent`) for tight pipelined flows, and **site-specific recipes**
+that return structured JSON in a single call.
+
+Install (if not already on PATH): `bun install -g @ghostchrome/cli`, or
+`curl -fsSL https://raw.githubusercontent.com/MakFly/ghostchrome/main/install.sh | sh`.
 
 ## When to use which surface
 
 | Need | Use |
 |---|---|
+| Multi-step flow driven from the shell (one Bash call per action) | Per-call CLI + `-s <name>` (state persists across calls) |
 | Scrape a known site (autoscout24, leboncoin, linkedin) | The recipe — one shell call, structured JSON out |
-| Navigate + click + extract on an unknown site | The `agent` JSONL loop |
-| Need to keep one Chrome alive across many actions | The `agent` JSONL loop |
+| Tight pipelined flow, one subprocess, no per-call spawn | The `agent` JSONL loop |
+| Need to keep one Chrome alive across many actions | `-s <name>` (CLI) or the `agent` loop |
 | Just check a page exists / read static HTML | NOT ghostchrome — use `WebFetch` |
+
+## CLI with a managed session (`-s`, simplest for agents)
+
+`-s <name>` auto-launches a persistent Chrome on the first call and **reuses
+it — same tab, same cookies — on every later call**, with no `ws://` URL to
+track. This lets you drive a browser with ordinary one-shot Bash commands and
+keep state between them. `@ref` ids from an `extract`/`preview` survive into
+the next command.
+
+```bash
+ghostchrome -s work goto https://example.com/login   # spawns Chrome on first use
+ghostchrome -s work preview                          # status + errors + DOM with @refs
+ghostchrome -s work type  @1 "alice@example.com" --submit
+ghostchrome -s work click @3
+ghostchrome -s work extract --level content          # compact a11y tree
+
+ghostchrome sessions list            # name, port, pid, alive
+ghostchrome sessions stop work       # tear the session down (or: sessions kill-all)
+```
+
+`$GHOSTCHROME_SESSION=work` sets the default so you can drop the flag. Add
+`--stealth` on the **first** call (it's baked into the spawned Chrome). Per-call
+latency after the first spawn is ~50 ms.
 
 ## Recipe surface (one-shot, structured JSON)
 
@@ -61,10 +89,11 @@ across requests — refs from a prior `extract` are valid for the next
 |---|---|---|
 | `init` | — | open browser eagerly |
 | `navigate` | `{url, wait?}` (`load`/`stable`/`networkidle`) | `{url,title,status,time_ms}` |
-| `back` / `forward` | — | `{url,title}` |
+| `back` / `forward` / `reload` | — | `{url,title}` |
 | `extract` | `{level?, selector?}` (`skeleton`/`content`/`full`) | a11y tree + `refs: {@1: {...}}` |
-| `click` | `{ref}` | — |
-| `type` | `{ref, text}` | — |
+| `click` / `dblclick` | `{ref}` | — |
+| `check` / `uncheck` | `{ref}` (idempotent checkbox/radio) | — |
+| `type` | `{ref, text, submit?}` (`submit` presses Enter) | — |
 | `press` | `{key, ref?}` | — |
 | `hover` | `{ref}` | — |
 | `select` | `{ref, values[]}` | — |
@@ -87,6 +116,7 @@ Set them once on the `agent` invocation; they apply to every op in the loop:
 
 - `--stealth` — hide headless fingerprints (use for any anti-bot site)
 - `--dismiss-cookies` — auto-dismiss cookie banners after navigation
+- `-s, --session <name>` — managed persistent session (spawn once, reuse across calls); also a global flag on every CLI command
 - `--user-profile <name>` — persistent Chrome profile under `~/.ghostchrome/profiles/<name>`
 - `--connect=auto` — attach to a running Chrome on `:9222-9229` instead of spawning
 - `--connect ws://...` — attach to a specific Chrome (e.g. one launched by `ghostchrome serve`)
@@ -127,8 +157,19 @@ Default to: `--stealth --dismiss-cookies --human`. If the site still blocks:
 - **Don't use `eval` to scrape big data sets** — use `extract` with `selector` if you need a subtree, or write a recipe (see `packages/autoscout24/` for a template; the cleanest pattern is reading `window.__NEXT_DATA__` from Next.js sites).
 - **Don't ignore stderr** — recipes log progress and warnings there; only stdout is the structured payload.
 
+## MCP server
+
+`ghostchrome mcp` runs a Model Context Protocol server over stdio (16 tools, a
+drop-in alternative to `@playwright/mcp`). Register it with Claude Code:
+
+```bash
+claude mcp add ghostchrome -- ghostchrome mcp            # spawns its own Chrome
+claude mcp add ghostchrome -- ghostchrome mcp --connect=auto   # attach to a running one
+```
+
 ## Where to read more
 
+- `docs/cli.md` — full CLI reference (every command + global flags).
 - `cmd/agent.go` — the JSONL dispatcher and the full op list.
+- `internal/ops/ops.go` + `contracts/commands.json` — canonical op catalog.
 - `packages/autoscout24/autoscout24.go` — template for adding a new site recipe.
-- `docs/MCP-SERVER-SPEC.md` — planned MCP server surface (not yet implemented).
