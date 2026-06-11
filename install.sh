@@ -68,3 +68,8 @@ fi
 
 echo "ghostchrome ${VERSION} installed to ${INSTALL_DIR}/ghostchrome"
 "${INSTALL_DIR}/ghostchrome" --version
+
+# Install the bundled agent skill globally (~/.claude/skills). Best-effort.
+if "${INSTALL_DIR}/ghostchrome" skills install >/dev/null 2>&1; then
+  echo "Installed agent skill to ~/.claude/skills/ghostchrome (removed on uninstall)"
+fi

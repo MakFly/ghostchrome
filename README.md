@@ -123,7 +123,10 @@ bun install -g @ghostchrome/cli       # or: bunx @ghostchrome/cli <cmd>
 
 The package resolves the prebuilt Go binary for your platform (Linux/macOS,
 amd64/arm64; Windows amd64) — no Node runtime, no postinstall, no browser
-download. Prefer a single binary with no package manager? Use the installer:
+download. The bundled agent skill is installed globally to
+`~/.claude/skills/ghostchrome/` (and removed on `ghostchrome uninstall`); the
+curl installer below does this automatically, or run `ghostchrome skills install`.
+Prefer a single binary with no package manager? Use the installer:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/MakFly/ghostchrome/main/install.sh | sh

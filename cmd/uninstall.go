@@ -35,9 +35,14 @@ Examples:
 		}
 		dataDirs := engine.GhostchromeDataDirs()
 
+		skillDirs := installedSkillDirs()
+
 		// Plan
 		fmt.Fprintln(out, "uninstall plan:")
 		fmt.Fprintf(out, "  - remove binary: %s\n", exe)
+		for _, s := range skillDirs {
+			fmt.Fprintf(out, "  - remove skill:  %s\n", s)
+		}
 		if flagUninstallPurge {
 			for _, d := range dataDirs {
 				fmt.Fprintf(out, "  - remove data:   %s\n", d)
@@ -62,6 +67,12 @@ Examples:
 					"  some 'ghostchrome serve' processes may still be running — check: pgrep -af 'ghostchrome serve'\n", err)
 		} else if n > 0 {
 			fmt.Fprintf(out, "stopped %d session(s)\n", n)
+		}
+
+		// Remove the bundled skill (installed alongside the binary, so it goes
+		// with it regardless of --purge).
+		if n := removeInstalledSkills(); n > 0 {
+			fmt.Fprintf(out, "removed %d bundled skill(s)\n", n)
 		}
 
 		if flagUninstallPurge {

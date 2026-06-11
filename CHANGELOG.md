@@ -3,6 +3,25 @@
 All notable changes to ghostchrome are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/); the project follows SemVer.
 
+## [0.3.0] — 2026-06-11
+
+### Added
+- **Bundled agent skill** — the Claude Code skill is embedded in the binary and
+  installed globally to `~/.claude/skills/ghostchrome/` by the installer
+  (`ghostchrome skills install/remove/status`); `uninstall` removes it.
+- **Profile/disk management** — `profiles list` (sorted by size) and
+  `profiles rm <name...>` to reclaim disk; `--purge` on `sessions stop`/
+  `kill-all` deletes the profile with the session.
+- **`ghostchrome uninstall [--purge] [--yes]`** — stops sessions, removes the
+  binary + bundled skill, and with `--purge` the data dirs.
+
+### Fixed
+- **Robust session/process lifecycle** — stealth is best-effort with its own
+  bounded context (no more `stealth: context canceled` abort on heavy sites);
+  `serve` self-exits when its Chrome dies; respawn/prune/stop kill only a PID
+  verified (by exact `serve --port <p> --user-profile <name>` tokens, per
+  platform) to be this session — no orphan browsers, no subprocess pile-up.
+
 ## [0.1.0] — 2026-06-11
 
 First release of the project. Single static Go binary that drives Chrome over

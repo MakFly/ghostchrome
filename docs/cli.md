@@ -323,9 +323,20 @@ data directories (profiles, sessions, contexts, cache). Dry-run unless `--yes`.
 
 ```bash
 ghostchrome uninstall                # print what would be removed
-ghostchrome uninstall --yes          # remove the binary
-ghostchrome uninstall --purge --yes  # remove the binary AND all data
+ghostchrome uninstall --yes          # remove the binary + bundled skill
+ghostchrome uninstall --purge --yes  # remove the binary, skill, AND all data
 ```
+
+### `skills`
+
+ghostchrome bundles an agent skill (teaches Claude Code how to drive it) inside
+the binary. The install script installs it globally; uninstall removes it.
+
+| Subcommand | Effect |
+|---|---|
+| `skills install` | Write the bundled skill to `~/.claude/skills/ghostchrome/` |
+| `skills remove` | Remove the installed skill |
+| `skills status` | Show whether it's installed and where |
 
 A session resolves to `--connect` internally; `--user-profile`/`--proxy`/
 `--stealth` are applied when the session's Chrome is first spawned.
