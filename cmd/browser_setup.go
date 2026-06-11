@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -137,9 +138,16 @@ func openPage() (*engine.Browser, *rod.Page) {
 
 func applyStealthIfNeeded(page *rod.Page) {
 	if flagStealth {
-		if err := engine.ApplyStealth(page); err != nil {
-			exitErr("stealth", err)
+		// Stealth is best-effort hardening, not correctness. Give it its own
+		// fresh, bounded context so a slow/heavy page (or an already-exhausted
+		// command timeout) can't cancel it, and NEVER abort the command if a
+		// patch fails — just warn. (Sessions are already stealthed at spawn;
+		// this re-arms the active page's next navigation.)
+		sctx, scancel := context.WithTimeout(context.Background(), 8*time.Second)
+		if err := engine.ApplyStealth(page.Context(sctx)); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: stealth not fully applied: %v\n", err)
 		}
+		scancel()
 	}
 	if flagProxy != "" && flagConnect == "" {
 		if err := engine.ApplyProxyAuth(page, flagProxy); err != nil {

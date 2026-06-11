@@ -2,9 +2,12 @@ package cmd
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/MakFly/ghostchrome/engine"
 	"github.com/go-rod/rod"
@@ -54,11 +57,37 @@ Then in another terminal:
 		fmt.Fprintf(os.Stderr, "  ghostchrome <cmd> --connect '%s'\n\n", wsURL)
 		fmt.Println(wsURL)
 
+		// Resolve the CDP port so we can detect Chrome dying and not linger as
+		// an orphan serve. flagPort is set in session mode; otherwise parse it
+		// from the WebSocket URL.
+		port := flagPort
+		if port == 0 {
+			if u, perr := url.Parse(wsURL); perr == nil {
+				if p, aerr := strconv.Atoi(u.Port()); aerr == nil {
+					port = p
+				}
+			}
+		}
+
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-		<-sig
-
-		fmt.Fprintln(os.Stderr, "\nshutting down")
+		ticker := time.NewTicker(3 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-sig:
+				fmt.Fprintln(os.Stderr, "\nshutting down")
+				return
+			case <-ticker.C:
+				// If Chrome is gone, exit instead of lingering with no browser.
+				if port > 0 {
+					if _, err := engine.DiscoverCDP([]int{port}, 1500*time.Millisecond); err != nil {
+						fmt.Fprintln(os.Stderr, "chrome no longer reachable — serve exiting")
+						return
+					}
+				}
+			}
+		}
 	},
 }
 

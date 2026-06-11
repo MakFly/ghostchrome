@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -114,6 +115,51 @@ func sessionAlive(e SessionEntry) (string, bool) {
 	return ws, true
 }
 
+// cmdlineIsSessionServe reports whether a process command line is the serve
+// that backs this session. Identity is the spawn fingerprint matched as EXACT
+// tokens: the `serve` subcommand AND `--port <port>` AND `--user-profile
+// <name>`. The exact (random) port + the session name make this unique to our
+// process without depending on the binary's name (it may be renamed/symlinked).
+func cmdlineIsSessionServe(cmd string, e SessionEntry) bool {
+	fields := strings.Fields(cmd)
+	serve := false
+	port := strconv.Itoa(e.Port)
+	portOK := false
+	nameOK := false
+	for i, f := range fields {
+		if f == "serve" {
+			serve = true
+		}
+		switch {
+		case f == "--port" && i+1 < len(fields) && fields[i+1] == port:
+			portOK = true
+		case f == "--port="+port:
+			portOK = true
+		case f == "--user-profile" && i+1 < len(fields) && fields[i+1] == e.Name:
+			nameOK = true
+		case f == "--user-profile="+e.Name:
+			nameOK = true
+		}
+	}
+	return serve && portOK && nameOK
+}
+
+// killSessionProcess signals the session's serve process ONLY if the PID still
+// belongs to THIS session's ghostchrome serve. Guards against the OS having
+// recycled a dead serve's PID for an unrelated process — we must never signal
+// an innocent process during respawn/prune/stop. processCmdline is provided
+// per-platform (session_spawn_{unix,windows}.go).
+func killSessionProcess(e SessionEntry) {
+	cmd, ok := processCmdline(e.PID)
+	if !ok {
+		return // gone or unverifiable — do not signal anything
+	}
+	if !cmdlineIsSessionServe(cmd, e) {
+		return // PID reused by an unrelated process — leave it alone
+	}
+	_ = killPID(e.PID)
+}
+
 // freePort asks the OS for an unused localhost TCP port.
 func freePort() (int, error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -141,7 +187,10 @@ func AcquireSession(name string, opts SessionSpawnOpts) (string, error) {
 		if ws, alive := sessionAlive(entry); alive {
 			return ws, nil
 		}
-		// Stale entry — process gone. Drop it and respawn below.
+		// CDP-dead, but the serve process may still linger (e.g. Chrome
+		// crashed and serve hasn't polled yet). Kill it so we never orphan
+		// the old serve when spawning its replacement.
+		killSessionProcess(entry)
 		delete(reg.Sessions, name)
 	}
 
@@ -274,12 +323,39 @@ func StopSession(name string) error {
 	if !ok {
 		return fmt.Errorf("session %q not found in registry", name)
 	}
-	_ = killPID(entry.PID)
+	killSessionProcess(entry)
 	delete(reg.Sessions, name)
 	if lp, err := sessionLogPath(name); err == nil {
 		_ = os.Remove(lp)
 	}
 	return saveSessionRegistry(path, reg)
+}
+
+// PruneSessions removes registry entries whose Chrome is no longer reachable,
+// killing any lingering serve process and its log. Returns the count pruned.
+func PruneSessions() (int, error) {
+	reg, path, err := loadSessionRegistry()
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for name, entry := range reg.Sessions {
+		if _, alive := sessionAlive(entry); alive {
+			continue
+		}
+		killSessionProcess(entry)
+		if lp, lerr := sessionLogPath(name); lerr == nil {
+			_ = os.Remove(lp)
+		}
+		delete(reg.Sessions, name)
+		n++
+	}
+	if n > 0 {
+		if err := saveSessionRegistry(path, reg); err != nil {
+			return n, err
+		}
+	}
+	return n, nil
 }
 
 // KillAllSessions stops every registered session.
@@ -290,7 +366,7 @@ func KillAllSessions() (int, error) {
 	}
 	n := 0
 	for name, entry := range reg.Sessions {
-		_ = killPID(entry.PID)
+		killSessionProcess(entry)
 		if lp, lerr := sessionLogPath(name); lerr == nil {
 			_ = os.Remove(lp)
 		}

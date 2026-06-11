@@ -65,6 +65,23 @@ var sessionsStopCmd = &cobra.Command{
 	},
 }
 
+var sessionsPruneCmd = &cobra.Command{
+	Use:   "prune",
+	Short: "Remove dead sessions (Chrome no longer reachable) from the registry",
+	Args:  cobra.NoArgs,
+	Run: func(cmd *cobra.Command, args []string) {
+		n, err := engine.PruneSessions()
+		if err != nil {
+			exitErr("prune sessions", err)
+		}
+		if flagFormat == "json" {
+			fmt.Fprintf(cmd.OutOrStdout(), `{"pruned":%d}`+"\n", n)
+		} else {
+			fmt.Fprintf(cmd.OutOrStdout(), "pruned %d dead session(s)\n", n)
+		}
+	},
+}
+
 var sessionsKillAllCmd = &cobra.Command{
 	Use:   "kill-all",
 	Short: "Stop every registered session",
@@ -85,6 +102,7 @@ var sessionsKillAllCmd = &cobra.Command{
 func init() {
 	sessionsCmd.AddCommand(sessionsListCmd)
 	sessionsCmd.AddCommand(sessionsStopCmd)
+	sessionsCmd.AddCommand(sessionsPruneCmd)
 	sessionsCmd.AddCommand(sessionsKillAllCmd)
 	rootCmd.AddCommand(sessionsCmd)
 	commandGroups["sessions"] = "session"

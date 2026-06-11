@@ -3,9 +3,30 @@
 package engine
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
+	"strings"
 	"syscall"
 )
+
+// processCmdline returns a process's command line via a PowerShell CIM query
+// (wmic is deprecated on modern Windows), or false if it can't be read.
+func processCmdline(pid int) (string, bool) {
+	if pid <= 0 {
+		return "", false
+	}
+	query := fmt.Sprintf("(Get-CimInstance Win32_Process -Filter 'ProcessId=%d').CommandLine", pid)
+	out, err := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", query).Output()
+	if err != nil {
+		return "", false
+	}
+	s := strings.TrimSpace(string(out))
+	if s == "" {
+		return "", false
+	}
+	return s, true
+}
 
 // detachSysProcAttr starts the child in a new process group so it is not tied
 // to the parent CLI's console.

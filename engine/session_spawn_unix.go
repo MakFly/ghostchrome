@@ -3,9 +3,33 @@
 package engine
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
+	"strconv"
+	"strings"
 	"syscall"
 )
+
+// processCmdline returns a process's command line, or false if it can't be
+// read. Linux uses /proc; other unixes (macOS) fall back to ps.
+func processCmdline(pid int) (string, bool) {
+	if pid <= 0 {
+		return "", false
+	}
+	if data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid)); err == nil {
+		return strings.ReplaceAll(string(data), "\x00", " "), true
+	}
+	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "args=").Output()
+	if err != nil {
+		return "", false
+	}
+	s := strings.TrimSpace(string(out))
+	if s == "" {
+		return "", false
+	}
+	return s, true
+}
 
 // detachSysProcAttr starts the child in a new session (setsid) so it survives
 // the parent CLI process exiting.
