@@ -187,6 +187,13 @@ func NewLauncher(opts LauncherOpts) *launcher.Launcher {
 		HeadlessNew(headlessNew).
 		Set("disable-blink-features", "AutomationControlled").
 		Set("window-size", "1920,1080").
+		// Without password-store=basic, Chrome on Linux queries the secret
+		// service (gnome-keyring/kwallet) over D-Bus for os_crypt on first
+		// navigation; when no service answers, the call blocks for the full
+		// 25 s D-Bus timeout. Playwright sets both flags unconditionally for
+		// the same reason.
+		Set("password-store", "basic").
+		Set("use-mock-keychain").
 		Delete("enable-automation")
 
 	// Prefer the system's real Chrome over rod's bundled Chromium. The

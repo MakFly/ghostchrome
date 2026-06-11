@@ -118,6 +118,13 @@ func openPage() (*engine.Browser, *rod.Page) {
 	}
 
 	page, err := b.Page()
+	// A freshly spawned session Chrome can still be churning targets when we
+	// attach; "Session with given id not found" (-32001) at this point is
+	// transient — retry briefly before giving up.
+	for attempt := 0; attempt < 4 && err != nil && isTransientTargetErr(err); attempt++ {
+		time.Sleep(300 * time.Millisecond)
+		page, err = b.Page()
+	}
 	if err != nil {
 		b.Close()
 		exitErr("page", err)
@@ -134,6 +141,18 @@ func openPage() (*engine.Browser, *rod.Page) {
 	}
 
 	return b, page
+}
+
+// isTransientTargetErr reports whether the error is a CDP target/session
+// race that resolves itself once the freshly spawned Chrome settles.
+func isTransientTargetErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "Session with given id not found") ||
+		strings.Contains(msg, "No target with given id") ||
+		strings.Contains(msg, "-32001")
 }
 
 func applyStealthIfNeeded(page *rod.Page) {

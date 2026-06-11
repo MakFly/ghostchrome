@@ -669,22 +669,45 @@ func isBotChallenge(page *rod.Page) bool {
 		return false
 	}
 
-	challengeMarkers := []string{
+	// Strong markers only ever appear on an actual challenge interstitial.
+	strongMarkers := []string{
 		"captcha-delivery.com",
 		"ct.captcha-delivery.com/c.js",
 		"geo.captcha-delivery.com",
-		"cdn-cgi/challenge-platform",
-		"challenges.cloudflare.com",
-		"cf-turnstile",
 		"_cf-chl-opt",
 		"window._cf_chl_opt",
+		"cf-challenge-running",
+		"challenge-error-text",
 	}
-
-	for _, marker := range challengeMarkers {
+	for _, marker := range strongMarkers {
 		if strings.Contains(html, marker) {
 			return true
 		}
 	}
 
-	return false
+	// Ambient markers are CF assets that legitimate pages also reference:
+	// Cloudflare injects cdn-cgi/challenge-platform on every page of a
+	// bot-management-enabled site, and challenges.cloudflare.com appears
+	// wherever a Turnstile widget is embedded. They only indicate an
+	// interstitial when the visible page is essentially empty.
+	ambientMarkers := []string{
+		"cdn-cgi/challenge-platform",
+		"challenges.cloudflare.com",
+		"cf-turnstile",
+	}
+	hasAmbient := false
+	for _, marker := range ambientMarkers {
+		if strings.Contains(html, marker) {
+			hasAmbient = true
+			break
+		}
+	}
+	if !hasAmbient {
+		return false
+	}
+	res, err := page.Eval(`() => (document.body && document.body.innerText.length) || 0`)
+	if err != nil {
+		return false
+	}
+	return res.Value.Int() < 800
 }
