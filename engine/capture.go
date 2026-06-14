@@ -27,6 +27,10 @@ type CaptureSpec struct {
 	// IncludeBody, when true, fetches the response body via
 	// Network.getResponseBody for every matching entry.
 	IncludeBody bool
+	// ExcludeStatic drops image, stylesheet, font, and media requests from
+	// matching entries. It is intended for Playwright CLI-compatible network
+	// output; raw capture keeps static resources by default.
+	ExcludeStatic bool
 	// OutputPath, if set, streams each entry as it is captured (NDJSON).
 	OutputPath string
 }
@@ -168,7 +172,25 @@ func (s *CaptureSession) matches(e *CapturedEntry) bool {
 	if s.mimeRe != nil && !s.mimeRe.MatchString(e.MimeType) {
 		return false
 	}
+	if s.spec.ExcludeStatic && IsStaticNetworkEntry(e.ResourceType, e.MimeType) {
+		return false
+	}
 	return true
+}
+
+// IsStaticNetworkEntry reports whether a request is usually noise for
+// Playwright CLI-style network inspection.
+func IsStaticNetworkEntry(resourceType, mimeType string) bool {
+	switch strings.ToLower(resourceType) {
+	case "image", "stylesheet", "font", "media":
+		return true
+	}
+	mime := strings.ToLower(mimeType)
+	return strings.HasPrefix(mime, "image/") ||
+		strings.Contains(mime, "font") ||
+		strings.HasPrefix(mime, "audio/") ||
+		strings.HasPrefix(mime, "video/") ||
+		mime == "text/css"
 }
 
 func (s *CaptureSession) record(e *CapturedEntry) {

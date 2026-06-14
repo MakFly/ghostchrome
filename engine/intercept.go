@@ -20,10 +20,12 @@ type InterceptSpec struct {
 
 	// FulfillPattern optionally matches requests to be answered with the
 	// FulfillBody payload and FulfillStatus response code. Only set one pattern.
-	FulfillPattern     string
-	FulfillBody        []byte
-	FulfillStatus      int
-	FulfillContentType string
+	FulfillPattern       string
+	FulfillBody          []byte
+	FulfillStatus        int
+	FulfillContentType   string
+	FulfillHeaders       map[string]string
+	RemoveRequestHeaders []string
 
 	// Rules are pre-compiled rule-file entries. When non-empty, each incoming
 	// request is matched against them before falling through to FulfillPattern /
@@ -127,10 +129,20 @@ func StartIntercept(browser *rod.Browser, spec InterceptSpec) (*InterceptSession
 			contentType = detectContentType(body, spec.FulfillPattern)
 		}
 		if err := router.Add(spec.FulfillPattern, "", func(h *rod.Hijack) {
+			if len(spec.RemoveRequestHeaders) > 0 {
+				h.ContinueRequest(&proto.FetchContinueRequest{Headers: filteredRequestHeaders(h, spec.RemoveRequestHeaders)})
+				stats.mu.Lock()
+				stats.Passed++
+				stats.mu.Unlock()
+				return
+			}
 			h.Response.Payload().ResponseCode = status
 			h.Response.Payload().Body = body
 			if contentType != "" {
 				h.Response.SetHeader("Content-Type", contentType)
+			}
+			for k, v := range spec.FulfillHeaders {
+				h.Response.SetHeader(k, v)
 			}
 			stats.mu.Lock()
 			stats.Fulfilled++
@@ -147,6 +159,24 @@ func StartIntercept(browser *rod.Browser, spec InterceptSpec) (*InterceptSession
 	}()
 
 	return &InterceptSession{router: router, stats: stats, done: done}, nil
+}
+
+func filteredRequestHeaders(h *rod.Hijack, remove []string) []*proto.FetchHeaderEntry {
+	removeSet := make(map[string]struct{}, len(remove))
+	for _, name := range remove {
+		name = strings.ToLower(strings.TrimSpace(name))
+		if name != "" {
+			removeSet[name] = struct{}{}
+		}
+	}
+	var headers []*proto.FetchHeaderEntry
+	for name, value := range h.Request.Headers() {
+		if _, drop := removeSet[strings.ToLower(name)]; drop {
+			continue
+		}
+		headers = append(headers, &proto.FetchHeaderEntry{Name: name, Value: value.String()})
+	}
+	return headers
 }
 
 // ParseBlockList splits a comma-separated glob list, trimming spaces and
@@ -190,4 +220,3 @@ func detectContentType(body []byte, pattern string) string {
 	}
 	return http.DetectContentType(body)
 }
-

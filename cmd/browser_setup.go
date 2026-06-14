@@ -12,18 +12,34 @@ import (
 	"github.com/go-rod/rod"
 )
 
+// skipImplicitDaemon is set by commands that launch their own Chrome (serve)
+// to prevent the implicit daemon from spawning a second one.
+var skipImplicitDaemon bool
+
 func buildBrowserOpts() engine.BrowserOpts {
-	// Named session (`-s` / $GHOSTCHROME_SESSION): resolve to a managed,
-	// persistent Chrome. Unlike --connect=auto we do NOT mark the tab fresh —
-	// the active tab is reused across calls so state (and @refs) persist.
+	// Named session (`-s` / $PLAYWRIGHT_CLI_SESSION / $GHOSTCHROME_SESSION):
+	// resolve to a managed, persistent Chrome. Unlike --connect=auto we do NOT
+	// mark the tab fresh — the active tab is reused across calls so state (and
+	// @refs) persist.
 	if flagSession == "" {
-		flagSession = os.Getenv("GHOSTCHROME_SESSION")
+		flagSession = sessionNameFromEnv()
+	}
+	if flagSession == "" && flagConnect == "" && !skipImplicitDaemon {
+		if ws, ok := engine.DefaultSession(); ok {
+			flagConnect = ws
+			fmt.Fprintf(os.Stderr, "[session %s] %s\n", engine.DefaultSessionName, ws)
+		} else if implicitSessionEnabled() {
+			flagSession = engine.DefaultSessionName
+		}
 	}
 	if flagSession != "" && flagConnect == "" {
 		ws, err := engine.AcquireSession(flagSession, engine.SessionSpawnOpts{
-			Headless: flagHeadless,
-			Stealth:  flagStealth,
-			Proxy:    flagProxy,
+			Headless:       flagHeadless,
+			Stealth:        flagStealth,
+			Proxy:          flagProxy,
+			ProxyBypass:    flagProxyBypass,
+			ExecutablePath: flagConfigExecutablePath,
+			ConfigPath:     flagConfig,
 		})
 		if err != nil {
 			exitErr("session", err)
@@ -44,13 +60,18 @@ func buildBrowserOpts() engine.BrowserOpts {
 		attachFresh = true
 	}
 	opts := engine.BrowserOpts{
-		ConnectURL:  connectURL,
-		Headless:    flagHeadless,
-		Invisible:   flagInvisible,
-		TimeoutSec:  flagTimeout,
-		Proxy:       flagProxy,
-		AttachFresh: attachFresh,
-		ContextName: flagContext,
+		ConnectURL:     connectURL,
+		Headless:       flagHeadless,
+		Invisible:      flagInvisible,
+		TimeoutSec:     flagTimeout,
+		CDPHeaders:     flagConfigCDPHeaders,
+		CDPTimeoutMS:   flagConfigCDPTimeoutMS,
+		Proxy:          flagProxy,
+		ProxyBypass:    flagProxyBypass,
+		ExecutablePath: flagConfigExecutablePath,
+		LaunchArgs:     flagConfigLaunchArgs,
+		AttachFresh:    attachFresh,
+		ContextName:    flagContext,
 	}
 	if flagTab >= 0 {
 		if connectURL == "" {
@@ -67,14 +88,43 @@ func buildBrowserOpts() engine.BrowserOpts {
 		if flagUserProfile != "" {
 			fmt.Fprintln(os.Stderr, "warning: --user-profile ignored when --connect is set (cannot change Chrome user_data_dir of a running instance)")
 		}
+		if flagUserDataDir != "" {
+			fmt.Fprintln(os.Stderr, "warning: --profile / config browser.userDataDir ignored when --connect is set (cannot change Chrome user_data_dir of a running instance)")
+		}
 		if flagProxy != "" {
 			fmt.Fprintln(os.Stderr, "warning: --proxy ignored when --connect is set (proxy is fixed at Chrome launch time)")
 			opts.Proxy = ""
+		}
+		if flagProxyBypass != "" {
+			fmt.Fprintln(os.Stderr, "warning: --proxy-bypass / config proxy.bypass ignored when --connect is set (proxy is fixed at Chrome launch time)")
+			opts.ProxyBypass = ""
+		}
+		if flagConfigExecutablePath != "" {
+			fmt.Fprintln(os.Stderr, "warning: config executablePath / PLAYWRIGHT_MCP_EXECUTABLE_PATH ignored when --connect is set (browser binary is fixed at Chrome launch time)")
+			opts.ExecutablePath = ""
+		}
+		if len(flagConfigLaunchArgs) > 0 {
+			fmt.Fprintln(os.Stderr, "warning: config launchOptions.args ignored when --connect is set (browser flags are fixed at Chrome launch time)")
+			opts.LaunchArgs = nil
 		}
 		if flagDefaultExtensions || flagExtensions != "" {
 			fmt.Fprintln(os.Stderr, "warning: --extensions / --default-extensions ignored when --connect is set (extensions are loaded at Chrome launch time)")
 		}
 		return opts
+	}
+	if flagUserDataDir != "" {
+		dir := flagUserDataDir
+		if !filepath.IsAbs(dir) {
+			abs, err := filepath.Abs(dir)
+			if err != nil {
+				exitErr("profile", err)
+			}
+			dir = abs
+		}
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			exitErr("profile", err)
+		}
+		opts.UserDataDir = dir
 	}
 	if flagUserProfile != "" {
 		dir, err := engine.ResolveProfileDir(flagUserProfile)
@@ -129,6 +179,7 @@ func openPage() (*engine.Browser, *rod.Page) {
 		b.Close()
 		exitErr("page", err)
 	}
+	applyConfigBrowserOptions(b)
 
 	if opts.UserDataDir != "" && opts.ConnectURL == "" {
 		if cookies, cerr := engine.LoadCookiesJSON(opts.UserDataDir); cerr == nil && len(cookies) > 0 {
@@ -139,8 +190,89 @@ func openPage() (*engine.Browser, *rod.Page) {
 			}
 		}
 	}
+	applyConfigContextOptions(page)
+	applyConfigInitScripts(page)
+	applyConfigServiceWorkers(page)
+	applyConfigPermissions(b)
+	applyConfigStorageState(b, page)
+	autoStartVideoIfConfigured(b)
+	b.StartBackgroundObserver(page)
 
 	return b, page
+}
+
+func applyConfigContextOptions(page *rod.Page) {
+	if flagConfigDevice != "" {
+		device, ok := engine.DeviceByName(flagConfigDevice)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "warning: config device not applied: unknown device %q\n", flagConfigDevice)
+		} else if err := engine.ApplyDevice(page, device); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: config device not applied: %v\n", err)
+		}
+	}
+	if flagConfigViewportW > 0 && flagConfigViewportH > 0 {
+		if err := engine.SetViewport(page, flagConfigViewportW, flagConfigViewportH); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: config viewport not applied: %v\n", err)
+		}
+	}
+	if flagConfigUserAgent != "" {
+		if err := engine.ApplyUserAgentLocale(page, flagConfigUserAgent, flagConfigLocale); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: config userAgent not applied: %v\n", err)
+		}
+	} else if flagConfigLocale != "" {
+		if err := engine.ApplyLocale(page, flagConfigLocale); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: config locale not applied: %v\n", err)
+		}
+	}
+}
+
+func applyConfigBrowserOptions(b *engine.Browser) {
+	if !flagConfigIgnoreHTTPSErr || b == nil {
+		return
+	}
+	if err := b.RodBrowser().IgnoreCertErrors(true); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: config ignore HTTPS errors not applied: %v\n", err)
+	}
+}
+
+func applyConfigStorageState(b *engine.Browser, page *rod.Page) {
+	if flagConfigStorageState == "" || b == nil || page == nil {
+		return
+	}
+	state, err := readStorageStateFile(flagConfigStorageState)
+	if err != nil {
+		exitErr("config storageState", err)
+	}
+	if err := engine.LoadStorageState(b.RodBrowser(), page, state); err != nil {
+		exitErr("config storageState", err)
+	}
+}
+
+func applyConfigPermissions(b *engine.Browser) {
+	if len(flagConfigPermissions) == 0 || b == nil {
+		return
+	}
+	if err := engine.GrantPlaywrightPermissions(b.RodBrowser(), flagConfigPermissions); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: config permissions not applied: %v\n", err)
+	}
+}
+
+func applyConfigServiceWorkers(page *rod.Page) {
+	if flagConfigServiceWorkers == "" || page == nil {
+		return
+	}
+	if err := engine.ApplyServiceWorkersMode(page, flagConfigServiceWorkers); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: config serviceWorkers not applied: %v\n", err)
+	}
+}
+
+func applyConfigInitScripts(page *rod.Page) {
+	if len(flagConfigInitScripts) == 0 || page == nil {
+		return
+	}
+	if err := engine.ApplyInitScriptFiles(page, flagConfigInitScripts); err != nil {
+		exitErr("config initScript", err)
+	}
 }
 
 // isTransientTargetErr reports whether the error is a CDP target/session

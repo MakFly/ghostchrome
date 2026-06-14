@@ -106,3 +106,26 @@ func ApplyInitScripts(page *rod.Page) error {
 	}
 	return nil
 }
+
+// ApplyInitScriptFiles registers JavaScript files to run before future page
+// scripts. This mirrors Playwright's addInitScript-style behavior for config
+// supplied init scripts.
+func ApplyInitScriptFiles(page *rod.Page, paths []string) error {
+	if page == nil {
+		return fmt.Errorf("page is nil")
+	}
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read init script %s: %w", path, err)
+		}
+		if _, err := page.EvalOnNewDocument(string(data)); err != nil {
+			return fmt.Errorf("register init script %s: %w", path, err)
+		}
+	}
+	return nil
+}

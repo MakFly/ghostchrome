@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/MakFly/ghostchrome/engine"
@@ -12,13 +13,14 @@ var clickWaitFor string
 var clickWaitTimeoutMs int
 
 var clickCmd = &cobra.Command{
-	Use:   "click [ref|url]",
+	Use:   "click [ref|url] [button|url]",
 	Short: "Click an interactive element by ref or semantic locator",
 	Long: `Click an element identified by:
   - its @ref (from the last snapshot), OR
   - a semantic locator via --by-role / --by-name / --by-label / --by-text.
 
-If a URL is provided (without a ref), it is navigated first.
+If a second argument is provided, it is interpreted as a mouse button when it is
+left|right|middle. Otherwise it is treated as a URL and navigated first.
 After clicking, extracts a skeleton of the resulting page.
 
 Examples:
@@ -26,18 +28,27 @@ Examples:
   ghostchrome click --by-role button --by-name "Sign in"
   ghostchrome click --by-text "Learn more"
   ghostchrome click @1 https://example.com
+  ghostchrome click @3 right
   ghostchrome click --by-role button --by-name "Accept" --wait-for=visible --wait-timeout-ms=5000`,
 	Args: cobra.RangeArgs(0, 2),
 	Run: func(cmd *cobra.Command, args []string) {
 		ref := ""
 		targetURL := ""
+		button, hasButton := parseMouseButtonStrict("left")
+		if !hasButton {
+			exitErr("click", fmt.Errorf("unexpected default button state"))
+		}
 		if !clickLocator.Any() {
 			if len(args) == 0 {
 				exitErr("click", errNeedRefOrLocator())
 			}
 			ref = args[0]
 			if len(args) > 1 {
-				targetURL = args[1]
+				if b, ok := parseMouseButtonStrict(args[1]); ok {
+					button = b
+				} else {
+					targetURL = args[1]
+				}
 			}
 		} else if len(args) > 0 {
 			targetURL = args[0]
@@ -55,7 +66,7 @@ Examples:
 			if err != nil {
 				exitErr("click", err)
 			}
-			if err := engine.ClickElement(page, el); err != nil {
+			if err := engine.ClickElementWithButton(page, el, button); err != nil {
 				exitErr("click", err)
 			}
 		} else {
@@ -65,12 +76,16 @@ Examples:
 					exitIfStaleRef(err, "click")
 					exitErr("click", err)
 				}
-				if err := engine.ClickElement(page, el); err != nil {
+				if err := engine.ClickElementWithButton(page, el, button); err != nil {
 					exitErr("click", err)
 				}
 			} else {
-				if err := engine.ClickRef(page, ref, snapshot); err != nil {
+				el, err := engine.ResolveRef(page, ref, snapshot)
+				if err != nil {
 					exitIfStaleRef(err, "click")
+					exitErr("click", err)
+				}
+				if err := engine.ClickElementWithButton(page, el, button); err != nil {
 					exitErr("click", err)
 				}
 			}
@@ -78,7 +93,7 @@ Examples:
 
 		result := snapshotPage(b, page, engine.LevelSkeleton)
 
-		text := engine.FormatTextProfile(result, renderProfile())
+		text := formatCurrentPlaywrightPageStateOutput("click", page, result)
 		output(&actionResult{
 			Action:  "click",
 			Ref:     ref,

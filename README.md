@@ -35,6 +35,7 @@ One command. ~50 ms warm. ~2,000 tokens. Refs (`@1`, `@2`) you can click and typ
 - [Comparison with Playwright, Puppeteer, chromedp](#comparison)
 - [Using it with LLM agents](#using-it-with-llm-agents)
 - [Command reference](#command-reference)
+- [Playwright CLI parity](#playwright-cli-parity)
 - [Status & roadmap](#status--roadmap)
 - [Contributing](#contributing)
 - [License](#license)
@@ -50,7 +51,7 @@ LLM-driven browser automation has a token problem. Playwright-MCP returns a full
 What you get:
 - **Filtered accessibility tree** — only interactive elements get refs (`@1`, `@2`), 3-5× fewer nodes than a full a11y dump.
 - **Three extraction levels** — `skeleton` (minimal), `content` (text), `full` (everything named).
-- **Auto-launch or attach** — every command can spawn a temporary Chrome or attach to an existing session via `--connect=auto`.
+- **Transparent daemon** — every command auto-spawns a persistent background Chrome on first use (no `serve`, no `--connect`, zero config). Just run `ghostchrome goto <url>` and it works.
 - **CDP-native** — built on [Rod](https://github.com/go-rod/rod), so iframe handling, stealth patches, and event capture work out of the box.
 - **Single ~24 MB binary** — no Node.js, no `npm install`, no Playwright browsers download.
 - **Three ways to drive it** — the CLI, an MCP server (16 tools, drop-in for `@playwright/mcp`), or typed Python / TypeScript SDKs over the persistent JSONL `agent` loop.
@@ -59,11 +60,13 @@ What you get:
 
 ## Benchmark
 
-Reproducible head-to-head against [@playwright/mcp](https://github.com/microsoft/playwright-mcp) on 5 local HTML fixtures + real public sites. Run it yourself:
+Reproducible head-to-head against [@playwright/mcp](https://github.com/microsoft/playwright-mcp) and [Playwright CLI](https://playwright.dev/agent-cli/) on 5 local HTML fixtures + real public sites. Run it yourself:
 
 ```bash
 ./benchmark/run-bench.sh                 # cold-spawn mode (default)
 BENCH_MODE=warm ./benchmark/run-bench.sh # long-lived session (real agent loop)
+./benchmark/run-bench-playwright-cli.sh   # Playwright CLI: cold mode
+BENCH_MODE=warm ./benchmark/run-bench-playwright-cli.sh # Playwright CLI warm mode
 ```
 
 ### Warm session — the real LLM-agent loop
@@ -129,7 +132,7 @@ curl installer below does this automatically, or run `ghostchrome skills install
 Prefer a single binary with no package manager? Use the installer:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MakFly/ghostchrome/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/MakFly/ghostchrome/main/scripts/install.sh | bash
 ```
 
 Either way, verify it works:
@@ -196,7 +199,7 @@ ghostchrome type  @1 "alice@example.com" https://example.com/login
 ghostchrome press Enter https://example.com/login
 ```
 
-Refs come from the previous snapshot. The browser session is preserved when you use `--connect=auto` (recommended).
+Refs come from the previous snapshot. The browser session is preserved automatically via the implicit daemon (no `--connect` needed).
 
 ### Named sessions (`-s`, playwright-cli-style)
 
@@ -210,10 +213,11 @@ ghostchrome sessions list           # work  :PORT  alive  pid …
 ghostchrome sessions stop work      # tear it down
 ```
 
-`-s <name>` (or `$GHOSTCHROME_SESSION`) auto-launches a persistent Chrome on first use, bound to a
-disk profile of the same name (cookies persist under `~/.ghostchrome/profiles/<name>`), and reuses
-it — including the active tab — across calls. Per-call latency drops to ~50 ms. No ws:// URL to
-manage. Manage sessions with `ghostchrome sessions list | stop <name> | kill-all`.
+`-s <name>` (or `$PLAYWRIGHT_CLI_SESSION`, falling back to `$GHOSTCHROME_SESSION`) auto-launches a
+persistent Chrome on first use, bound to a disk profile of the same name (cookies persist under
+`~/.ghostchrome/profiles/<name>`), and reuses it — including the active tab — across calls.
+Per-call latency drops to ~50 ms. No ws:// URL to manage. Manage sessions with
+`ghostchrome sessions list | stop <name> | kill-all`.
 
 > Prefer to manage Chrome yourself? `ghostchrome serve --port 9222` prints a ws:// URL and any
 > command can attach with `--connect=auto` (discovers a serve on 127.0.0.1:9222-9229).
@@ -238,7 +242,7 @@ your agent → ghostchrome CLI → Rod (Go) → Chrome DevTools Protocol → Chr
 2. **Three extraction levels** let an agent ask for exactly the granularity it needs. Most agent loops stay at `content`.
 3. **Refs are stable within a snapshot** and replayed on the next command via element-state cache, so `click @3` works without a new selector.
 4. **Output is text first** — no JSON wrapping unless you ask for `--json`. The agent reads what a human would read in DevTools.
-5. **Background tab mode** (`--connect=auto`) reuses an existing Chrome session in an isolated tab, so multiple agents can share one browser without colliding.
+5. **Transparent daemon** — auto-spawns a persistent background Chrome on first use. Named sessions (`-s work`, `-s research`) run parallel isolated browsers. No `serve` needed.
 
 Architecture deep dive: [`docs/architecture.md`](docs/architecture.md). Full CLI reference: [`docs/cli.md`](docs/cli.md). MCP server (16 tools): [`docs/mcp.md`](docs/mcp.md). Anti-bot story: [`docs/anti-bot.md`](docs/anti-bot.md). Fast HTTP path: [`docs/fast-path.md`](docs/fast-path.md).
 
@@ -256,7 +260,7 @@ Architecture deep dive: [`docs/architecture.md`](docs/architecture.md). Full CLI
 | Multi-browser | Chrome only | Chrome / FF / WebKit | Chrome / FF / WebKit | Chrome / FF | Chrome only |
 | Refs for click/type | `@1`, `@2` | aria-ref strings | CSS / XPath | CSS / XPath | CSS / XPath |
 | Auto-wait | yes (4 conditions) | yes | yes (battle-tested) | yes | partial |
-| Trace viewer | format-compatible (planned) | yes | yes | no | no |
+| Trace viewer | partial: CDP artifacts only | no | yes | no | no |
 | Stealth | built-in patches | external plugin | external plugin | external plugin | manual |
 
 Pick ghostchrome if you're piloting a browser from an LLM and tokens / latency / footprint matter. Pick Playwright if you're writing E2E test suites or need WebKit/Firefox parity.
@@ -271,9 +275,11 @@ ghostchrome covers the **agent-relevant verb surface** of
 `screenshot`, `pdf` — while adding things it has no equivalent for: `preview`
 (one-shot page health), `collect` (auto-listing extraction), `perf` (Web
 Vitals), `assert` (CI exit codes), built-in stealth, and 3–4× lower token
-output. What ghostchrome deliberately does **not** chase: WebKit/Firefox,
-`tracing`/`video`/`show` (Playwright's test-authoring home turf), and
-coordinate-level `keydown`/`keyup` (use `press`).
+output. What ghostchrome deliberately does **not** fully chase: WebKit/Firefox,
+`pause-at`/`resume`/`step-over`, and full Playwright trace/video/show parity.
+`tracing`/`video`/`show` are implemented in partial mode: CDP artifacts are
+available and useful for agent loops, but Playwright Trace Viewer equivalence is
+not yet complete. `keydown`/`keyup` are implemented as aliases.
 
 ---
 
@@ -378,7 +384,7 @@ def snapshot(url):
 
 ### Aider / Cursor / any agent with shell access
 
-Use `ghostchrome` as a regular shell command. Prefix calls with `--connect=auto` after running `ghostchrome serve` once per session.
+Use `ghostchrome` as a regular shell command. The daemon starts automatically — no `serve` step.
 
 Recipes: [`docs/recipes/`](docs/recipes/) — Algolia, AutoScout24, bulk scrape, registry sweep, agent JSONL mode.
 
@@ -435,6 +441,21 @@ Agents
 Full details: [`docs/cli.md`](docs/cli.md).
 
 </details>
+
+---
+
+## Playwright CLI parity
+
+ghostchrome exposes Playwright CLI-compatible command names for the core
+browser loop where the behavior maps cleanly to existing CDP/Rod primitives:
+`open`, `snapshot`, `fill`, `resize`, `go-back`, `go-forward`, `state-save`,
+`state-load`, `attach --cdp=<channel|url>`, `cookie-*`, `localstorage-*`,
+`sessionstorage-*`, `dialog-*`, `tab-*`, session management aliases, and raw
+mouse/key aliases.
+
+The tracked source-of-truth matrix is [`docs/playwright-cli-parity.md`](docs/playwright-cli-parity.md).
+It separates compatible commands from partial matches and explicit gaps so the
+project does not claim parity that is not implemented.
 
 ---
 

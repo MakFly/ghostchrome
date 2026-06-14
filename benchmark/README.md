@@ -32,6 +32,78 @@ If exact token usage is unavailable, record:
 
 The harness will estimate tokens as `ceil(chars / 4)` and mark those runs as estimated.
 
+### Playwright CLI mode
+
+To compare against the Playwright CLI binary, use:
+
+```bash
+./benchmark/run-bench-playwright-cli.sh
+```
+
+For session-reuse runs (approximate real-agent loop):
+
+```bash
+BENCH_MODE=warm ./benchmark/run-bench-playwright-cli.sh
+```
+
+For reproducible runs, pin the Playwright CLI package instead of relying on
+`latest`:
+
+```bash
+PWCLI_PACKAGE=@playwright/cli@<version> TRIALS=7 SKIP_PUBLIC=1 \
+  ./benchmark/run-bench-playwright-cli.sh
+
+PWCLI_PACKAGE=@playwright/cli@<version> BENCH_MODE=warm TRIALS=7 SKIP_PUBLIC=1 \
+  ./benchmark/run-bench-playwright-cli.sh
+```
+
+Note: the benchmark measures the bytes/latency of the `open` (cold) / `goto` (warm) command only. In Playwright CLI, these commands already include an automatic snapshot in their normal output, so no explicit `snapshot` command is executed in the harness.
+
+Benchmark outputs are written to:
+
+- `benchmark/results-cli.md` / `benchmark/results-cli.json`
+- `benchmark/results-cli-warm.md` / `benchmark/results-cli-warm.json`
+- `benchmark/badges-cli/tokens.json`
+- `benchmark/badges-cli/latency.json`
+
+### Concrete Playwright CLI benchmark protocol
+
+Use the official Playwright Agent CLI documentation as the command source:
+
+- <https://playwright.dev/agent-cli/introduction>
+- <https://playwright.dev/agent-cli/capabilities>
+
+Run command-surface checks first, so the benchmark is not comparing invented or
+undocumented names:
+
+```bash
+GOCACHE=/tmp/go-build go test ./cmd \
+  -run 'TestPlaywrightCompatCommandsRegistered|TestPlaywrightCompatFlagsRegistered'
+```
+
+Then run the same site set in both modes:
+
+```bash
+PWCLI_PACKAGE=@playwright/cli@<version> TRIALS=7 SKIP_PUBLIC=1 \
+  ./benchmark/run-bench-playwright-cli.sh
+
+PWCLI_PACKAGE=@playwright/cli@<version> BENCH_MODE=warm TRIALS=7 SKIP_PUBLIC=1 \
+  ./benchmark/run-bench-playwright-cli.sh
+```
+
+Keep these invariants fixed for every published comparison:
+
+- same machine, CPU governor, OS, and Chrome installation
+- same `PWCLI_PACKAGE`
+- same `TRIALS`, `BENCH_SITES`, `SKIP_PUBLIC`, and fixture files
+- cold and warm results reported separately
+- no extra Playwright `snapshot` command after `open` / `goto`
+- median values reported, with raw JSON kept for audit
+
+Treat the microbenchmark as a payload/latency/RSS comparison. For serious
+agent-level claims, use the suite JSON format below and record task success,
+tool calls, and token usage per task.
+
 ## Suite Format
 
 Use one JSON file containing:
@@ -40,7 +112,7 @@ Use one JSON file containing:
 - task definitions
 - all runs
 
-See [sample-suite.json](/Users/kev/Documents/lab/sandbox/ghostchrome/benchmark/sample-suite.json).
+See [sample-suite.json](sample-suite.json).
 
 Each run should represent one attempt of one task with one pairing:
 
@@ -74,6 +146,9 @@ Run each task at least 5 times for each pairing:
 - `claude-code + playwright`
 
 Keep the task prompts identical across pairings.
+
+For Playwright CLI mode, pairings should use the same site fixture set and the same
+`TRIALS`, `BENCH_SITES`, and fixture server if used.
 
 Recommended task groups:
 

@@ -1,8 +1,6 @@
 package cmd
 
 import (
-	"fmt"
-
 	"github.com/MakFly/ghostchrome/engine"
 	"github.com/go-rod/rod"
 	"github.com/spf13/cobra"
@@ -22,7 +20,7 @@ func runHistoryStep(action string, step func(*rod.Page) error) {
 		exitErr(action, err)
 	}
 
-	if err := engine.WaitForPage(page, "stable"); err != nil {
+	if err := engine.WaitForPage(page, "load"); err != nil {
 		exitErr(action, err)
 	}
 
@@ -31,9 +29,12 @@ func runHistoryStep(action string, step func(*rod.Page) error) {
 		exitErr("page info", err)
 	}
 
-	_ = snapshotPage(b, page, engine.LevelSkeleton)
+	result := snapshotPage(b, page, engine.LevelSkeleton)
 
-	text := fmt.Sprintf("[%s] %s — %s", action, info.Title, info.URL)
+	text := formatPlaywrightPageStateOutput(&engine.PageInfo{
+		URL:   info.URL,
+		Title: info.Title,
+	}, result)
 	output(&navResult{
 		Action: action,
 		URL:    info.URL,
@@ -42,8 +43,9 @@ func runHistoryStep(action string, step func(*rod.Page) error) {
 }
 
 var backCmd = &cobra.Command{
-	Use:   "back",
-	Short: "Navigate back in browser history",
+	Use:     "back",
+	Aliases: []string{"go-back"},
+	Short:   "Navigate back in browser history",
 	Long: `Go back one step in the current page's navigation history.
 Returns the resulting page URL and title after navigating back.
 
@@ -56,8 +58,9 @@ Examples:
 }
 
 var forwardCmd = &cobra.Command{
-	Use:   "forward",
-	Short: "Navigate forward in browser history",
+	Use:     "forward",
+	Aliases: []string{"go-forward"},
+	Short:   "Navigate forward in browser history",
 	Long: `Go forward one step in the current page's navigation history.
 Returns the resulting page URL and title after navigating forward.
 

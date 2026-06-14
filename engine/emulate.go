@@ -1,11 +1,13 @@
 package engine
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/proto"
+	"github.com/ysmood/gson"
 )
 
 // Device describes a hardware profile used by the emulate command.
@@ -130,10 +132,100 @@ func touchPoints(enabled bool) int {
 
 // ApplyUserAgent overrides navigator.userAgent and the HTTP User-Agent header.
 func ApplyUserAgent(page *rod.Page, ua string) error {
-	if err := (proto.NetworkSetUserAgentOverride{UserAgent: ua}).Call(page); err != nil {
+	return ApplyUserAgentLocale(page, ua, "")
+}
+
+// ApplyUserAgentLocale overrides the User-Agent and optionally the browser
+// Accept-Language value using the same CDP call Playwright-backed contexts use.
+func ApplyUserAgentLocale(page *rod.Page, ua string, locale string) error {
+	req := proto.NetworkSetUserAgentOverride{UserAgent: ua}
+	if locale != "" {
+		acceptLanguage, _, err := localeValues(locale)
+		if err != nil {
+			return err
+		}
+		req.AcceptLanguage = acceptLanguage
+	}
+	if err := req.Call(page); err != nil {
 		return fmt.Errorf("user-agent override: %w", err)
 	}
+	if locale != "" {
+		if err := installLocaleScript(page, locale); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// ApplyLocale emulates Playwright's browser.contextOptions.locale for a page.
+// Without a User-Agent override, CDP has no standalone AcceptLanguage command,
+// so this applies the HTTP header plus navigator.language(s) for new documents.
+func ApplyLocale(page *rod.Page, locale string) error {
+	acceptLanguage, _, err := localeValues(locale)
+	if err != nil {
+		return err
+	}
+	if err := (proto.NetworkEnable{}).Call(page); err != nil {
+		return fmt.Errorf("network enable: %w", err)
+	}
+	if err := (proto.NetworkSetExtraHTTPHeaders{
+		Headers: proto.NetworkHeaders{
+			"Accept-Language": gson.New(acceptLanguage),
+			"DNT":             gson.New("1"),
+		},
+	}).Call(page); err != nil {
+		return fmt.Errorf("locale headers: %w", err)
+	}
+	if err := installLocaleScript(page, locale); err != nil {
+		return err
+	}
+	return nil
+}
+
+func installLocaleScript(page *rod.Page, locale string) error {
+	_, languages, err := localeValues(locale)
+	if err != nil {
+		return err
+	}
+	primaryJSON, err := json.Marshal(languages[0])
+	if err != nil {
+		return fmt.Errorf("locale script: %w", err)
+	}
+	languagesJSON, err := json.Marshal(languages)
+	if err != nil {
+		return fmt.Errorf("locale script: %w", err)
+	}
+	script := fmt.Sprintf(`(() => {
+	const primary = %s;
+	const languages = %s;
+	const define = (name, getter) => {
+		try {
+			Object.defineProperty(Navigator.prototype, name, { get: getter, configurable: true });
+		} catch (_) {}
+	};
+	define('language', () => primary);
+	define('languages', () => languages.slice());
+})();`, primaryJSON, languagesJSON)
+	if _, err := page.EvalOnNewDocument(script); err != nil {
+		return fmt.Errorf("locale init script: %w", err)
+	}
+	return nil
+}
+
+func localeValues(locale string) (acceptLanguage string, languages []string, err error) {
+	primary := strings.TrimSpace(strings.ReplaceAll(locale, "_", "-"))
+	if primary == "" {
+		return "", nil, fmt.Errorf("locale: empty")
+	}
+	base := primary
+	if idx := strings.IndexByte(primary, '-'); idx > 0 {
+		base = primary[:idx]
+	}
+	languages = dedupeStrings([]string{primary, base, "en-US", "en"})
+	if len(languages) == 1 {
+		return primary, languages, nil
+	}
+	return fmt.Sprintf("%s,%s;q=0.9,en-US;q=0.8,en;q=0.7", primary, base), languages, nil
 }
 
 // ApplyColorScheme emulates prefers-color-scheme. Accepts "dark", "light",

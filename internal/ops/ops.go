@@ -39,9 +39,9 @@ type Arg struct {
 
 // Op is one entry in the canonical operation catalog.
 type Op struct {
-	Name     string   `json:"name"`
-	Summary  string   `json:"summary"`
-	Args     []Arg    `json:"args"`
+	Name    string `json:"name"`
+	Summary string `json:"summary"`
+	Args    []Arg  `json:"args"`
 	// Surfaces lists which protocol surfaces expose this op.
 	// Known values: "jsonl", "mcp", "ai".
 	Surfaces []string `json:"surfaces"`
@@ -71,9 +71,9 @@ type Op struct {
 func Catalog() []Op {
 	return []Op{
 		{
-			Name:    "back",
-			Summary: "Navigate back in browser history.",
-			Args:    []Arg{},
+			Name:     "back",
+			Summary:  "Navigate back in browser history.",
+			Args:     []Arg{},
 			Surfaces: []string{"jsonl", "mcp"},
 		},
 		{
@@ -89,13 +89,14 @@ func Catalog() []Op {
 			Summary: "Click an element by its @ref from the last extract/snapshot.",
 			Args: []Arg{
 				{Name: "ref", Type: ArgString, Required: true, Description: "@ref of the element, e.g. @5"},
+				{Name: "button", Type: ArgString, Required: false, Description: "Mouse button: left, right, or middle (default: left)"},
 			},
 			Surfaces: []string{"jsonl", "mcp", "ai"},
 		},
 		{
-			Name:    "close",
-			Summary: "Close the browser session and exit the agent loop.",
-			Args:    []Arg{},
+			Name:     "close",
+			Summary:  "Close the browser session and exit the agent loop.",
+			Args:     []Arg{},
 			Surfaces: []string{"jsonl"},
 		},
 		{
@@ -103,6 +104,7 @@ func Catalog() []Op {
 			Summary: "Double-click an element by its @ref from the last extract/snapshot.",
 			Args: []Arg{
 				{Name: "ref", Type: ArgString, Required: true, Description: "@ref of the element, e.g. @5"},
+				{Name: "button", Type: ArgString, Required: false, Description: "Mouse button: left, right, or middle (default: left)"},
 			},
 			Surfaces: []string{"jsonl"},
 		},
@@ -125,9 +127,9 @@ func Catalog() []Op {
 			Surfaces: []string{"mcp"},
 		},
 		{
-			Name:    "errors",
-			Summary: "Return console and network errors observed on the current page.",
-			Args:    []Arg{},
+			Name:     "errors",
+			Summary:  "Return console and network errors observed on the current page.",
+			Args:     []Arg{},
 			Surfaces: []string{"jsonl", "ai"},
 		},
 		{
@@ -167,9 +169,9 @@ func Catalog() []Op {
 			Surfaces: []string{"mcp"},
 		},
 		{
-			Name:    "forward",
-			Summary: "Navigate forward in browser history.",
-			Args:    []Arg{},
+			Name:     "forward",
+			Summary:  "Navigate forward in browser history.",
+			Args:     []Arg{},
 			Surfaces: []string{"jsonl", "mcp"},
 		},
 		{
@@ -181,9 +183,9 @@ func Catalog() []Op {
 			Surfaces: []string{"jsonl", "mcp", "ai"},
 		},
 		{
-			Name:    "init",
-			Summary: "Open the browser (no-op if already open). JSONL session lifecycle op.",
-			Args:    []Arg{},
+			Name:     "init",
+			Summary:  "Open the browser (no-op if already open). JSONL session lifecycle op.",
+			Args:     []Arg{},
 			Surfaces: []string{"jsonl"},
 		},
 		{
@@ -205,9 +207,9 @@ func Catalog() []Op {
 			Surfaces: []string{"jsonl", "mcp", "ai"},
 		},
 		{
-			Name:    "reload",
-			Summary: "Reload (refresh) the current page.",
-			Args:    []Arg{},
+			Name:     "reload",
+			Summary:  "Reload (refresh) the current page.",
+			Args:     []Arg{},
 			Surfaces: []string{"jsonl"},
 		},
 		{
@@ -297,9 +299,9 @@ func Catalog() []Op {
 			Surfaces: []string{"mcp"},
 		},
 		{
-			Name:    "url",
-			Summary: "Return the current page URL and title.",
-			Args:    []Arg{},
+			Name:     "url",
+			Summary:  "Return the current page URL and title.",
+			Args:     []Arg{},
 			Surfaces: []string{"jsonl", "ai"},
 		},
 		{

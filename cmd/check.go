@@ -24,7 +24,7 @@ func runCheck(action string, checked bool) func(*cobra.Command, []string) {
 		}
 
 		result := snapshotPage(b, page, engine.LevelSkeleton)
-		text := engine.FormatTextProfile(result, renderProfile())
+		text := formatCurrentPlaywrightPageStateOutput(action, page, result)
 		output(&actionResult{
 			Action: action,
 			Ref:    ref,

@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -45,7 +47,11 @@ func DiscoverCDP(ports []int, timeout time.Duration) (string, error) {
 		i, p := i, p
 		go func() {
 			defer wg.Done()
-			ws, err := probePort(ctx, p)
+			version, err := probePortVersion(ctx, p)
+			ws := ""
+			if version != nil {
+				ws = version.WebSocketDebuggerURL
+			}
 			results[i] = result{ws: ws, err: err}
 		}()
 	}
@@ -66,37 +72,152 @@ func DiscoverCDP(ports []int, timeout time.Duration) (string, error) {
 	return "", fmt.Errorf("discover cdp: %w", lastErr)
 }
 
-func probePort(ctx context.Context, port int) (string, error) {
+type cdpVersionInfo struct {
+	Browser              string `json:"Browser"`
+	UserAgent            string `json:"User-Agent"`
+	WebSocketDebuggerURL string `json:"webSocketDebuggerUrl"`
+}
+
+func probePortVersion(ctx context.Context, port int) (*cdpVersionInfo, error) {
 	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
 	d := net.Dialer{Timeout: 200 * time.Millisecond}
 	conn, err := d.DialContext(ctx, "tcp", addr)
 	if err != nil {
-		return "", nil // closed port is not an error worth surfacing
+		return nil, nil // closed port is not an error worth surfacing
 	}
 	_ = conn.Close()
 
 	url := "http://" + addr + "/json/version"
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	client := &http.Client{Timeout: 300 * time.Millisecond}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return "", nil
+		return nil, nil
 	}
-	var payload struct {
-		WebSocketDebuggerURL string `json:"webSocketDebuggerUrl"`
-	}
+	var payload cdpVersionInfo
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return "", err
+		return nil, err
 	}
 	if payload.WebSocketDebuggerURL == "" {
-		return "", nil
+		return nil, nil
 	}
-	return payload.WebSocketDebuggerURL, nil
+	return &payload, nil
+}
+
+// DiscoverCDPChannel probes local Chrome remote-debugging ports for a browser
+// matching a playwright-cli channel name. It attaches only to already running
+// browsers with remote debugging enabled.
+func DiscoverCDPChannel(channel string, ports []int, timeout time.Duration) (string, error) {
+	family, err := channelFamily(channel)
+	if err != nil {
+		return "", err
+	}
+	if len(ports) == 0 {
+		ports = DefaultDiscoverPorts
+	}
+	if timeout <= 0 {
+		timeout = 800 * time.Millisecond
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	var lastErr error
+	for _, port := range ports {
+		version, err := probePortVersion(ctx, port)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if version == nil {
+			continue
+		}
+		if versionMatchesChannelFamily(version, family) {
+			return version.WebSocketDebuggerURL, nil
+		}
+	}
+	if lastErr != nil {
+		return "", fmt.Errorf("discover cdp channel %q: %w", channel, lastErr)
+	}
+	return "", fmt.Errorf("discover cdp channel %q: no matching browser found on local debug ports; enable remote debugging in the target browser", channel)
+}
+
+func channelFamily(channel string) (string, error) {
+	switch strings.TrimSpace(channel) {
+	case "chrome", "chrome-beta", "chrome-dev", "chrome-canary":
+		return "chrome", nil
+	case "msedge", "msedge-beta", "msedge-dev", "msedge-canary":
+		return "edge", nil
+	default:
+		return "", fmt.Errorf("unsupported cdp channel %q (supported: chrome, chrome-beta, chrome-dev, chrome-canary, msedge, msedge-beta, msedge-dev, msedge-canary)", channel)
+	}
+}
+
+func versionMatchesChannelFamily(version *cdpVersionInfo, family string) bool {
+	if version == nil {
+		return false
+	}
+	haystack := strings.ToLower(version.Browser + " " + version.UserAgent)
+	switch family {
+	case "chrome":
+		return (strings.Contains(haystack, "chrome/") || strings.Contains(haystack, "chromium/")) &&
+			!strings.Contains(haystack, "edg/")
+	case "edge":
+		return strings.Contains(haystack, "edg/") || strings.Contains(haystack, "edge/")
+	default:
+		return false
+	}
+}
+
+// ResolveCDPEndpoint returns a browser WebSocket debugger URL for a CDP
+// endpoint. ws:// and wss:// inputs are already resolved; http(s) inputs are
+// probed via /json/version.
+func ResolveCDPEndpoint(raw string, timeout time.Duration) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", fmt.Errorf("cdp endpoint is empty")
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("parse cdp endpoint: %w", err)
+	}
+	switch u.Scheme {
+	case "ws", "wss":
+		return raw, nil
+	case "http", "https":
+		if timeout <= 0 {
+			timeout = 800 * time.Millisecond
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+		versionURL := strings.TrimRight(raw, "/") + "/json/version"
+		req, err := http.NewRequestWithContext(ctx, "GET", versionURL, nil)
+		if err != nil {
+			return "", err
+		}
+		resp, err := (&http.Client{Timeout: timeout}).Do(req)
+		if err != nil {
+			return "", err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return "", fmt.Errorf("%s returned HTTP %d", versionURL, resp.StatusCode)
+		}
+		var payload cdpVersionInfo
+		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+			return "", err
+		}
+		if payload.WebSocketDebuggerURL == "" {
+			return "", fmt.Errorf("%s did not return webSocketDebuggerUrl", versionURL)
+		}
+		return payload.WebSocketDebuggerURL, nil
+	default:
+		return "", fmt.Errorf("unsupported cdp endpoint scheme %q (use http(s) or ws(s))", u.Scheme)
+	}
 }

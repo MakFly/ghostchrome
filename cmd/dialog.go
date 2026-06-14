@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/MakFly/ghostchrome/engine"
@@ -49,17 +48,19 @@ func runDialogHandler(accept bool, text string) {
 	b, page := openPage()
 	defer b.Close()
 
-	result, err := engine.HandleNextDialog(page, accept, text, time.Duration(flagTimeout)*time.Second)
+	dialogResult, err := engine.HandleNextDialog(page, accept, text, time.Duration(flagTimeout)*time.Second)
 	if err != nil {
 		exitErr("dialog", err)
 	}
 
-	text2 := fmt.Sprintf("Dialog %s timed out after %ds", result.Action, flagTimeout)
-	if result.Handled {
-		text2 = fmt.Sprintf("Dialog %s: [%s] %s", result.Action, result.Type, result.Message)
+	action := "dialog-dismiss"
+	if accept {
+		action = "dialog-accept"
 	}
 
-	output(result, text2)
+	snapshot := snapshotPage(b, page, engine.LevelSkeleton)
+	textOutput := formatCurrentPlaywrightPageStateOutput(action, page, snapshot)
+	output(dialogResult, textOutput)
 }
 
 func init() {

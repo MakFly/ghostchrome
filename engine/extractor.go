@@ -390,6 +390,170 @@ func FormatTextProfile(result *ExtractionResult, p RenderProfile) string {
 	return strings.TrimRight(buf.String(), "\n")
 }
 
+// FormatPlaywrightSnapshot renders an accessibility tree in the documented
+// playwright-cli snapshot style:
+//
+//   - heading "Title" [level=1]
+//   - textbox "Search" [ref=e2]
+//   - listitem:
+//   - text: "Item"
+func FormatPlaywrightSnapshot(result *ExtractionResult) string {
+	if result == nil {
+		return ""
+	}
+	var buf strings.Builder
+	for _, node := range result.Nodes {
+		formatPlaywrightNode(&buf, node, 0)
+	}
+	return strings.TrimRight(buf.String(), "\n")
+}
+
+func formatPlaywrightNode(buf *strings.Builder, node ExtractedNode, depth int) {
+	indent := strings.Repeat("  ", depth)
+	label := node.Name
+	if label == "" {
+		label = node.Value
+	}
+	role := playwrightRole(node.Role)
+
+	fmt.Fprintf(buf, "%s- %s", indent, role)
+	if label != "" {
+		if role == "text" {
+			fmt.Fprintf(buf, ": %q", label)
+		} else {
+			fmt.Fprintf(buf, " %q", label)
+		}
+	}
+
+	var attrs []string
+	if node.Ref != "" {
+		attrs = append(attrs, "ref="+PlaywrightRef(node.Ref))
+	}
+	if node.Role == "heading" && node.Level > 0 {
+		attrs = append(attrs, fmt.Sprintf("level=%d", node.Level))
+	}
+	if node.Checked != nil {
+		if *node.Checked {
+			attrs = append(attrs, "checked")
+		} else {
+			attrs = append(attrs, "unchecked")
+		}
+	}
+	if node.Disabled {
+		attrs = append(attrs, "disabled")
+	}
+	if len(attrs) > 0 {
+		fmt.Fprintf(buf, " [%s]", strings.Join(attrs, " "))
+	}
+	if len(node.Children) > 0 && label == "" && len(attrs) == 0 {
+		buf.WriteString(":")
+	}
+	buf.WriteString("\n")
+
+	for _, child := range node.Children {
+		formatPlaywrightNode(buf, child, depth+1)
+	}
+}
+
+func playwrightRole(role string) string {
+	switch role {
+	case "StaticText":
+		return "text"
+	default:
+		return role
+	}
+}
+
+// PlaywrightRef maps ghostchrome's internal @N refs to playwright-cli's eN refs.
+func PlaywrightRef(ref string) string {
+	return "e" + strings.TrimPrefix(ref, "@")
+}
+
+// InternalRef maps playwright-cli eN refs back to ghostchrome's internal @N refs.
+func InternalRef(ref string) string {
+	if strings.HasPrefix(ref, "e") && len(ref) > 1 {
+		allDigits := true
+		for _, r := range ref[1:] {
+			if r < '0' || r > '9' {
+				allDigits = false
+				break
+			}
+		}
+		if allDigits {
+			return "@" + ref[1:]
+		}
+	}
+	return ref
+}
+
+// LimitExtractionDepth returns a copy of result whose node children are cut
+// after maxDepth. A negative maxDepth returns result unchanged; 0 keeps only
+// root nodes.
+func LimitExtractionDepth(result *ExtractionResult, maxDepth int) *ExtractionResult {
+	if result == nil || maxDepth < 0 {
+		return result
+	}
+	limited := &ExtractionResult{
+		Nodes: make([]ExtractedNode, 0, len(result.Nodes)),
+		Refs:  map[string]ExtractedNode{},
+	}
+	for _, node := range result.Nodes {
+		limited.Nodes = append(limited.Nodes, limitNodeDepth(node, 0, maxDepth, limited.Refs, &limited.Stats))
+	}
+	limited.Stats.TotalNodes = limited.Stats.FilteredNodes
+	return limited
+}
+
+func limitNodeDepth(node ExtractedNode, depth, maxDepth int, refs map[string]ExtractedNode, stats *ExtractionStats) ExtractedNode {
+	copyNode := node
+	copyNode.Children = nil
+	stats.FilteredNodes++
+	if depth >= maxDepth {
+		if copyNode.Ref != "" {
+			stats.InteractiveCount++
+			refs[copyNode.Ref] = copyNode
+		}
+		return copyNode
+	}
+	for _, child := range node.Children {
+		copyNode.Children = append(copyNode.Children, limitNodeDepth(child, depth+1, maxDepth, refs, stats))
+	}
+	if copyNode.Ref != "" {
+		stats.InteractiveCount++
+		refs[copyNode.Ref] = copyNode
+	}
+	return copyNode
+}
+
+// ExtractionForRef returns a single-root extraction result for ref.
+func ExtractionForRef(result *ExtractionResult, ref string) (*ExtractionResult, bool) {
+	if result == nil {
+		return nil, false
+	}
+	node, ok := result.Refs[ref]
+	if !ok {
+		return nil, false
+	}
+	scoped := &ExtractionResult{
+		Nodes: []ExtractedNode{node},
+		Refs:  map[string]ExtractedNode{},
+	}
+	collectNodeStats(node, scoped.Refs, &scoped.Stats)
+	scoped.Stats.TotalNodes = scoped.Stats.FilteredNodes
+	return scoped, true
+}
+
+func collectNodeStats(node ExtractedNode, refs map[string]ExtractedNode, stats *ExtractionStats) {
+	stats.FilteredNodes++
+	if node.Ref != "" {
+		stats.InteractiveCount++
+		refs[node.Ref] = node
+	}
+	for _, child := range node.Children {
+		collectNodeStats(child, refs, stats)
+	}
+}
+
 // renderState tracks cross-node state used by the agent renderer to dedupe
 // adjacent siblings with identical role + label (e.g. 30 "Read more" links).
 // The key combines role and label so that a heading and its inner StaticText

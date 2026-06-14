@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -14,7 +15,9 @@ import (
 	"time"
 
 	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/cdp"
 	"github.com/go-rod/rod/lib/launcher"
+	"github.com/go-rod/rod/lib/launcher/flags"
 	"github.com/go-rod/rod/lib/proto"
 )
 
@@ -37,6 +40,19 @@ type LauncherOpts struct {
 	// Examples: "http://user:pass@host:port", "socks5://host:1080".
 	// Empty means no proxy.
 	Proxy string
+
+	// ProxyBypass is passed to Chrome as --proxy-bypass-list when Proxy is set.
+	// It uses Chromium's bypass list syntax, matching Playwright's proxy.bypass.
+	ProxyBypass string
+
+	// ExecutablePath forces a specific Chrome/Chromium binary. It maps
+	// Playwright's browser.launchOptions.executablePath and overrides
+	// ghostchrome's system-Chrome preference.
+	ExecutablePath string
+
+	// Args are extra Chromium command-line switches, normalized as --flag or
+	// --flag=value. They map Playwright's browser.launchOptions.args.
+	Args []string
 
 	// Extensions is a list of absolute paths to unpacked Chrome extensions
 	// (each path must contain a manifest.json at its root). When non-empty,
@@ -196,12 +212,14 @@ func NewLauncher(opts LauncherOpts) *launcher.Launcher {
 		Set("use-mock-keychain").
 		Delete("enable-automation")
 
-	// Prefer the system's real Chrome over rod's bundled Chromium. The
-	// bundled build can be many versions behind (an outdated Chrome version
-	// is itself an anti-bot signal), and a real install carries a more
-	// "normal" fingerprint. The GHOSTCHROME_BUNDLED_CHROME env var opts back
-	// into rod's download if that is ever needed.
-	if os.Getenv("GHOSTCHROME_BUNDLED_CHROME") == "" {
+	if opts.ExecutablePath != "" {
+		l = l.Bin(opts.ExecutablePath)
+	} else if os.Getenv("GHOSTCHROME_BUNDLED_CHROME") == "" {
+		// Prefer the system's real Chrome over rod's bundled Chromium. The
+		// bundled build can be many versions behind (an outdated Chrome version
+		// is itself an anti-bot signal), and a real install carries a more
+		// "normal" fingerprint. The GHOSTCHROME_BUNDLED_CHROME env var opts
+		// back into rod's download if that is ever needed.
 		if bin := FindSystemChromeBinary(); bin != "" {
 			l = l.Bin(bin).
 				Set("no-first-run").
@@ -220,6 +238,11 @@ func NewLauncher(opts LauncherOpts) *launcher.Launcher {
 	if opts.RemotePort > 0 {
 		l = l.RemoteDebuggingPort(opts.RemotePort)
 	}
+	for _, arg := range opts.Args {
+		if name, values, ok := splitChromiumArg(arg); ok {
+			l = l.Set(flags.Flag(name), values...)
+		}
+	}
 	if opts.UserDataDir != "" {
 		l = l.UserDataDir(opts.UserDataDir)
 	}
@@ -232,6 +255,9 @@ func NewLauncher(opts LauncherOpts) *launcher.Launcher {
 			proxyForChrome = u.String()
 		}
 		l = l.Proxy(proxyForChrome)
+		if opts.ProxyBypass != "" {
+			l = l.Set("proxy-bypass-list", opts.ProxyBypass)
+		}
 		l = l.Set("ignore-certificate-errors")
 	}
 	if len(opts.Extensions) > 0 {
@@ -272,7 +298,7 @@ func needsNoSandbox() bool {
 	if os.Geteuid() == 0 {
 		return true
 	}
-	for _, key := range []string{"GITHUB_ACTIONS", "CI", "GHOSTCHROME_NO_SANDBOX"} {
+	for _, key := range []string{"GITHUB_ACTIONS", "CI", "GHOSTCHROME_NO_SANDBOX", "PLAYWRIGHT_MCP_NO_SANDBOX"} {
 		if v := os.Getenv(key); v != "" && v != "0" && v != "false" {
 			return true
 		}
@@ -302,20 +328,27 @@ type Browser struct {
 	// providerCleanup releases provider-owned Chrome resources (set only
 	// when the browser was provisioned via BrowserOpts.ProviderFunc).
 	providerCleanup func()
+
+	bgObserver *Observer
 }
 
 // BrowserOpts configures NewBrowserWith. It supersedes the positional
 // parameters of NewBrowser and adds persistent profile + upstream proxy
 // support for auto-launch.
 type BrowserOpts struct {
-	ConnectURL   string
-	Headless     bool
-	Invisible    bool
-	TimeoutSec   int
-	UserDataDir  string   // absolute path; ignored when ConnectURL is set
-	Proxy        string   // upstream proxy URL; ignored when ConnectURL is set
-	Extensions   []string // absolute paths to unpacked extensions; ignored when ConnectURL is set
-	SystemChrome bool     // force /Applications/Google Chrome.app binary; ignored when ConnectURL is set
+	ConnectURL     string
+	Headless       bool
+	Invisible      bool
+	TimeoutSec     int
+	CDPHeaders     map[string]string
+	CDPTimeoutMS   int
+	UserDataDir    string   // absolute path; ignored when ConnectURL is set
+	Proxy          string   // upstream proxy URL; ignored when ConnectURL is set
+	ProxyBypass    string   // Chromium proxy bypass list; ignored when ConnectURL is set
+	ExecutablePath string   // Chrome/Chromium binary path; ignored when ConnectURL is set
+	LaunchArgs     []string // extra Chromium switches; ignored when ConnectURL is set
+	Extensions     []string // absolute paths to unpacked extensions; ignored when ConnectURL is set
+	SystemChrome   bool     // force /Applications/Google Chrome.app binary; ignored when ConnectURL is set
 
 	// AttachFresh is set when ConnectURL points at a Chrome we don't own
 	// (the user's personal browser, discovered via DiscoverCDP). In that
@@ -380,8 +413,8 @@ func NewBrowserWith(opts BrowserOpts) (*Browser, error) {
 		if err != nil {
 			return nil, err
 		}
-		b = rod.New().ControlURL(connectURL).Timeout(timeout)
-		if err := b.Connect(); err != nil {
+		b, err = connectRodBrowser(connectURL, timeout, opts.CDPTimeoutMS, opts.CDPHeaders)
+		if err != nil {
 			return nil, err
 		}
 		if opts.ContextName != "" {
@@ -402,8 +435,8 @@ func NewBrowserWith(opts BrowserOpts) (*Browser, error) {
 			return nil, fmt.Errorf("provider: %w", err)
 		}
 		providerCleanup = cleanup
-		b = rod.New().ControlURL(u).Timeout(timeout)
-		if err := b.Connect(); err != nil {
+		b, err = connectRodBrowser(u, timeout, opts.CDPTimeoutMS, opts.CDPHeaders)
+		if err != nil {
 			if cleanup != nil {
 				cleanup()
 			}
@@ -411,18 +444,21 @@ func NewBrowserWith(opts BrowserOpts) (*Browser, error) {
 		}
 	} else {
 		u, err := NewLauncher(LauncherOpts{
-			Headless:     opts.Headless,
-			Invisible:    opts.Invisible,
-			UserDataDir:  opts.UserDataDir,
-			Proxy:        opts.Proxy,
-			Extensions:   opts.Extensions,
-			SystemChrome: opts.SystemChrome,
+			Headless:       opts.Headless,
+			Invisible:      opts.Invisible,
+			UserDataDir:    opts.UserDataDir,
+			Proxy:          opts.Proxy,
+			ProxyBypass:    opts.ProxyBypass,
+			ExecutablePath: opts.ExecutablePath,
+			Args:           opts.LaunchArgs,
+			Extensions:     opts.Extensions,
+			SystemChrome:   opts.SystemChrome,
 		}).Launch()
 		if err != nil {
 			return nil, err
 		}
-		b = rod.New().ControlURL(u).Timeout(timeout)
-		if err := b.Connect(); err != nil {
+		b, err = connectRodBrowser(u, timeout, opts.CDPTimeoutMS, opts.CDPHeaders)
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -446,6 +482,66 @@ func NewBrowserWith(opts BrowserOpts) (*Browser, error) {
 
 		providerCleanup: providerCleanup,
 	}, nil
+}
+
+func connectRodBrowser(connectURL string, timeout time.Duration, cdpTimeoutMS int, headers map[string]string) (*rod.Browser, error) {
+	if len(headers) == 0 && cdpTimeoutMS <= 0 {
+		b := rod.New().ControlURL(connectURL).Timeout(timeout)
+		if err := b.Connect(); err != nil {
+			return nil, err
+		}
+		return b, nil
+	}
+	ctx := context.Background()
+	connectTimeout := timeout
+	if cdpTimeoutMS > 0 {
+		connectTimeout = time.Duration(cdpTimeoutMS) * time.Millisecond
+	}
+	if connectTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, connectTimeout)
+		defer cancel()
+	}
+	client, err := cdp.StartWithURL(ctx, connectURL, cdpHeader(headers))
+	if err != nil {
+		return nil, err
+	}
+	b := rod.New().Client(client).Timeout(timeout)
+	if err := b.Connect(); err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
+func cdpHeader(headers map[string]string) http.Header {
+	if len(headers) == 0 {
+		return nil
+	}
+	out := http.Header{}
+	for key, value := range headers {
+		out.Set(key, value)
+	}
+	return out
+}
+
+func splitChromiumArg(arg string) (name string, values []string, ok bool) {
+	arg = strings.TrimSpace(arg)
+	if !strings.HasPrefix(arg, "--") || arg == "--" {
+		return "", nil, false
+	}
+	arg = strings.TrimPrefix(arg, "--")
+	if arg == "" || strings.HasPrefix(arg, "-") {
+		return "", nil, false
+	}
+	if idx := strings.IndexByte(arg, '='); idx >= 0 {
+		name = strings.TrimSpace(arg[:idx])
+		value := arg[idx+1:]
+		if name == "" {
+			return "", nil, false
+		}
+		return name, []string{value}, true
+	}
+	return arg, nil, true
 }
 
 // maybeApplyProfile is a no-op unless the browser was constructed with
@@ -608,6 +704,31 @@ func (b *Browser) SaveSnapshot(page *rod.Page, result *ExtractionResult) error {
 	return saveSessionState(b.statePath, b.state)
 }
 
+// CachedExtract returns the cached ExtractionResult for the current page if
+// the URL has not changed since the last extraction. Returns nil when no cache
+// exists or the page has navigated. This avoids the expensive CDP
+// AccessibilityGetFullAXTree call when the page content is unchanged.
+//
+// The URL check uses a lightweight JS eval instead of page.Info() to minimize
+// CDP round-trips.
+func (b *Browser) CachedExtract(page *rod.Page) *ExtractionResult {
+	if !b.connected || b.state == nil || page == nil {
+		return nil
+	}
+	snap := b.snapshotByTarget(page.TargetID)
+	if snap == nil || snap.CachedExtraction == nil || snap.URL == "" {
+		return nil
+	}
+	currentURL, err := page.Eval("() => location.href")
+	if err != nil {
+		return nil
+	}
+	if currentURL.Value.Str() != snap.URL {
+		return nil
+	}
+	return snap.CachedExtraction
+}
+
 // Snapshot returns the last persisted snapshot for the current page.
 func (b *Browser) Snapshot(page *rod.Page) *PageSnapshot {
 	if !b.connected || b.state == nil || page == nil {
@@ -663,16 +784,173 @@ func (b *Browser) DeleteSnapshot(targetID proto.TargetTargetID) error {
 	return b.deleteSnapshot(targetID)
 }
 
+const maxPlaywrightLogEntries = 1000
+
+// AppendConsoleLog appends console events to the persistent session log.
+func (b *Browser) AppendConsoleLog(events []ObserverEvent) error {
+	if !b.connected || b.state == nil || len(events) == 0 {
+		return nil
+	}
+	b.state.PlaywrightLog.Console = appendBoundedConsole(b.state.PlaywrightLog.Console, events, maxPlaywrightLogEntries)
+	return saveSessionState(b.statePath, b.state)
+}
+
+// ConsoleLog returns a copy of the persistent console log.
+func (b *Browser) ConsoleLog() []ObserverEvent {
+	if !b.connected || b.state == nil || len(b.state.PlaywrightLog.Console) == 0 {
+		return nil
+	}
+	out := make([]ObserverEvent, len(b.state.PlaywrightLog.Console))
+	copy(out, b.state.PlaywrightLog.Console)
+	return out
+}
+
+// ClearConsoleLog removes the persistent console log for this session.
+func (b *Browser) ClearConsoleLog() error {
+	if !b.connected || b.state == nil {
+		return nil
+	}
+	b.state.PlaywrightLog.Console = nil
+	return saveSessionState(b.statePath, b.state)
+}
+
+// AppendNetworkLog appends network entries to the persistent session log.
+func (b *Browser) AppendNetworkLog(entries []*CapturedEntry) error {
+	if !b.connected || b.state == nil || len(entries) == 0 {
+		return nil
+	}
+	for _, entry := range entries {
+		if entry == nil {
+			continue
+		}
+		b.state.PlaywrightLog.Network = append(b.state.PlaywrightLog.Network, *entry)
+	}
+	b.state.PlaywrightLog.Network = trimNetworkLog(b.state.PlaywrightLog.Network, maxPlaywrightLogEntries)
+	return saveSessionState(b.statePath, b.state)
+}
+
+// NetworkLog returns a copy of the persistent network log.
+func (b *Browser) NetworkLog() []*CapturedEntry {
+	if !b.connected || b.state == nil || len(b.state.PlaywrightLog.Network) == 0 {
+		return nil
+	}
+	out := make([]*CapturedEntry, 0, len(b.state.PlaywrightLog.Network))
+	for i := range b.state.PlaywrightLog.Network {
+		entry := b.state.PlaywrightLog.Network[i]
+		out = append(out, &entry)
+	}
+	return out
+}
+
+// ClearNetworkLog removes the persistent network log for this session.
+func (b *Browser) ClearNetworkLog() error {
+	if !b.connected || b.state == nil {
+		return nil
+	}
+	b.state.PlaywrightLog.Network = nil
+	return saveSessionState(b.statePath, b.state)
+}
+
+// BrowserTraceState returns the persisted CDP tracing state for this session.
+func (b *Browser) BrowserTraceState() BrowserTraceState {
+	if !b.connected || b.state == nil {
+		return BrowserTraceState{}
+	}
+	return b.state.BrowserTrace
+}
+
+// SetBrowserTraceState stores the CDP tracing state for this session.
+func (b *Browser) SetBrowserTraceState(state BrowserTraceState) error {
+	if !b.connected || b.state == nil {
+		return nil
+	}
+	b.state.BrowserTrace = state
+	return saveSessionState(b.statePath, b.state)
+}
+
+// VideoState returns the persisted video metadata for this session.
+func (b *Browser) VideoState() VideoState {
+	if !b.connected || b.state == nil {
+		return VideoState{}
+	}
+	return b.state.Video
+}
+
+// SetVideoState stores video metadata for this session.
+func (b *Browser) SetVideoState(state VideoState) error {
+	if !b.connected || b.state == nil {
+		return nil
+	}
+	b.state.Video = state
+	return saveSessionState(b.statePath, b.state)
+}
+
+func appendBoundedConsole(existing, incoming []ObserverEvent, max int) []ObserverEvent {
+	out := append(existing, incoming...)
+	if len(out) <= max {
+		return out
+	}
+	return append([]ObserverEvent(nil), out[len(out)-max:]...)
+}
+
+func trimNetworkLog(entries []CapturedEntry, max int) []CapturedEntry {
+	if len(entries) <= max {
+		return entries
+	}
+	return append([]CapturedEntry(nil), entries[len(entries)-max:]...)
+}
+
 // Close cleans up the browser resources.
 // External Chrome keeps running; the CLI process owns the websocket lifetime.
+func (b *Browser) StartBackgroundObserver(page *rod.Page) {
+	if b.bgObserver != nil || !b.connected {
+		return
+	}
+	obs := NewObserver(page, ObserverOpts{BufferSize: 512})
+	if err := obs.Start(context.Background()); err != nil {
+		return
+	}
+	b.bgObserver = obs
+}
+
+func (b *Browser) drainBackgroundObserver() {
+	if b.bgObserver == nil {
+		return
+	}
+	events := b.bgObserver.Drain(0)
+	b.bgObserver.Stop()
+	b.bgObserver = nil
+	if len(events) == 0 {
+		return
+	}
+	var consoleEvents []ObserverEvent
+	var netEntries []*CapturedEntry
+	for _, e := range events {
+		switch e.Kind {
+		case KindConsole, KindError:
+			consoleEvents = append(consoleEvents, e)
+		case KindNet:
+			netEntries = append(netEntries, &CapturedEntry{
+				Method:       e.Method,
+				URL:          e.URL,
+				Status:       e.Status,
+				MimeType:     e.MimeType,
+				ResourceType: e.Type,
+			})
+		}
+	}
+	if len(consoleEvents) > 0 {
+		_ = b.AppendConsoleLog(consoleEvents)
+	}
+	if len(netEntries) > 0 {
+		_ = b.AppendNetworkLog(netEntries)
+	}
+}
+
 func (b *Browser) Close() {
+	b.drainBackgroundObserver()
 	if b.browser != nil {
 		if b.connected {
-			// In attach-fresh mode (`--connect` without --tab) the tab was
-			// opened by this command, so close it — otherwise every command
-			// leaks a renderer into the shared Chrome and the instance slows
-			// to a crawl. The user's own tabs and the Chrome process itself
-			// are left untouched.
 			if b.attachFresh && b.page != nil {
 				_ = b.page.Close()
 			}

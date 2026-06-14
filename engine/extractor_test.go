@@ -123,6 +123,108 @@ func TestFormatTextIndentation(t *testing.T) {
 	}
 }
 
+func TestFormatPlaywrightSnapshot(t *testing.T) {
+	result := &ExtractionResult{
+		Nodes: []ExtractedNode{
+			{Role: "heading", Name: "todos", Level: 1},
+			{Role: "textbox", Ref: "@5", Name: "What needs to be done?"},
+			{
+				Role: "listitem",
+				Children: []ExtractedNode{
+					{Role: "checkbox", Ref: "@10", Name: "Toggle Todo"},
+					{Role: "StaticText", Name: "Buy groceries"},
+				},
+			},
+		},
+	}
+
+	got := FormatPlaywrightSnapshot(result)
+	expectations := []string{
+		`- heading "todos" [level=1]`,
+		`- textbox "What needs to be done?" [ref=e5]`,
+		`- listitem:`,
+		`  - checkbox "Toggle Todo" [ref=e10]`,
+		`  - text: "Buy groceries"`,
+	}
+	for _, want := range expectations {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in snapshot:\n%s", want, got)
+		}
+	}
+}
+
+func TestPlaywrightRefConversion(t *testing.T) {
+	if got := PlaywrightRef("@34"); got != "e34" {
+		t.Fatalf("PlaywrightRef(@34) = %q", got)
+	}
+	if got := InternalRef("e34"); got != "@34" {
+		t.Fatalf("InternalRef(e34) = %q", got)
+	}
+	if got := InternalRef("@7"); got != "@7" {
+		t.Fatalf("InternalRef(@7) = %q", got)
+	}
+}
+
+func TestLimitExtractionDepth(t *testing.T) {
+	result := &ExtractionResult{
+		Nodes: []ExtractedNode{
+			{
+				Role: "main",
+				Children: []ExtractedNode{
+					{
+						Role: "navigation",
+						Children: []ExtractedNode{
+							{Role: "link", Ref: "@1", Name: "Deep Link"},
+						},
+					},
+				},
+			},
+		},
+		Refs: map[string]ExtractedNode{"@1": {Role: "link", Ref: "@1", Name: "Deep Link"}},
+	}
+
+	limited := LimitExtractionDepth(result, 1)
+	if len(limited.Nodes) != 1 {
+		t.Fatalf("expected one root node, got %d", len(limited.Nodes))
+	}
+	if len(limited.Nodes[0].Children) != 1 {
+		t.Fatalf("expected depth-1 child to remain")
+	}
+	if len(limited.Nodes[0].Children[0].Children) != 0 {
+		t.Fatalf("expected depth-2 child to be removed")
+	}
+	if _, ok := limited.Refs["@1"]; ok {
+		t.Fatalf("deep ref should not remain in limited refs")
+	}
+}
+
+func TestExtractionForRef(t *testing.T) {
+	result := &ExtractionResult{
+		Nodes: []ExtractedNode{
+			{
+				Role: "main",
+				Children: []ExtractedNode{
+					{Role: "button", Ref: "@1", Name: "Save"},
+				},
+			},
+		},
+		Refs: map[string]ExtractedNode{
+			"@1": {Role: "button", Ref: "@1", Name: "Save"},
+		},
+	}
+
+	scoped, ok := ExtractionForRef(result, "@1")
+	if !ok {
+		t.Fatal("expected ref to resolve")
+	}
+	if got := FormatText(scoped); !strings.Contains(got, "[btn @1] Save") {
+		t.Fatalf("unexpected scoped output: %s", got)
+	}
+	if _, ok := ExtractionForRef(result, "@2"); ok {
+		t.Fatal("missing ref should not resolve")
+	}
+}
+
 func TestShouldInclude(t *testing.T) {
 	tests := []struct {
 		role  string

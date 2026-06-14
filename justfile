@@ -24,6 +24,15 @@ sdk-py:
 # Run every suite: Go + both SDKs
 test-all: test sdk-ts sdk-py
 
+# Build + install locally (binary + agent skill)
+install:
+    go build -o ghostchrome .
+    ./ghostchrome install
+
+# Uninstall everything (binary + data + skills)
+uninstall:
+    ./ghostchrome uninstall --purge --yes
+
 # End-to-end smoke against a live site (requires a running Chrome on :9222).
 # Usage: just e2e            -> https://www.chronovet.fr/
 #        just e2e <url>

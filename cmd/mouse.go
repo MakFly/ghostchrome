@@ -3,8 +3,10 @@ package cmd
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/MakFly/ghostchrome/engine"
 	"github.com/go-rod/rod/lib/proto"
 	"github.com/spf13/cobra"
 )
@@ -126,14 +128,21 @@ func parseCoords(xStr, yStr string) (float64, float64) {
 }
 
 func parseMouseButton(name string) proto.InputMouseButton {
-	switch name {
-	case "right":
-		return proto.InputMouseButtonRight
-	case "middle":
-		return proto.InputMouseButtonMiddle
-	default:
-		return proto.InputMouseButtonLeft
+	button, err := engine.ParseMouseButton(name)
+	if err != nil {
+		exitErr("button", err)
 	}
+	return button
+}
+
+// parseMouseButtonStrict is used by higher-level command handlers that need to
+// distinguish a true button value from another string (for example a URL).
+func parseMouseButtonStrict(name string) (proto.InputMouseButton, bool) {
+	button, err := engine.ParseMouseButton(name)
+	if err != nil || strings.TrimSpace(name) == "" {
+		return proto.InputMouseButtonLeft, false
+	}
+	return button, true
 }
 
 func init() {

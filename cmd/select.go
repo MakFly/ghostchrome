@@ -64,7 +64,7 @@ Examples:
 			Result *engine.ExtractionResult `json:"result"`
 		}
 
-		text := engine.FormatText(result)
+		text := formatCurrentPlaywrightPageStateOutput("select", page, result)
 		output(&selectResult{
 			Action: "select",
 			Ref:    ref,

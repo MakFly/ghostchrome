@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/go-rod/rod"
 )
 
 // SessionEntry is one named, auto-managed Chrome in the session registry.
@@ -32,10 +34,15 @@ type sessionRegistry struct {
 
 // SessionSpawnOpts carries the global flags propagated to a spawned serve.
 type SessionSpawnOpts struct {
-	Headless bool
-	Stealth  bool
-	Proxy    string
+	Headless       bool
+	Stealth        bool
+	Proxy          string
+	ProxyBypass    string
+	ExecutablePath string
+	ConfigPath     string
 }
+
+const DefaultSessionName = "default"
 
 var sessionNameRe = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
@@ -108,6 +115,14 @@ func saveSessionRegistry(path string, reg *sessionRegistry) error {
 // authoritative via CDP rather than the stored PID: if our serve is gone the
 // port stops answering.
 func sessionAlive(e SessionEntry) (string, bool) {
+	if e.Port == 0 && e.WSURL != "" {
+		browser := rod.New().ControlURL(e.WSURL)
+		if err := browser.Connect(); err != nil {
+			return "", false
+		}
+		_ = browser.Close()
+		return e.WSURL, true
+	}
 	ws, err := DiscoverCDP([]int{e.Port}, 600*time.Millisecond)
 	if err != nil || ws == "" {
 		return "", false
@@ -150,6 +165,9 @@ func cmdlineIsSessionServe(cmd string, e SessionEntry) bool {
 // an innocent process during respawn/prune/stop. processCmdline is provided
 // per-platform (session_spawn_{unix,windows}.go).
 func killSessionProcess(e SessionEntry) {
+	if e.PID <= 0 {
+		return
+	}
 	cmd, ok := processCmdline(e.PID)
 	if !ok {
 		return // gone or unverifiable — do not signal anything
@@ -160,7 +178,21 @@ func killSessionProcess(e SessionEntry) {
 	_ = killPID(e.PID)
 }
 
-// freePort asks the OS for an unused localhost TCP port.
+// suppressDaemonEnv ensures the spawned serve subprocess does NOT trigger the
+// implicit-session daemon again (which would fork-bomb). It strips any legacy
+// GHOSTCHROME_DAEMON var and injects GHOSTCHROME_NO_DAEMON=1.
+func suppressDaemonEnv(env []string) []string {
+	out := make([]string, 0, len(env)+1)
+	for _, e := range env {
+		if strings.HasPrefix(e, "GHOSTCHROME_DAEMON=") ||
+			strings.HasPrefix(e, "GHOSTCHROME_NO_DAEMON=") {
+			continue
+		}
+		out = append(out, e)
+	}
+	return append(out, "GHOSTCHROME_NO_DAEMON=1")
+}
+
 func freePort() (int, error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -215,6 +247,12 @@ func AcquireSession(name string, opts SessionSpawnOpts) (string, error) {
 	if opts.Proxy != "" {
 		args = append(args, "--proxy", opts.Proxy)
 	}
+	if opts.ProxyBypass != "" {
+		args = append(args, "--proxy-bypass", opts.ProxyBypass)
+	}
+	if opts.ConfigPath != "" {
+		args = append(args, "--config", opts.ConfigPath)
+	}
 
 	logPath, err := sessionLogPath(name)
 	if err != nil {
@@ -226,6 +264,11 @@ func AcquireSession(name string, opts SessionSpawnOpts) (string, error) {
 	}
 
 	cmd := exec.Command(exe, args...)
+	env := suppressDaemonEnv(os.Environ())
+	if opts.ExecutablePath != "" {
+		env = append(env, "PLAYWRIGHT_MCP_EXECUTABLE_PATH="+opts.ExecutablePath)
+	}
+	cmd.Env = env
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	cmd.SysProcAttr = detachSysProcAttr()
@@ -257,6 +300,84 @@ func AcquireSession(name string, opts SessionSpawnOpts) (string, error) {
 		return "", fmt.Errorf("save sessions registry: %w", err)
 	}
 	return ws, nil
+}
+
+// DefaultSession returns the default attached/session WS URL when it exists
+// and is alive. It does not spawn a new browser.
+func DefaultSession() (string, bool) {
+	reg, _, err := loadSessionRegistry()
+	if err != nil {
+		return "", false
+	}
+	entry, ok := reg.Sessions[DefaultSessionName]
+	if !ok {
+		return "", false
+	}
+	return sessionAlive(entry)
+}
+
+// ResolveSession returns the live browser WebSocket URL for an existing
+// registered session. It never spawns a new browser.
+func ResolveSession(name string) (SessionRegistryEntry, error) {
+	if err := validateSessionName(name); err != nil {
+		return SessionRegistryEntry{}, err
+	}
+	reg, _, err := loadSessionRegistry()
+	if err != nil {
+		return SessionRegistryEntry{}, err
+	}
+	entry, ok := reg.Sessions[name]
+	if !ok {
+		return SessionRegistryEntry{}, fmt.Errorf("session %q not found in registry", name)
+	}
+	ws, alive := sessionAlive(entry)
+	if !alive {
+		return SessionRegistryEntry{}, fmt.Errorf("session %q is not alive", name)
+	}
+	return SessionRegistryEntry{
+		Name:       name,
+		Port:       entry.Port,
+		PID:        entry.PID,
+		WSURL:      ws,
+		Profile:    entry.Profile,
+		LaunchedAt: entry.LaunchedAt,
+		Alive:      true,
+	}, nil
+}
+
+// AttachSession registers an existing CDP endpoint as a named session. It does
+// not spawn or own the browser process; StopSession removes the registry entry
+// but will not terminate an external browser because PID/Port are zero.
+func AttachSession(name string, wsURL string) (SessionEntry, error) {
+	if err := validateSessionName(name); err != nil {
+		return SessionEntry{}, err
+	}
+	if strings.TrimSpace(wsURL) == "" {
+		return SessionEntry{}, fmt.Errorf("cdp endpoint is empty")
+	}
+	browser := rod.New().ControlURL(wsURL)
+	if err := browser.Connect(); err != nil {
+		return SessionEntry{}, fmt.Errorf("connect cdp endpoint: %w", err)
+	}
+	_ = browser.Close()
+
+	reg, path, err := loadSessionRegistry()
+	if err != nil {
+		return SessionEntry{}, err
+	}
+	entry := SessionEntry{
+		Name:       name,
+		Port:       0,
+		PID:        0,
+		WSURL:      wsURL,
+		Profile:    "",
+		LaunchedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	reg.Sessions[name] = entry
+	if err := saveSessionRegistry(path, reg); err != nil {
+		return SessionEntry{}, fmt.Errorf("save sessions registry: %w", err)
+	}
+	return entry, nil
 }
 
 // waitForCDP polls the port until Chrome's /json/version answers or timeout.

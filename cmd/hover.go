@@ -69,7 +69,7 @@ Examples:
 
 		result := snapshotPage(b, page, engine.LevelSkeleton)
 
-		text := engine.FormatTextProfile(result, renderProfile())
+		text := formatCurrentPlaywrightPageStateOutput("hover", page, result)
 		output(&actionResult{
 			Action:  "hover",
 			Ref:     ref,

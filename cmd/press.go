@@ -59,7 +59,7 @@ Examples:
 			Result *engine.ExtractionResult `json:"result"`
 		}
 
-		text := engine.FormatText(result)
+		text := formatCachedOrLivePageState("press", b, page, result)
 		output(&pressResult{
 			Action: "press",
 			Key:    key,

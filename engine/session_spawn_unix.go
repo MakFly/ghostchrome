@@ -37,6 +37,12 @@ func detachSysProcAttr() *syscall.SysProcAttr {
 	return &syscall.SysProcAttr{Setsid: true}
 }
 
+// DetachSysProcAttr returns platform-specific process attributes for a child
+// that should survive the parent CLI process.
+func DetachSysProcAttr() *syscall.SysProcAttr {
+	return detachSysProcAttr()
+}
+
 // killPID sends SIGTERM so serve can shut Chrome down cleanly.
 func killPID(pid int) error {
 	if pid <= 0 {
@@ -47,4 +53,9 @@ func killPID(pid int) error {
 		return err
 	}
 	return p.Signal(syscall.SIGTERM)
+}
+
+// KillProcess signals a managed background process.
+func KillProcess(pid int) error {
+	return killPID(pid)
 }

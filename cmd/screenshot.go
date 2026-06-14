@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/MakFly/ghostchrome/engine"
@@ -25,7 +26,7 @@ var (
 )
 
 var screenshotCmd = &cobra.Command{
-	Use:   "screenshot [url]",
+	Use:   "screenshot [url|ref]",
 	Short: "Capture a screenshot of the page or an element",
 	Long: `Take a screenshot of the current page, full page, or a specific element.
 If a URL is provided, navigates first then captures.
@@ -33,13 +34,21 @@ If a URL is provided, navigates first then captures.
 Examples:
   ghostchrome screenshot https://example.com
   ghostchrome screenshot https://example.com --full
+  ghostchrome screenshot @3 --connect ws://...
   ghostchrome screenshot --element @3 --connect ws://...
   ghostchrome screenshot https://example.com --output page.png --quality 90`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		targetURL := ""
 		if len(args) > 0 {
-			targetURL = args[0]
+			if strings.HasPrefix(args[0], "@") {
+				if flagElement != "" && flagElement != args[0] {
+					exitErr("screenshot", fmt.Errorf("element specified twice: %s and %s", flagElement, args[0]))
+				}
+				flagElement = args[0]
+			} else {
+				targetURL = args[0]
+			}
 		}
 
 		b, page := openPage()
@@ -189,9 +198,11 @@ func runScreenshotDiff(currentPath string, current []byte) *engine.ImageDiffResu
 
 func init() {
 	screenshotCmd.Flags().BoolVar(&flagFull, "full", false, "Capture full scrollable page")
+	screenshotCmd.Flags().BoolVar(&flagFull, "full-page", false, "Capture full scrollable page (Playwright CLI-compatible alias)")
 	screenshotCmd.Flags().StringVar(&flagElement, "element", "", "Capture specific element by @ref")
 	screenshotCmd.Flags().IntVar(&flagQuality, "quality", 80, "JPEG quality 1-100 (PNG if <= 0)")
 	screenshotCmd.Flags().StringVar(&flagOutputPath, "output", "", "Output file path (default: $XDG_CACHE_HOME/ghostchrome/screenshots/*.png)")
+	screenshotCmd.Flags().StringVar(&flagOutputPath, "filename", "", "Output file path (Playwright CLI-compatible alias for --output)")
 	screenshotCmd.Flags().StringVar(&flagScreenshotBaseline, "baseline", "", "Compare the new screenshot to this PNG (creates it on first run)")
 	screenshotCmd.Flags().Float64Var(&flagScreenshotThreshold, "threshold", 0.02, "Max acceptable diff ratio (default 2%%) — exit 1 if exceeded")
 	screenshotCmd.Flags().IntVar(&flagScreenshotTolerance, "tolerance", 4, "Per-channel color tolerance (0-255) before a pixel counts as changed")

@@ -26,6 +26,7 @@ Examples:
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		targetURL := args[0]
+		isGoto := cmd.CalledAs() == "goto"
 
 		b, page := openPage()
 		defer b.Close()
@@ -41,6 +42,7 @@ Examples:
 			level := engine.ExtractLevel(flagNavExtract)
 			result := snapshotPage(b, page, level)
 			text := fmt.Sprintf("[%d] %s — %s (%dms)\n%s", info.Status, info.Title, info.URL, info.TimeMs, engine.FormatTextProfile(result, renderProfile()))
+			text = appendAutoPlaywrightSnapshot(text, result)
 			flush("navigate", true, durationMs, fmt.Sprintf("[%d] %s", info.Status, info.URL))
 			type navigateExtractResult struct {
 				*engine.PageInfo
@@ -50,11 +52,22 @@ Examples:
 			return
 		}
 
+		if isGoto {
+			result := snapshotPage(b, page, engine.LevelSkeleton)
+			text := formatPlaywrightPageStateOutput(info, result)
+			flush("goto", true, durationMs, fmt.Sprintf("[%d] %s", info.Status, info.URL))
+			type gotoResult struct {
+				*engine.PageInfo
+				Snapshot *engine.ExtractionResult `json:"snapshot,omitempty"`
+			}
+			output(&gotoResult{PageInfo: info, Snapshot: result}, text)
+			return
+		}
+
 		// Best-effort snapshot for later ref-based commands (click, type).
 		// On heavy pages the extraction can time out after a long navigation;
-		// that must not fail the goto itself — the user can always extract later.
+		// that must not fail navigate itself — the user can always extract later.
 		trySnapshot(b, page, engine.LevelSkeleton)
-
 		text := fmt.Sprintf("[%d] %s — %s (%dms)", info.Status, info.Title, info.URL, info.TimeMs)
 		flush("navigate", true, durationMs, fmt.Sprintf("[%d] %s", info.Status, info.URL))
 		output(info, text)

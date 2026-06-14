@@ -14,6 +14,46 @@ import (
 type sessionState struct {
 	CurrentTargetID string                  `json:"current_target_id,omitempty"`
 	Snapshots       map[string]PageSnapshot `json:"snapshots,omitempty"`
+	PlaywrightLog   PlaywrightLogState      `json:"playwright_log,omitempty"`
+	BrowserTrace    BrowserTraceState       `json:"browser_trace,omitempty"`
+	Video           VideoState              `json:"video,omitempty"`
+}
+
+// PlaywrightLogState stores bounded command-observation buffers for
+// Playwright CLI-compatible console/network inspection.
+type PlaywrightLogState struct {
+	Console []ObserverEvent `json:"console,omitempty"`
+	Network []CapturedEntry `json:"network,omitempty"`
+}
+
+// BrowserTraceState tracks whether CDP browser tracing is currently active for
+// a persistent session.
+type BrowserTraceState struct {
+	Active    bool   `json:"active,omitempty"`
+	StartedAt string `json:"started_at,omitempty"`
+	Output    string `json:"output,omitempty"`
+}
+
+// VideoState tracks Playwright CLI-compatible video command metadata. A true
+// WebM recorder is not implemented yet; commands use this to persist chapter
+// markers and requested output metadata.
+type VideoState struct {
+	Active    bool           `json:"active,omitempty"`
+	StartedAt string         `json:"started_at,omitempty"`
+	Filename  string         `json:"filename,omitempty"`
+	Size      string         `json:"size,omitempty"`
+	Auto      bool           `json:"auto,omitempty"`
+	Source    string         `json:"source,omitempty"`
+	Chapters  []VideoChapter `json:"chapters,omitempty"`
+}
+
+// VideoChapter is one requested video chapter marker.
+type VideoChapter struct {
+	Title       string `json:"title"`
+	Description string `json:"description,omitempty"`
+	DurationMs  int    `json:"duration_ms,omitempty"`
+	AtMs        int64  `json:"at_ms"`
+	CreatedAt   string `json:"created_at"`
 }
 
 // PageSnapshot stores the last known interactive refs for a page target.
@@ -22,6 +62,10 @@ type PageSnapshot struct {
 	URL      string                 `json:"url,omitempty"`
 	Title    string                 `json:"title,omitempty"`
 	Refs     map[string]RefSnapshot `json:"refs,omitempty"`
+	// CachedExtraction is the last ExtractionResult for this page, persisted so
+	// subsequent commands can skip the expensive CDP AccessibilityGetFullAXTree
+	// call when the URL has not changed.
+	CachedExtraction *ExtractionResult `json:"cached_extraction,omitempty"`
 }
 
 // RefSnapshot stores a stable backend node mapping for a single ref.
@@ -107,8 +151,9 @@ func snapshotFromResult(page *rod.Page, result *ExtractionResult) (*PageSnapshot
 	}
 
 	snapshot := &PageSnapshot{
-		TargetID: string(page.TargetID),
-		Refs:     map[string]RefSnapshot{},
+		TargetID:         string(page.TargetID),
+		Refs:             map[string]RefSnapshot{},
+		CachedExtraction: result,
 	}
 	if info != nil {
 		snapshot.URL = info.URL

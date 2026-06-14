@@ -12,28 +12,49 @@ import (
 )
 
 var (
-	flagConnect           string
-	flagSession           string
-	flagContext           string
-	flagTab               int
-	flagHeadless          bool
-	flagInvisible         bool
-	flagTimeout           int
-	flagFormat            string
-	flagProfile           string
-	flagUserProfile       string
-	flagProxy             string
-	flagStealth           bool
-	flagDismissCookies    bool
-	flagWaitSelector      string
-	flagWaitMs            int
-	flagHuman             bool
-	flagExtensions        string
-	flagDefaultExtensions bool
-	flagObserve           bool
-	flagObserveOut        string
-	flagPolicy            string
-	flagAllowedDomains    string
+	flagConnect              string
+	flagSession              string
+	flagContext              string
+	flagTab                  int
+	flagHeadless             bool
+	flagHeaded               bool
+	flagInvisible            bool
+	flagTimeout              int
+	flagFormat               string
+	flagProfile              string
+	flagUserProfile          string
+	flagUserDataDir          string
+	flagProxy                string
+	flagProxyBypass          string
+	flagStealth              bool
+	flagDismissCookies       bool
+	flagWaitSelector         string
+	flagWaitMs               int
+	flagHuman                bool
+	flagExtensions           string
+	flagDefaultExtensions    bool
+	flagObserve              bool
+	flagObserveOut           string
+	flagPolicy               string
+	flagAllowedDomains       string
+	flagConfig               string
+	flagAutoVideoSize        string
+	flagAutoVideoSource      string
+	flagConfigViewportW      int
+	flagConfigViewportH      int
+	flagConfigUserAgent      string
+	flagConfigStorageState   string
+	flagConfigLocale         string
+	flagConfigPermissions    []string
+	flagConfigServiceWorkers string
+	flagConfigInitScripts    []string
+	flagConfigExecutablePath string
+	flagConfigLaunchArgs     []string
+	flagConfigOutputDir      string
+	flagConfigDevice         string
+	flagConfigIgnoreHTTPSErr bool
+	flagConfigCDPHeaders     map[string]string
+	flagConfigCDPTimeoutMS   int
 )
 
 var rootCmd = &cobra.Command{
@@ -102,27 +123,18 @@ QUICK REFERENCE
 COMMON WORKFLOWS
 ═══════════════════════════════════════════════════════════════════════
 
-  Quick scrape (one-shot, ephemeral Chrome):
-    ghostchrome --stealth preview https://example.com
-    ghostchrome --stealth extract https://example.com
+  Zero-config (daemon auto-spawns a background Chrome):
+    ghostchrome preview https://example.com
+    ghostchrome extract https://example.com
+    ghostchrome click @3
 
   Persistent profile (login once, scrape forever):
     ghostchrome --user-profile mysite login mysite           # interactive
     ghostchrome --user-profile mysite extract https://...    # headless reuse
 
-  LinkedIn lead-gen (after 'login linkedin'):
-    ghostchrome --user-profile linkedin linkedin people \
-      --keywords "DevOps" --country FR --pages 5 --output leads.csv
-
-  LinkedIn freelance watch (after 'login linkedin'):
-    ghostchrome --user-profile linkedin linkedin posts \
-      --keywords "recrute développeur" --preset freelance-fr \
-      --date month --pages 3 --state ~/veille.json --append \
-      --output ~/missions.csv
-
-  Persistent Chrome session (avoid 4s cold start):
-    ghostchrome serve --user-profile mysite --stealth   # terminal 1
-    ghostchrome --connect <ws-url> extract https://...  # terminal 2
+  Named sessions (parallel isolated browsers):
+    ghostchrome -s work goto https://app.example.com
+    ghostchrome -s research goto https://scholar.google.com
 
   Cron-ready batch:
     ghostchrome batch --script run.json   # multi-step in one Chrome run
@@ -140,6 +152,12 @@ Run 'ghostchrome linkedin --help' to see LinkedIn recipes.`,
 			if envProxy := os.Getenv("GHOSTCHROME_PROXY"); envProxy != "" {
 				flagProxy = envProxy
 			}
+		}
+		if err := applyPlaywrightConfig(cmd); err != nil {
+			return err
+		}
+		if flagHeaded {
+			flagHeadless = false
 		}
 		switch flagFormat {
 		case "text", "json":
@@ -265,10 +283,11 @@ func registerGroups() {
 
 func init() {
 	rootCmd.PersistentFlags().StringVar(&flagConnect, "connect", "", "WebSocket URL to connect to existing Chrome (e.g. ws://127.0.0.1:9222), or \"auto\" to discover one on 127.0.0.1:9222-9229 and work in a background tab")
-	rootCmd.PersistentFlags().StringVarP(&flagSession, "session", "s", "", "Named auto-managed session: spawns a persistent Chrome (bound to profile <name>) on first use and reuses it across calls. Overrides via $GHOSTCHROME_SESSION. Manage with `ghostchrome sessions`.")
+	rootCmd.PersistentFlags().StringVarP(&flagSession, "session", "s", "", "Named auto-managed session: spawns a persistent Chrome (bound to profile <name>) on first use and reuses it across calls. Defaults from $PLAYWRIGHT_CLI_SESSION, then $GHOSTCHROME_SESSION. Manage with `ghostchrome sessions`.")
 	rootCmd.PersistentFlags().StringVar(&flagContext, "context", "", "Named isolated BrowserContext (incognito) within the connected Chrome; enables parallel sessions without spawning multiple Chrome processes. Only meaningful with --connect.")
 	rootCmd.PersistentFlags().IntVar(&flagTab, "tab", -1, "Target tab index when using --connect (use `ghostchrome tabs --connect ...` to list)")
 	rootCmd.PersistentFlags().BoolVar(&flagHeadless, "headless", true, "Run Chrome in headless mode")
+	rootCmd.PersistentFlags().BoolVar(&flagHeaded, "headed", false, "Run Chrome with a visible browser window (Playwright CLI-compatible inverse of --headless)")
 	rootCmd.PersistentFlags().BoolVar(&flagInvisible, "invisible", false, "Run Chrome headful but positioned off-screen (best for anti-bot: real GPU/fingerprint, no visible window). Implies --headless=false.")
 	rootCmd.PersistentFlags().IntVar(&flagTimeout, "timeout", 30, "Timeout in seconds for operations")
 	rootCmd.PersistentFlags().StringVar(&flagFormat, "format", "text", "Output format: json or text")
@@ -279,6 +298,7 @@ func init() {
 	rootCmd.PersistentFlags().IntVar(&flagWaitMs, "wait-ms", 0, "After navigation (and after --wait-selector if any), sleep this many ms (lets late XHR finish)")
 	rootCmd.PersistentFlags().StringVar(&flagUserProfile, "user-profile", "", "Persistent Chrome profile name (auto-launch only): cookies/cache stored under ~/.ghostchrome/profiles/<name>")
 	rootCmd.PersistentFlags().StringVar(&flagProxy, "proxy", "", "Upstream proxy URL for Chrome (auto-launch only), e.g. http://user:pass@host:port or socks5://host:1080")
+	rootCmd.PersistentFlags().StringVar(&flagProxyBypass, "proxy-bypass", "", "Comma-separated Chromium proxy bypass list (auto-launch only)")
 	rootCmd.PersistentFlags().BoolVar(&flagHuman, "human", false, "Simulate human input dynamics (Bezier mouse paths, jittered key delays, occasional typos)")
 	rootCmd.PersistentFlags().StringVar(&flagExtensions, "extensions", "", "Comma-separated absolute paths to unpacked Chrome extensions (auto-launch only)")
 	rootCmd.PersistentFlags().BoolVar(&flagDefaultExtensions, "default-extensions", false, "Load bundled defaults (uBlock Lite, ICDC, Force Background Tab) from ~/.ghostchrome/extensions/* (auto-launch only)")
@@ -286,6 +306,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&flagObserveOut, "observe-out", "", "Path to write NDJSON observer events (default: inline in agent response)")
 	rootCmd.PersistentFlags().StringVar(&flagPolicy, "policy", "", "Path to a JSON policy file restricting navigation, eval, upload, clipboard")
 	rootCmd.PersistentFlags().StringVar(&flagAllowedDomains, "allowed-domains", "", "Comma-separated domain allowlist (e.g. \"*.example.com,api.stripe.com\"); shorthand for a policy with only allowed_domains")
+	rootCmd.PersistentFlags().StringVar(&flagConfig, "config", "", "Playwright CLI-compatible JSON config path (auto-loads .playwright/cli.config.json when present)")
 }
 
 func SetVersion(v string) {

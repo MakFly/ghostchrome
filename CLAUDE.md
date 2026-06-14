@@ -4,6 +4,13 @@
 
 ghostchrome is an ultra-light CLI browser automation tool written in Go, designed for LLM agents. It uses Chrome DevTools Protocol (CDP) via Rod to control Chrome headless and returns compact output optimized for minimal token usage.
 
+## Local referential
+
+Agent-facing project context lives in `.referential/`. Read `.referential/README.md`
+first for the current source-of-truth map, then use `.referential/project-map.md`,
+`.referential/change-workflows.md`, and `.referential/validation.md` as the local
+working reference for architecture, change workflows, and validation scope.
+
 ## Architecture
 
 ```
@@ -39,21 +46,28 @@ go test ./engine/...
 - **Rod over chromedp**: Decode-on-demand, no zombie processes, native iframe support.
 - **Filtered accessibility tree**: Only interactive elements get refs. 7-25x fewer tokens than full a11y tree.
 - **Three extraction levels**: skeleton (minimal) / content (text) / full (everything named).
-- **Auto-launch Chrome**: No need for `serve` — each command can launch a temporary Chrome. Use `--connect` for sessions.
+- **Transparent daemon**: Every command auto-spawns a persistent background Chrome
+  on first use (session "default"), matching Playwright CLI behavior. No `serve`,
+  no `--connect`, zero config. Opt-out with `GHOSTCHROME_NO_DAEMON=1`.
 
 ## Runtime policy (preferred mode)
 
-**Always run against an already-running Chrome — never spawn.** Default to `--connect=auto`
-(zero-spawn attach, commit `83afd9a`) or an explicit `--connect=ws://...`. Cold spawn is a
-fallback, not the happy path. Rationale:
+**Transparent daemon by default.** Every command auto-spawns (or reuses) a persistent
+background Chrome via the implicit "default" session. No manual `serve` or `--connect`
+needed. The daemon Chrome lives under `~/.ghostchrome/profiles/default` and persists
+across CLI invocations until explicitly stopped (`sessions stop default`) or the
+machine reboots.
 
+Rationale:
 - avoids Chrome startup cost per command (~hundreds of ms)
 - preserves session state (cookies, storage, open tabs) across ops
 - reduces fingerprint variance vs. fresh-profile spawns
-- plays well with `serve` and persistent profiles under `~/.ghostchrome/profiles/<name>`
+- matches Playwright CLI behavior (zero-config daemon)
 
-When designing new commands, flags, or SDK call paths, assume `--connect=auto` is the
-default execution context. Spawn paths must remain a documented escape hatch only.
+When designing new commands, flags, or SDK call paths, assume the implicit daemon is
+the default execution context. `--connect=auto`, explicit `--connect ws://...`, and
+`-s <name>` are overrides for advanced use cases. Cold spawn is a documented escape
+hatch only (via `GHOSTCHROME_NO_DAEMON=1`).
 
 ## Conventions
 

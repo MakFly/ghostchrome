@@ -33,14 +33,18 @@ Then in another terminal:
   ghostchrome collect https://... --connect ws://127.0.0.1:9222/...
   ghostchrome preview https://... --connect ws://127.0.0.1:9222/...`,
 	Run: func(cmd *cobra.Command, args []string) {
+		skipImplicitDaemon = true
 		opts := buildBrowserOpts()
 		wsURL, err := engine.NewLauncher(engine.LauncherOpts{
-			Headless:    flagHeadless,
-			Invisible:   flagInvisible,
-			RemotePort:  flagPort,
-			UserDataDir: opts.UserDataDir,
-			Proxy:       opts.Proxy,
-			Extensions:  opts.Extensions,
+			Headless:       flagHeadless,
+			Invisible:      flagInvisible,
+			RemotePort:     flagPort,
+			UserDataDir:    opts.UserDataDir,
+			Proxy:          opts.Proxy,
+			ProxyBypass:    opts.ProxyBypass,
+			Extensions:     opts.Extensions,
+			ExecutablePath: opts.ExecutablePath,
+			Args:           opts.LaunchArgs,
 		}).Launch()
 		if err != nil {
 			exitErr("launch chrome", err)

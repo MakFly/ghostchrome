@@ -58,11 +58,8 @@ Examples:
 			Files    []string `json:"files"`
 			Count    int      `json:"count"`
 		}
-		target := ref
-		if flagUploadSelector != "" {
-			target = flagUploadSelector
-		}
-		text := fmt.Sprintf("Uploaded %d file(s) to %s", len(files), target)
+		result := snapshotPage(b, page, engine.LevelSkeleton)
+		text := formatCurrentPlaywrightPageStateOutput("upload", page, result)
 		output(&uploadResult{
 			Action:   "upload",
 			Ref:      ref,

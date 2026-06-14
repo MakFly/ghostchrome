@@ -1,0 +1,71 @@
+# Validation Guide
+
+Use the smallest check that proves the change, then broaden when the touched
+surface is shared.
+
+## Core Commands
+
+| Command | What it proves |
+|---|---|
+| `go build ./...` | All Go packages compile. |
+| `go test -short ./...` | Short Go suite without integration tests. |
+| `go test ./engine/...` | Engine-focused tests from project docs. |
+| `go test ./internal/ops/...` | Operation catalog and parity checks. |
+| `go generate ./internal/ops/...` | Regenerates `contracts/commands.json`. |
+| `just test` | Project shortcut for `go test -short ./...`. |
+| `just contract` | Project shortcut for command contract generation. |
+| `just test-all` | Go short tests plus both SDK hermetic suites. |
+
+## SDK Commands
+
+```bash
+cd sdk/typescript && bun install && bunx tsc --noEmit && bun test
+cd sdk/python && python3 -m unittest discover -s tests -q
+```
+
+Use these when `contracts/commands.json`, SDK wrappers, SDK types, or JSONL
+agent behavior changes.
+
+## Live Shape Measurement
+
+Run this before changing SDK result types or docs that claim JSONL result
+shapes:
+
+```bash
+google-chrome --headless=new --remote-debugging-port=9222 --user-data-dir=/tmp/gc-measure about:blank &
+scripts/measure-agent-ops.sh
+```
+
+The measured output is ground truth for runtime result shapes.
+
+## End-To-End Smoke
+
+Requires a running Chrome on port 9222:
+
+```bash
+go build -o ghostchrome .
+GHOSTCHROME_BIN="$PWD/ghostchrome" bun run examples/typescript/chronovet.ts https://www.chronovet.fr/
+GHOSTCHROME_BIN="$PWD/ghostchrome" python3 examples/python/chronovet.py https://www.chronovet.fr/
+```
+
+Or use the shortcut:
+
+```bash
+just e2e
+```
+
+Do not start a local dev server unless the user explicitly asks for it.
+
+## Practical Validation Matrix
+
+| Change type | Minimum validation |
+|---|---|
+| README or docs only | Read rendered markdown or inspect diff. |
+| One CLI command | `go test -short ./...` or targeted package tests, plus `go build ./...`. |
+| Engine behavior | Targeted `go test` for the touched engine area, then `go test -short ./...`. |
+| Op catalog/surfaces | `go generate ./internal/ops/...`, `go test ./internal/ops/...`, SDK coverage tests. |
+| JSONL result shapes | Build binary, run `scripts/measure-agent-ops.sh`, update SDK tests. |
+| TypeScript SDK | `cd sdk/typescript && bun install && bunx tsc --noEmit && bun test`. |
+| Python SDK | `cd sdk/python && python3 -m unittest discover -s tests -q`. |
+| Cross-surface behavior | `just test-all`, then targeted e2e if browser-visible. |
+

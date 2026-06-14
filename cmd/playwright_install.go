@@ -1,0 +1,56 @@
+package cmd
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"github.com/spf13/cobra"
+)
+
+var flagInstallSkills bool
+
+var installCompatCmd = &cobra.Command{
+	Use:   "install",
+	Short: "Set up ghostchrome (skills, verify, print config)",
+	Long: `Install sets up everything ghostchrome needs to run:
+
+  1. Install the bundled Claude Code agent skill (~/.claude/skills/ghostchrome)
+  2. Print the configuration summary
+
+This is idempotent — safe to re-run. It is the counterpart of 'ghostchrome uninstall'.
+
+Examples:
+  ghostchrome install            # full setup
+  ghostchrome install --skills   # skills only (Playwright CLI compatible)`,
+	Args: cobra.NoArgs,
+	Run: func(cmd *cobra.Command, args []string) {
+		out := cmd.OutOrStdout()
+
+		paths, err := installEmbeddedSkills()
+		if err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: skill install failed: %v\n", err)
+		}
+		for _, p := range paths {
+			fmt.Fprintf(out, "skill installed → %s\n", p)
+		}
+
+		if flagInstallSkills {
+			return
+		}
+
+		exe, _ := os.Executable()
+		fmt.Fprintf(out, "binary         → %s\n", exe)
+
+		home, _ := os.UserHomeDir()
+		fmt.Fprintf(out, "data           → %s\n", filepath.Join(home, ".ghostchrome"))
+		fmt.Fprintf(out, "daemon         → enabled by default (set GHOSTCHROME_NO_DAEMON=1 to disable)\n")
+		fmt.Fprintln(out, "\nghostchrome is ready. Try: ghostchrome preview https://example.com")
+	},
+}
+
+func init() {
+	installCompatCmd.Flags().BoolVar(&flagInstallSkills, "skills", false, "Install only the bundled agent skill (Playwright CLI compatible)")
+	rootCmd.AddCommand(installCompatCmd)
+	commandGroups["install"] = "util"
+}

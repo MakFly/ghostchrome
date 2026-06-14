@@ -70,14 +70,19 @@ func ClickRef(page *rod.Page, ref string, snapshot *PageSnapshot) error {
 	if err != nil {
 		return err
 	}
-	return ClickElement(page, el)
+	return ClickElementWithButton(page, el, proto.InputMouseButtonLeft)
 }
 
 // ClickElement performs a click on an already-resolved element (used by the
 // locator path so the same scroll+click+wait logic is shared).
 func ClickElement(page *rod.Page, el *rod.Element) error {
+	return ClickElementWithButton(page, el, proto.InputMouseButtonLeft)
+}
+
+// ClickElementWithButton performs a click with an explicit mouse button.
+func ClickElementWithButton(page *rod.Page, el *rod.Element, button proto.InputMouseButton) error {
 	if HumanMode() {
-		if err := humanClick(page, el); err != nil {
+		if err := humanClick(page, el, button); err != nil {
 			return fmt.Errorf("click: %w", err)
 		}
 		_ = page.WaitStable(500 * time.Millisecond)
@@ -86,7 +91,7 @@ func ClickElement(page *rod.Page, el *rod.Element) error {
 	if err := el.ScrollIntoView(); err != nil {
 		return fmt.Errorf("scroll into view: %w", err)
 	}
-	if err := el.Click(proto.InputMouseButtonLeft, 1); err != nil {
+	if err := el.Click(button, 1); err != nil {
 		return fmt.Errorf("click: %w", err)
 	}
 	_ = page.WaitStable(500 * time.Millisecond)
@@ -95,14 +100,30 @@ func ClickElement(page *rod.Page, el *rod.Element) error {
 
 // DblClickRef double-clicks the element at the given ref.
 func DblClickRef(page *rod.Page, ref string, snapshot *PageSnapshot) error {
+	return DblClickRefWithButton(page, ref, snapshot, proto.InputMouseButtonLeft)
+}
+
+// DblClickRefWithButton double-clicks an element with an explicit mouse button.
+func DblClickRefWithButton(page *rod.Page, ref string, snapshot *PageSnapshot, button proto.InputMouseButton) error {
 	el, err := ResolveRef(page, ref, snapshot)
 	if err != nil {
 		return err
 	}
+	if HumanMode() {
+		if err := humanClick(page, el, button); err != nil {
+			return fmt.Errorf("dblclick: %w", err)
+		}
+		sleepRand(40, 80)
+		if err := humanClick(page, el, button); err != nil {
+			return fmt.Errorf("dblclick: %w", err)
+		}
+		_ = page.WaitStable(500 * time.Millisecond)
+		return nil
+	}
 	if err := el.ScrollIntoView(); err != nil {
 		return fmt.Errorf("scroll into view: %w", err)
 	}
-	if err := el.Click(proto.InputMouseButtonLeft, 2); err != nil {
+	if err := el.Click(button, 2); err != nil {
 		return fmt.Errorf("dblclick: %w", err)
 	}
 	_ = page.WaitStable(500 * time.Millisecond)
@@ -243,7 +264,7 @@ func TypeRef(page *rod.Page, ref string, text string, snapshot *PageSnapshot) er
 // TypeElement writes text into an already-resolved element.
 func TypeElement(page *rod.Page, el *rod.Element, text string) error {
 	if HumanMode() {
-		if err := humanClick(page, el); err != nil {
+		if err := humanClick(page, el, proto.InputMouseButtonLeft); err != nil {
 			return fmt.Errorf("focus-click: %w", err)
 		}
 		if err := el.Focus(); err != nil {
@@ -267,6 +288,21 @@ func TypeElement(page *rod.Page, el *rod.Element, text string) error {
 		return fmt.Errorf("type text: %w", err)
 	}
 	_ = el.Blur()
+	return nil
+}
+
+// TypeFocused writes text into the currently focused element without changing
+// focus or clearing existing content.
+func TypeFocused(page *rod.Page, text string) error {
+	if HumanMode() {
+		if err := humanType(page, text); err != nil {
+			return err
+		}
+		return nil
+	}
+	if err := page.InsertText(text); err != nil {
+		return fmt.Errorf("type focused text: %w", err)
+	}
 	return nil
 }
 
@@ -542,8 +578,18 @@ func PressKey(page *rod.Page, key string, ref string, snapshot *PageSnapshot) er
 	if err != nil {
 		return fmt.Errorf("press: %w", err)
 	}
-	_ = page.WaitStable(300 * time.Millisecond)
+	if pressKeyMayNavigate(key) {
+		_ = page.WaitStable(200 * time.Millisecond)
+	}
 	return nil
+}
+
+func pressKeyMayNavigate(key string) bool {
+	switch strings.ToLower(key) {
+	case "enter", "space", "numpadenter":
+		return true
+	}
+	return false
 }
 
 // WaitForSelector waits for a CSS selector to appear in the DOM.

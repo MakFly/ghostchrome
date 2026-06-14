@@ -1,5 +1,5 @@
 // microbench aggregates per-trial JSON files into a head-to-head report
-// (ghostchrome vs playwright-mcp) and writes:
+// (ghostchrome vs a configurable second tool) and writes:
 //   - benchmark/results.md   (human-readable table)
 //   - benchmark/results.json (machine, for tooling)
 //   - benchmark/badges/{tokens,latency,size}.json (shields.io endpoint)
@@ -42,7 +42,7 @@ type siteRow struct {
 	Site string
 	URL  string
 	GC   stat // ghostchrome
-	PW   stat // playwright-mcp
+	Opp  stat // opponent tool
 }
 
 func median(xs []int) int {
@@ -57,7 +57,7 @@ func median(xs []int) int {
 	return (xs[n/2-1] + xs[n/2]) / 2
 }
 
-func aggregate(trials []trial) []siteRow {
+func aggregate(trials []trial, opponent string) []siteRow {
 	bySite := make(map[string]map[string][]trial)
 	siteOrder := []string{}
 	urlBySite := make(map[string]string)
@@ -73,7 +73,7 @@ func aggregate(trials []trial) []siteRow {
 	for _, site := range siteOrder {
 		row := siteRow{Site: site, URL: urlBySite[site]}
 		row.GC = medianStat(bySite[site]["ghostchrome"])
-		row.PW = medianStat(bySite[site]["playwright-mcp"])
+		row.Opp = medianStat(bySite[site][opponent])
 		rows = append(rows, row)
 	}
 	return rows
@@ -134,9 +134,13 @@ func loadTrials(dir string) ([]trial, error) {
 	return out, nil
 }
 
-func writeMarkdown(path, mode string, rows []siteRow, gcBinarySize int64) error {
+func writeMarkdown(path, mode, opponentLabel string, rows []siteRow, gcBinarySize int64) error {
 	var b strings.Builder
-	title := "Benchmark — ghostchrome vs Playwright-MCP"
+	label := opponentLabel
+	if strings.TrimSpace(label) == "" {
+		label = "Playwright-MCP"
+	}
+	title := fmt.Sprintf("Benchmark — ghostchrome vs %s", label)
 	if mode == "warm" {
 		title += " (warm session)"
 	} else if mode == "cold" {
@@ -144,34 +148,34 @@ func writeMarkdown(path, mode string, rows []siteRow, gcBinarySize int64) error 
 	}
 	fmt.Fprintf(&b, "# %s\n\n", title)
 	if mode == "warm" {
-		fmt.Fprintf(&b, "Per-site median over N trials, **warm session**: ghostchrome runs against a long-lived `serve` instance, Playwright-MCP keeps one MCP server alive for all URLs. Each timing measures only `navigate + snapshot`, not process startup. This is the real LLM-agent loop.\n\n")
+		fmt.Fprintf(&b, "Per-site median over N trials, **warm session**: ghostchrome runs against a long-lived `serve` instance, %s keeps one session alive for all URLs. Each timing measures only `navigate + snapshot`, not process startup. This is the real LLM-agent loop.\n\n", label)
 	} else {
 		fmt.Fprintf(&b, "Per-site median over N trials, **cold spawn**: every command starts a fresh process and Chrome session. Snapshot payload = the text content an LLM agent receives from the tool call.\n\n")
 	}
-	fmt.Fprintf(&b, "| Site | ghostchrome bytes | pw-mcp bytes | tokens ratio | ghostchrome ms | pw-mcp ms | latency ratio |\n")
+	fmt.Fprintf(&b, "| Site | ghostchrome bytes | %s bytes | tokens ratio | ghostchrome ms | %s ms | latency ratio |\n", label, label)
 	fmt.Fprintf(&b, "|---|---:|---:|---:|---:|---:|---:|\n")
-	totalGCBytes, totalPWBytes := 0, 0
-	totalGCMs, totalPWMs := 0, 0
+	totalGCBytes, totalOppBytes := 0, 0
+	totalGCMs, totalOppMs := 0, 0
 	for _, r := range rows {
 		totalGCBytes += r.GC.Bytes
-		totalPWBytes += r.PW.Bytes
+		totalOppBytes += r.Opp.Bytes
 		totalGCMs += r.GC.DurationMs
-		totalPWMs += r.PW.DurationMs
+		totalOppMs += r.Opp.DurationMs
 		fmt.Fprintf(&b, "| %s | %d | %d | **%.2f×** | %d | %d | **%.2f×** |\n",
-			r.Site, r.GC.Bytes, r.PW.Bytes, ratio(r.GC.Bytes, r.PW.Bytes),
-			r.GC.DurationMs, r.PW.DurationMs, ratio(r.GC.DurationMs, r.PW.DurationMs))
+			r.Site, r.GC.Bytes, r.Opp.Bytes, ratio(r.GC.Bytes, r.Opp.Bytes),
+			r.GC.DurationMs, r.Opp.DurationMs, ratio(r.GC.DurationMs, r.Opp.DurationMs))
 	}
-	overallTokens := ratio(totalGCBytes, totalPWBytes)
-	overallLat := ratio(totalGCMs, totalPWMs)
+	overallTokens := ratio(totalGCBytes, totalOppBytes)
+	overallLat := ratio(totalGCMs, totalOppMs)
 	fmt.Fprintf(&b, "| **Overall** | %d | %d | **%.2f×** | %d | %d | **%.2f×** |\n",
-		totalGCBytes, totalPWBytes, overallTokens, totalGCMs, totalPWMs, overallLat)
-	fmt.Fprintf(&b, "\n_Lower is better for ghostchrome columns. Ratio = pw-mcp / ghostchrome (so 3.0× means ghostchrome returns 3× less / runs 3× faster)._\n\n")
+		totalGCBytes, totalOppBytes, overallTokens, totalGCMs, totalOppMs, overallLat)
+	fmt.Fprintf(&b, "\n_Lower is better for ghostchrome columns. Ratio = %s / ghostchrome (so 3.0× means ghostchrome returns 3× less / runs 3× faster)._\n\n", label)
 	if overallLat < 1 && mode == "cold" {
 		fmt.Fprintf(&b, "> **Latency caveat:** cold-spawn mode times the full Chrome+process startup on every call. For the real LLM-agent loop (long-lived `serve` instance), see `benchmark/results-warm.md` — run `BENCH_MODE=warm ./benchmark/run-bench.sh` to regenerate.\n\n")
 	}
 	fmt.Fprintf(&b, "## Binary size\n\n")
 	fmt.Fprintf(&b, "- ghostchrome: %.1f MB (single Go binary)\n", float64(gcBinarySize)/(1024*1024))
-	fmt.Fprintf(&b, "- Playwright-MCP: requires Node.js (~80 MB) + Playwright (~250 MB w/ browsers)\n")
+	fmt.Fprintf(&b, "- %s: requires Node.js + Playwright runtime\n", label)
 	return os.WriteFile(path, []byte(b.String()), 0o644)
 }
 
@@ -209,6 +213,8 @@ func main() {
 	badgesDir := flag.String("badges", "benchmark/badges", "shields.io endpoint JSON dir")
 	binPath := flag.String("binary", "bin/ghostchrome", "path to compiled ghostchrome binary (for size badge)")
 	mode := flag.String("mode", "cold", "cold | warm — annotates the report")
+	opponent := flag.String("opponent", "playwright-mcp", "second tool name used in trial JSON")
+	opponentLabel := flag.String("opponent-label", "Playwright-MCP", "human-readable opponent name in report")
 	flag.Parse()
 
 	trials, err := loadTrials(*in)
@@ -220,28 +226,28 @@ func main() {
 		fmt.Fprintln(os.Stderr, "no trials found in", *in)
 		os.Exit(1)
 	}
-	rows := aggregate(trials)
+	rows := aggregate(trials, *opponent)
 
 	var binarySize int64
 	if fi, err := os.Stat(*binPath); err == nil {
 		binarySize = fi.Size()
 	}
 
-	if err := writeMarkdown(*mdOut, *mode, rows, binarySize); err != nil {
+	if err := writeMarkdown(*mdOut, *mode, *opponentLabel, rows, binarySize); err != nil {
 		fmt.Fprintln(os.Stderr, "write md:", err)
 		os.Exit(1)
 	}
 
-	totalGCBytes, totalPWBytes := 0, 0
-	totalGCMs, totalPWMs := 0, 0
+	totalGCBytes, totalOppBytes := 0, 0
+	totalGCMs, totalOppMs := 0, 0
 	for _, r := range rows {
 		totalGCBytes += r.GC.Bytes
-		totalPWBytes += r.PW.Bytes
+		totalOppBytes += r.Opp.Bytes
 		totalGCMs += r.GC.DurationMs
-		totalPWMs += r.PW.DurationMs
+		totalOppMs += r.Opp.DurationMs
 	}
-	overallTokens := ratio(totalGCBytes, totalPWBytes)
-	overallLat := ratio(totalGCMs, totalPWMs)
+	overallTokens := ratio(totalGCBytes, totalOppBytes)
+	overallLat := ratio(totalGCMs, totalOppMs)
 
 	summary := struct {
 		Rows         []siteRow `json:"rows"`
@@ -263,18 +269,18 @@ func main() {
 		tokensColor = "red"
 	}
 	_ = writeBadge(filepath.Join(*badgesDir, "tokens.json"),
-		"tokens vs playwright-mcp",
+		fmt.Sprintf("tokens vs %s", *opponentLabel),
 		tokensMsg,
 		tokensColor)
 
 	latMsg := fmt.Sprintf("%.1f× faster", overallLat)
 	latColor := badgeColor(overallLat)
 	if overallLat < 1 {
-		latMsg = fmt.Sprintf("%.1f× slower (cold spawn)", 1/overallLat)
+		latMsg = fmt.Sprintf("%.1f× slower", 1/overallLat)
 		latColor = "orange"
 	}
 	_ = writeBadge(filepath.Join(*badgesDir, "latency.json"),
-		"latency vs playwright-mcp",
+		fmt.Sprintf("latency vs %s", *opponentLabel),
 		latMsg,
 		latColor)
 	if binarySize > 0 {

@@ -51,6 +51,9 @@ var cookiesListCmd = &cobra.Command{
 			if flagCookieDomain != "" && !domainMatches(c.Domain, flagCookieDomain) {
 				continue
 			}
+			if flagCookiePath != "" && c.Path != flagCookiePath {
+				continue
+			}
 			filtered = append(filtered, c)
 		}
 
@@ -189,6 +192,49 @@ func parseExpires(s string) (float64, error) {
 	return float64(time.Now().Add(d).Unix()), nil
 }
 
+var cookieGetCmd = &cobra.Command{
+	Use:   "cookie-get <name>",
+	Short: "Get a specific cookie by name",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		b, _ := openPage()
+		defer b.Close()
+
+		cookies, err := b.RodBrowser().GetCookies()
+		if err != nil {
+			exitErr("cookie-get", err)
+		}
+
+		var matches []*proto.NetworkCookie
+		for _, c := range cookies {
+			if c.Name != args[0] {
+				continue
+			}
+			if flagCookieDomain != "" && !domainMatches(c.Domain, flagCookieDomain) {
+				continue
+			}
+			if flagCookiePath != "" && c.Path != flagCookiePath {
+				continue
+			}
+			matches = append(matches, c)
+		}
+		if len(matches) == 0 {
+			output(cookieListResult{Cookies: nil, Count: 0}, "No cookie")
+			return
+		}
+		output(cookieListResult{Cookies: matches, Count: len(matches)}, formatCookieList(matches))
+	},
+}
+
+var cookieSetCompatCmd = &cobra.Command{
+	Use:   "cookie-set <name> <value>",
+	Short: "Set a cookie (Playwright CLI-compatible form)",
+	Args:  cobra.ExactArgs(2),
+	Run: func(cmd *cobra.Command, args []string) {
+		cookiesSetCmd.Run(cmd, []string{args[0] + "=" + args[1]})
+	},
+}
+
 func formatCookieList(cookies []*proto.NetworkCookie) string {
 	if len(cookies) == 0 {
 		return "No cookies"
@@ -222,9 +268,10 @@ func truncateValue(v string) string {
 }
 
 func init() {
-	for _, c := range []*cobra.Command{cookiesListCmd, cookiesSetCmd, cookiesDeleteCmd, cookiesClearCmd} {
+	for _, c := range []*cobra.Command{cookiesListCmd, cookiesSetCmd, cookiesDeleteCmd, cookiesClearCmd, cookieGetCmd, cookieSetCompatCmd} {
 		c.Flags().StringVar(&flagCookieDomain, "domain", "", "Cookie domain (e.g. example.com)")
 	}
+	cookiesListCmd.Flags().StringVar(&flagCookiePath, "path", "", "Cookie path")
 	cookiesSetCmd.Flags().StringVar(&flagCookiePath, "path", "/", "Cookie path")
 	cookiesSetCmd.Flags().BoolVar(&flagCookieSecure, "secure", false, "Secure flag")
 	cookiesSetCmd.Flags().BoolVar(&flagCookieHTTPOnly, "http-only", false, "HttpOnly flag")
@@ -233,7 +280,45 @@ func init() {
 	cookiesSetCmd.Flags().StringVar(&flagCookieURL, "url", "", "Associated URL (alternative to --domain + --path)")
 	cookiesDeleteCmd.Flags().StringVar(&flagCookiePath, "path", "", "Cookie path to match")
 	cookiesDeleteCmd.Flags().StringVar(&flagCookieURL, "url", "", "URL that owns the cookie")
+	cookieGetCmd.Flags().StringVar(&flagCookiePath, "path", "", "Cookie path")
+	cookieSetCompatCmd.Flags().StringVar(&flagCookiePath, "path", "/", "Cookie path")
+	cookieSetCompatCmd.Flags().BoolVar(&flagCookieSecure, "secure", false, "Secure flag")
+	cookieSetCompatCmd.Flags().BoolVar(&flagCookieHTTPOnly, "http-only", false, "HttpOnly flag")
+	cookieSetCompatCmd.Flags().StringVar(&flagCookieExpires, "expires", "", "Expiration (RFC3339, \"30d\", or Go duration like \"24h\")")
+	cookieSetCompatCmd.Flags().StringVar(&flagCookieSameSite, "same-site", "", "SameSite: Strict, Lax, None")
+	cookieSetCompatCmd.Flags().StringVar(&flagCookieURL, "url", "", "Associated URL (alternative to --domain + --path)")
 
 	cookiesCmd.AddCommand(cookiesListCmd, cookiesSetCmd, cookiesDeleteCmd, cookiesClearCmd)
 	rootCmd.AddCommand(cookiesCmd)
+
+	cookieListCompatCmd := &cobra.Command{
+		Use:   "cookie-list",
+		Short: "List cookies (Playwright CLI-compatible alias)",
+		Args:  cobra.NoArgs,
+		Run:   cookiesListCmd.Run,
+	}
+	cookieListCompatCmd.Flags().StringVar(&flagCookieDomain, "domain", "", "Cookie domain (e.g. example.com)")
+	cookieListCompatCmd.Flags().StringVar(&flagCookiePath, "path", "", "Cookie path")
+	rootCmd.AddCommand(cookieListCompatCmd)
+	rootCmd.AddCommand(cookieGetCmd)
+	rootCmd.AddCommand(cookieSetCompatCmd)
+
+	cookieDeleteCompatCmd := &cobra.Command{
+		Use:   "cookie-delete <name>",
+		Short: "Delete a cookie (Playwright CLI-compatible alias)",
+		Args:  cobra.ExactArgs(1),
+		Run:   cookiesDeleteCmd.Run,
+	}
+	cookieDeleteCompatCmd.Flags().StringVar(&flagCookieDomain, "domain", "", "Cookie domain (e.g. example.com)")
+	cookieDeleteCompatCmd.Flags().StringVar(&flagCookiePath, "path", "", "Cookie path to match")
+	cookieDeleteCompatCmd.Flags().StringVar(&flagCookieURL, "url", "", "URL that owns the cookie")
+	rootCmd.AddCommand(cookieDeleteCompatCmd)
+
+	cookieClearCompatCmd := &cobra.Command{
+		Use:   "cookie-clear",
+		Short: "Clear cookies (Playwright CLI-compatible alias)",
+		Args:  cobra.NoArgs,
+		Run:   cookiesClearCmd.Run,
+	}
+	rootCmd.AddCommand(cookieClearCompatCmd)
 }

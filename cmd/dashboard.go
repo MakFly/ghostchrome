@@ -13,8 +13,9 @@ import (
 var flagDashboardPort int
 
 var dashboardCmd = &cobra.Command{
-	Use:   "dashboard [url]",
-	Short: "Open a live browser viewport dashboard",
+	Use:     "dashboard [url]",
+	Aliases: []string{"show"},
+	Short:   "Open a live browser viewport dashboard",
 	Long: `Start a local web dashboard that streams the browser viewport
 via WebSocket screencast. Navigate to the dashboard URL in any browser
 to see real-time page activity.

@@ -1,8 +1,6 @@
 package cmd
 
 import (
-	"fmt"
-
 	"github.com/MakFly/ghostchrome/engine"
 	"github.com/spf13/cobra"
 )
@@ -33,13 +31,15 @@ Examples:
 			exitErr("drag", err)
 		}
 
+		result := snapshotPage(b, page, engine.LevelSkeleton)
+
 		type dragResult struct {
 			From  string `json:"from"`
 			To    string `json:"to"`
 			Steps int    `json:"steps"`
 		}
-		output(&dragResult{From: fromRef, To: toRef, Steps: flagDragSteps},
-			fmt.Sprintf("dragged %s → %s (%d steps)", fromRef, toRef, flagDragSteps))
+		text := formatCurrentPlaywrightPageStateOutput("drag", page, result)
+		output(&dragResult{From: fromRef, To: toRef, Steps: flagDragSteps}, text)
 	},
 }
 

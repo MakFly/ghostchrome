@@ -94,30 +94,15 @@ var storageLoadCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		path := args[0]
-
-		var state engine.StorageState
-		if strings.HasSuffix(path, ".enc") {
-			v, err := vault.NewFromEnv()
-			if err != nil {
-				exitErr("storage load", fmt.Errorf("encrypted file requires GHOSTCHROME_VAULT_KEY env var: %w", err))
-			}
-			if err := v.LoadFile(path, &state); err != nil {
-				exitErr("storage load", err)
-			}
-		} else {
-			data, err := os.ReadFile(path)
-			if err != nil {
-				exitErr("storage load", err)
-			}
-			if err := json.Unmarshal(data, &state); err != nil {
-				exitErr("storage load", fmt.Errorf("parse %s: %w", path, err))
-			}
+		state, err := readStorageStateFile(path)
+		if err != nil {
+			exitErr("storage load", err)
 		}
 
 		b, page := openPage()
 		defer b.Close()
 
-		if err := engine.LoadStorageState(b.RodBrowser(), page, &state); err != nil {
+		if err := engine.LoadStorageState(b.RodBrowser(), page, state); err != nil {
 			exitErr("storage load", err)
 		}
 
@@ -130,6 +115,28 @@ var storageLoadCmd = &cobra.Command{
 		text := fmt.Sprintf("Storage loaded from %s (%d cookies, %d origins)", path, len(state.Cookies), len(state.Origins))
 		output(&loadResult{Action: "load", Path: path, Cookies: len(state.Cookies), Origins: len(state.Origins)}, text)
 	},
+}
+
+func readStorageStateFile(path string) (*engine.StorageState, error) {
+	var state engine.StorageState
+	if strings.HasSuffix(path, ".enc") {
+		v, err := vault.NewFromEnv()
+		if err != nil {
+			return nil, fmt.Errorf("encrypted file requires GHOSTCHROME_VAULT_KEY env var: %w", err)
+		}
+		if err := v.LoadFile(path, &state); err != nil {
+			return nil, err
+		}
+		return &state, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	return &state, nil
 }
 
 func defaultStorageDir() (string, error) {

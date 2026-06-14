@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/MakFly/ghostchrome/engine"
 	"github.com/spf13/cobra"
@@ -17,7 +18,7 @@ var (
 var errMissingExpr = errors.New("expression required (provide as arg or via --script <file>)")
 
 var evalCmd = &cobra.Command{
-	Use:   "eval [expression] [url]",
+	Use:   "eval [expression] [url|ref]",
 	Short: "Evaluate JavaScript on the page",
 	Long: `Evaluate a JavaScript expression on the page and return the result.
 If a URL is provided, navigates first then evaluates.
@@ -55,7 +56,14 @@ Examples:
 		}
 		targetURL := ""
 		if len(args) > urlArgIdx {
-			targetURL = args[urlArgIdx]
+			if strings.HasPrefix(args[urlArgIdx], "@") {
+				if flagOnRef != "" && flagOnRef != args[urlArgIdx] {
+					exitErr("eval", errors.New("element ref specified twice"))
+				}
+				flagOnRef = args[urlArgIdx]
+			} else {
+				targetURL = args[urlArgIdx]
+			}
 		}
 
 		b, page := openPage()

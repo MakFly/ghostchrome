@@ -148,7 +148,7 @@ func humanHover(page *rod.Page, el *rod.Element) error {
 
 // humanClick moves to a small random offset around the element center, holds
 // briefly, then dispatches mousePressed / mouseReleased.
-func humanClick(page *rod.Page, el *rod.Element) error {
+func humanClick(page *rod.Page, el *rod.Element, button proto.InputMouseButton) error {
 	if err := el.ScrollIntoView(); err != nil {
 		return fmt.Errorf("scroll: %w", err)
 	}
@@ -168,7 +168,7 @@ func humanClick(page *rod.Page, el *rod.Element) error {
 		Type:        proto.InputDispatchMouseEventTypeMousePressed,
 		X:           tx,
 		Y:           ty,
-		Button:      proto.InputMouseButtonLeft,
+		Button:      button,
 		ClickCount:  1,
 		PointerType: proto.InputDispatchMouseEventPointerTypeMouse,
 	}
@@ -180,7 +180,7 @@ func humanClick(page *rod.Page, el *rod.Element) error {
 		Type:        proto.InputDispatchMouseEventTypeMouseReleased,
 		X:           tx,
 		Y:           ty,
-		Button:      proto.InputMouseButtonLeft,
+		Button:      button,
 		ClickCount:  1,
 		PointerType: proto.InputDispatchMouseEventPointerTypeMouse,
 	}

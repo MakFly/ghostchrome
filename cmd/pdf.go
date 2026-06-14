@@ -28,18 +28,22 @@ var paperSizes = map[string][2]float64{
 }
 
 var pdfCmd = &cobra.Command{
-	Use:   "pdf <url>",
+	Use:   "pdf [url]",
 	Short: "Export the page as a PDF",
 	Long: `Render the page to PDF via Chrome's Page.printToPDF. Works best in
 headless mode (ghostchrome's default). Files are written owner-only (0o600).
 
 Examples:
+  ghostchrome pdf --connect ws://...
   ghostchrome pdf https://en.wikipedia.org/wiki/Web_browser --output wiki.pdf
   ghostchrome pdf https://x --landscape --format Letter
   ghostchrome pdf https://y --scale 0.8 --print-background`,
-	Args: cobra.ExactArgs(1),
+	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		targetURL := args[0]
+		targetURL := ""
+		if len(args) > 0 {
+			targetURL = args[0]
+		}
 
 		paper, ok := paperSizes[flagPDFFormat]
 		if !ok {
@@ -62,6 +66,11 @@ Examples:
 		defer b.Close()
 
 		navigateIfRequested(page, targetURL, "load")
+		if targetURL == "" {
+			if info, err := page.Info(); err == nil && info != nil {
+				targetURL = info.URL
+			}
+		}
 
 		req := proto.PagePrintToPDF{
 			Landscape:       flagPDFLandscape,
@@ -125,6 +134,7 @@ func landscapeSuffix(landscape bool) string {
 
 func init() {
 	pdfCmd.Flags().StringVar(&flagPDFOutput, "output", "", "Output file path (default: $XDG_CACHE_HOME/ghostchrome/pdfs/*.pdf)")
+	pdfCmd.Flags().StringVar(&flagPDFOutput, "filename", "", "Output file path (Playwright CLI-compatible alias for --output)")
 	pdfCmd.Flags().BoolVar(&flagPDFLandscape, "landscape", false, "Landscape orientation")
 	pdfCmd.Flags().StringVar(&flagPDFFormat, "format", "A4", "Paper format: A4, A3, Letter, Legal")
 	pdfCmd.Flags().Float64Var(&flagPDFScale, "scale", 1.0, "Scale (0.1 to 2.0)")

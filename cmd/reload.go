@@ -1,8 +1,6 @@
 package cmd
 
 import (
-	"fmt"
-
 	"github.com/MakFly/ghostchrome/engine"
 	"github.com/spf13/cobra"
 )
@@ -34,9 +32,12 @@ Examples:
 			exitErr("page info", err)
 		}
 
-		_ = snapshotPage(b, page, engine.LevelSkeleton)
+		result := snapshotPage(b, page, engine.LevelSkeleton)
 
-		text := fmt.Sprintf("[reload] %s — %s", info.Title, info.URL)
+		text := formatPlaywrightPageStateOutput(&engine.PageInfo{
+			URL:   info.URL,
+			Title: info.Title,
+		}, result)
 		output(&navResult{
 			Action: "reload",
 			URL:    info.URL,

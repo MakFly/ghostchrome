@@ -22,8 +22,9 @@ var devicePresets = map[string][2]int{
 }
 
 var viewportCmd = &cobra.Command{
-	Use:   "viewport [width] [height] [url]",
-	Short: "Set the browser viewport size",
+	Use:     "viewport [width] [height] [url]",
+	Aliases: []string{"resize"},
+	Short:   "Set the browser viewport size",
 	Long: `Set the viewport dimensions. Either provide width and height as arguments,
 or use --device to pick from presets. If a URL is provided, navigates and extracts a skeleton.
 
@@ -79,6 +80,12 @@ Examples:
 			exitErr("viewport", err)
 		}
 
+		if url != "" {
+			navigateIfRequested(page, url, "load")
+		}
+
+		result := snapshotPage(b, page, engine.LevelSkeleton)
+
 		type viewportResult struct {
 			Width  int                      `json:"width"`
 			Height int                      `json:"height"`
@@ -90,21 +97,11 @@ Examples:
 			Width:  width,
 			Height: height,
 			Device: deviceLabel,
+			Result: result,
 		}
 
-		label := fmt.Sprintf("Viewport set to %dx%d", width, height)
-		if deviceLabel != "" {
-			label = fmt.Sprintf("Viewport set to %dx%d (%s)", width, height, deviceLabel)
-		}
-
-		if url != "" {
-			navigateIfRequested(page, url, "load")
-			result := snapshotPage(b, page, engine.LevelSkeleton)
-			vr.Result = result
-			label += "\n" + engine.FormatText(result)
-		}
-
-		output(vr, label)
+		text := formatCurrentPlaywrightPageStateOutput("viewport", page, result)
+		output(vr, text)
 	},
 }
 

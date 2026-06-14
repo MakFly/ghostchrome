@@ -71,13 +71,16 @@ Examples:
 			exitErr("switch tab", err)
 		}
 
+		result := snapshotPage(b, page, engine.LevelSkeleton)
+
 		type switchResult struct {
-			Action string `json:"action"`
-			Index  int    `json:"index"`
+			Action string                   `json:"action"`
+			Index  int                      `json:"index"`
+			Result *engine.ExtractionResult `json:"result,omitempty"`
 		}
 
-		text := fmt.Sprintf("Switched to tab %d", idx)
-		output(&switchResult{Action: "switch", Index: idx}, text)
+		text := formatCurrentPlaywrightPageStateOutput("tab-select", page, result)
+		output(&switchResult{Action: "switch", Index: idx, Result: result}, text)
 	},
 }
 
@@ -145,18 +148,22 @@ Examples:
 			exitErr("new tab", err)
 		}
 
+		result := snapshotPage(b, page, engine.LevelSkeleton)
+
 		info, _ := page.Info()
 		type newResult struct {
-			Action string `json:"action"`
-			URL    string `json:"url"`
-			Title  string `json:"title"`
+			Action string                   `json:"action"`
+			URL    string                   `json:"url"`
+			Title  string                   `json:"title"`
+			Result *engine.ExtractionResult `json:"result,omitempty"`
 		}
-		res := &newResult{Action: "new-tab"}
+		res := &newResult{Action: "new-tab", Result: result}
 		if info != nil {
 			res.URL = info.URL
 			res.Title = info.Title
 		}
-		output(res, fmt.Sprintf("Opened new tab — %s", res.URL))
+		text := formatCurrentPlaywrightPageStateOutput("tab-new", page, result)
+		output(res, text)
 	},
 }
 

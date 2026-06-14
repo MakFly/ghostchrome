@@ -5,6 +5,7 @@ import (
 
 	"github.com/MakFly/ghostchrome/engine"
 	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/input"
 	"github.com/spf13/cobra"
 )
 
@@ -15,21 +16,25 @@ var typeSubmit bool
 var typeLocator LocatorFlags
 
 var typeCmd = &cobra.Command{
-	Use:   "type <ref|text> [text] [url]",
-	Short: "Type text into an input by ref or semantic locator",
+	Use:     "type <text> | type <ref> <text> [url]",
+	Aliases: []string{"fill"},
+	Short:   "Type text into the focused element or an input by ref/locator",
 	Long: `Type text into an element.
 
+With one positional and no locator: type into the currently focused element.
 With a ref: first positional is @N, second is the text to type.
 With a locator: pass --by-* flags, and a single positional (the text to type).
 An optional URL argument may follow.
 
 Examples:
+  ghostchrome type "hello world"
   ghostchrome type @2 "hello world"
   ghostchrome type --by-label "Email" "kev@example.com"
   ghostchrome type --by-role textbox --by-name "Search" "ghostchrome"`,
 	Args: cobra.RangeArgs(1, 3),
 	Run: func(cmd *cobra.Command, args []string) {
 		var ref, text, targetURL string
+		focusedMode := false
 		if typeLocator.Any() {
 			// With a locator: positionals are [text] [url]
 			if len(args) < 1 {
@@ -40,20 +45,20 @@ Examples:
 				targetURL = args[1]
 			}
 		} else {
-			if len(args) < 2 {
-				exitErr("type", fmt.Errorf("need REF and TEXT (or --by-* and TEXT)"))
-			}
-			ref = args[0]
-			text = args[1]
-			if len(args) > 2 {
-				targetURL = args[2]
+			if len(args) == 1 {
+				text = args[0]
+				focusedMode = true
+			} else {
+				ref = args[0]
+				text = args[1]
+				if len(args) > 2 {
+					targetURL = args[2]
+				}
 			}
 		}
 
 		b, page := openPage()
 		defer b.Close()
-
-		snapshot := ensureSnapshot(b, page, targetURL, "load", engine.LevelSkeleton)
 
 		waitState, waitTimeout := resolveWaitFlags(cmd, typeWaitFor, typeWaitTimeoutMs)
 
@@ -61,32 +66,44 @@ Examples:
 		// re-focus the exact field it typed into.
 		var typedEl *rod.Element
 		var rerr error
-		switch {
-		case typeLocator.Any():
-			typedEl, rerr = engine.WaitForLocator(page, typeLocator.ToLocator(), waitState, waitTimeout)
-			if rerr != nil {
-				exitErr("type", rerr)
+		if focusedMode {
+			if err := engine.TypeFocused(page, text); err != nil {
+				exitErr("type", err)
 			}
-		case waitTimeout > 0:
-			typedEl, rerr = engine.WaitForRef(page, ref, snapshot, waitState, waitTimeout)
-			if rerr != nil {
-				exitIfStaleRef(rerr, "type")
-				exitErr("type", rerr)
+		} else {
+			snapshot := ensureSnapshot(b, page, targetURL, "load", engine.LevelSkeleton)
+			switch {
+			case typeLocator.Any():
+				typedEl, rerr = engine.WaitForLocator(page, typeLocator.ToLocator(), waitState, waitTimeout)
+				if rerr != nil {
+					exitErr("type", rerr)
+				}
+			case waitTimeout > 0:
+				typedEl, rerr = engine.WaitForRef(page, ref, snapshot, waitState, waitTimeout)
+				if rerr != nil {
+					exitIfStaleRef(rerr, "type")
+					exitErr("type", rerr)
+				}
+			default:
+				typedEl, rerr = engine.ResolveRef(page, ref, snapshot)
+				if rerr != nil {
+					exitIfStaleRef(rerr, "type")
+					exitErr("type", rerr)
+				}
 			}
-		default:
-			typedEl, rerr = engine.ResolveRef(page, ref, snapshot)
-			if rerr != nil {
-				exitIfStaleRef(rerr, "type")
-				exitErr("type", rerr)
+
+			if err := engine.TypeElement(page, typedEl, text); err != nil {
+				exitErr("type", err)
+			}
+
+			if typeSubmit {
+				if err := engine.SubmitOnElement(page, typedEl); err != nil {
+					exitErr("type --submit", err)
+				}
 			}
 		}
-
-		if err := engine.TypeElement(page, typedEl, text); err != nil {
-			exitErr("type", err)
-		}
-
-		if typeSubmit {
-			if err := engine.SubmitOnElement(page, typedEl); err != nil {
+		if focusedMode && typeSubmit {
+			if err := page.Keyboard.Type(input.Enter); err != nil {
 				exitErr("type --submit", err)
 			}
 		}
@@ -98,7 +115,7 @@ Examples:
 			Text string `json:"text"`
 		}
 
-		textOutput := engine.FormatTextProfile(result, renderProfile())
+		textOutput := formatCurrentPlaywrightPageStateOutput("type", page, result)
 		output(&typeResult{
 			actionResult: actionResult{
 				Action:  "type",
