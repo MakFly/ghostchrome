@@ -886,7 +886,9 @@ func (b *Browser) SetVideoState(state VideoState) error {
 }
 
 func appendBoundedConsole(existing, incoming []ObserverEvent, max int) []ObserverEvent {
-	out := append(existing, incoming...)
+	out := make([]ObserverEvent, 0, len(existing)+len(incoming))
+	out = append(out, existing...)
+	out = append(out, incoming...)
 	if len(out) <= max {
 		return out
 	}
@@ -918,7 +920,7 @@ func (b *Browser) drainBackgroundObserver() {
 		return
 	}
 	events := b.bgObserver.Drain(0)
-	b.bgObserver.Stop()
+	_ = b.bgObserver.Stop()
 	b.bgObserver = nil
 	if len(events) == 0 {
 		return

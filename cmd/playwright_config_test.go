@@ -66,7 +66,7 @@ func TestApplyPlaywrightConfigMappedFields(t *testing.T) {
 	if flagProxy != "http://user:pass@proxy.test:8080" {
 		t.Fatalf("flagProxy = %q", flagProxy)
 	}
-	if flagProxyBypass != "localhost,*.internal" {
+	if flagProxyBypass != "localhost,*.internal" { //nolint:gosec // G101 false positive: "Bypass" is not a credential
 		t.Fatalf("flagProxyBypass = %q", flagProxyBypass)
 	}
 	if flagConfigExecutablePath != filepath.Join(dir, "chrome-bin") {
@@ -673,11 +673,3 @@ func snapshotConfigGlobals() func() {
 	}
 }
 
-func containsString(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
-}
