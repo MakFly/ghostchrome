@@ -53,7 +53,7 @@ What you get:
 - **Three extraction levels** — `skeleton` (minimal), `content` (text), `full` (everything named).
 - **Transparent daemon** — every command auto-spawns a persistent background Chrome on first use (no `serve`, no `--connect`, zero config). Just run `ghostchrome goto <url>` and it works.
 - **CDP-native** — built on [Rod](https://github.com/go-rod/rod), so iframe handling, stealth patches, and event capture work out of the box.
-- **Single ~24 MB binary** — no Node.js, no `npm install`, no Playwright browsers download.
+- **Single ~19 MB binary** — no Node.js, no `npm install`, no Playwright browsers download.
 - **Three ways to drive it** — the CLI, an MCP server (16 tools, drop-in for `@playwright/mcp`), or typed Python / TypeScript SDKs over the persistent JSONL `agent` loop.
 
 ---
@@ -108,7 +108,7 @@ Both tools with their daemon running, same pages. See the full 20-operation tabl
 | | ghostchrome | playwright-cli |
 |---|---|---|
 | Runtime | Static Go binary | Node.js |
-| Install size | ~24 MB | ~330 MB (Node + Playwright + FFmpeg) |
+| Install size | ~19 MB | ~330 MB (Node + Playwright + FFmpeg) |
 | Cold daemon start | 315 ms | 600 ms |
 | Daemon required | transparent (auto) | explicit (`open` first) |
 | Dependencies | Chrome on the system *or* auto-downloaded by Rod | npm + `playwright install` |
@@ -131,7 +131,7 @@ single static Go binary.
 | Wire into the agent | `playwright-cli install --skills` | `ghostchrome install --skills` |
 | Daemon | requires `open` before `goto` | transparent — just run any command |
 | Uninstall | manual | `ghostchrome uninstall --purge --yes` |
-| Runtime | Node.js + Playwright + FFmpeg (~330 MB) | one ~24 MB binary, system Chrome |
+| Runtime | Node.js + Playwright + FFmpeg (~330 MB) | one ~19 MB binary, system Chrome |
 
 ### 1. Install the CLI
 
@@ -306,7 +306,7 @@ The single playwright-cli win is snapshot on a very large page (GitHub repo, ~10
 | Target | LLM agents | LLM agents | Devs / QA | Devs | Devs (Go) |
 | Runtime | Static Go binary | Node.js | Node.js | Node.js | Go binary |
 | Install | `curl \| sh` or `bun i -g` | `npm i -g @playwright/cli` | npm + browser DL | npm + browser DL | `go install` |
-| Install size | ~24 MB | ~330 MB | ~330 MB | ~280 MB | ~20 MB |
+| Install size | ~19 MB | ~330 MB | ~330 MB | ~280 MB | ~20 MB |
 | Daemon | transparent (auto) | requires `open` first | n/a | n/a | n/a |
 | Snapshot tokens | ~500–3,500 | ~2,700–57,000 | n/a (raw HTML) | n/a | n/a |
 | Token ratio | **1×** | **5.3× larger** | — | — | — |
