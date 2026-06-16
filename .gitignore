@@ -59,3 +59,4 @@ benchmark/results-warm.json
 /cmd/linkedin.go
 /cmd/instagram.go
 /cmd/cars_listings.go
+docs/

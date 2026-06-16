@@ -262,7 +262,7 @@ your agent → ghostchrome CLI → Rod (Go) → Chrome DevTools Protocol → Chr
 4. **Output is text first** — no JSON wrapping unless you ask for `--json`. The agent reads what a human would read in DevTools.
 5. **Transparent daemon** — auto-spawns a persistent background Chrome on first use. Named sessions (`-s work`, `-s research`) run parallel isolated browsers. No `serve` needed.
 
-Architecture deep dive: [`docs/architecture.md`](docs/architecture.md). Full CLI reference: [`docs/cli.md`](docs/cli.md). MCP server (16 tools): [`docs/mcp.md`](docs/mcp.md). Anti-bot story: [`docs/anti-bot.md`](docs/anti-bot.md). Fast HTTP path: [`docs/fast-path.md`](docs/fast-path.md).
+Architecture, CLI reference, MCP server, anti-bot, and fast-path docs live in `docs/` (local only, not published to the repo).
 
 ---
 
@@ -338,7 +338,7 @@ Explicit non-goals: WebKit/Firefox, `run-code` (Playwright runtime),
 `pause-at`/`resume`/`step-over` (Playwright debug protocol), Playwright Trace
 Viewer-compatible `trace.zip`.
 
-Full parity matrix: [`docs/playwright-cli-parity.md`](docs/playwright-cli-parity.md).
+Full parity matrix: `docs/playwright-cli-parity.md` (local).
 
 ---
 
@@ -366,7 +366,7 @@ codex mcp add ghostchrome -- ghostchrome mcp --stealth
 
 ### MCP tool surface (v2.0)
 
-Deliberately small — 16 tools, no fat. Each one is on the hot path of a browser-driving loop. (Earlier versions exposed 38; see [`docs/mcp.md`](docs/mcp.md) for why it was trimmed.)
+Deliberately small — 16 tools, no fat. Each one is on the hot path of a browser-driving loop.
 
 | Tool | Purpose |
 |---|---|
@@ -445,8 +445,6 @@ def snapshot(url):
 
 Use `ghostchrome` as a regular shell command. The daemon starts automatically — no `serve` step.
 
-Recipes: [`docs/recipes/`](docs/recipes/) — Algolia, AutoScout24, bulk scrape, registry sweep, agent JSONL mode.
-
 ---
 
 ## Command reference
@@ -497,7 +495,7 @@ Agents
   mcp                           Run as an MCP server (stdio, 16 tools)
 ```
 
-Full details: [`docs/cli.md`](docs/cli.md).
+Full details: `docs/cli.md` (local).
 
 </details>
 
@@ -512,7 +510,7 @@ browser loop where the behavior maps cleanly to existing CDP/Rod primitives:
 `sessionstorage-*`, `dialog-*`, `tab-*`, session management aliases, and raw
 mouse/key aliases.
 
-The tracked source-of-truth matrix is [`docs/playwright-cli-parity.md`](docs/playwright-cli-parity.md).
+The tracked source-of-truth matrix is `docs/playwright-cli-parity.md` (local).
 It separates compatible commands from partial matches and explicit gaps so the
 project does not claim parity that is not implemented.
 
