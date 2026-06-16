@@ -1,6 +1,6 @@
 # ghostchrome
 
-**Ultra-light browser automation CLI for LLM agents.** Single Go binary, native Chrome DevTools Protocol, 3-4× fewer tokens than Playwright-MCP, no Node runtime. A modern Playwright alternative built for AI agents that drive a browser in a loop.
+**Ultra-light browser automation CLI for LLM agents.** Single Go binary, native Chrome DevTools Protocol, 5× fewer tokens than Playwright CLI, faster on 19/20 operations, no Node runtime. A modern Playwright alternative built for AI agents that drive a browser in a loop.
 
 [![Go](https://img.shields.io/github/go-mod/go-version/MakFly/ghostchrome?logo=go)](go.mod)
 [![Release](https://img.shields.io/github/v/release/MakFly/ghostchrome?label=release&logo=github)](https://github.com/MakFly/ghostchrome/releases)
@@ -32,7 +32,7 @@ One command. ~50 ms warm. ~2,000 tokens. Refs (`@1`, `@2`) you can click and typ
 - [Install](#install)
 - [Quickstart](#quickstart)
 - [How it works](#how-it-works)
-- [Comparison with Playwright, Puppeteer, chromedp](#comparison)
+- [Comparison with playwright-cli, Playwright, Puppeteer, chromedp](#comparison)
 - [Using it with LLM agents](#using-it-with-llm-agents)
 - [Command reference](#command-reference)
 - [Playwright CLI parity](#playwright-cli-parity)
@@ -90,32 +90,48 @@ Apples-to-apples wall time of `process start → Chrome attach → navigate → 
 
 → **3.5× fewer tokens, 0.91× as fast** overall (cold). Full table: [`benchmark/results.md`](benchmark/results.md).
 
+### ghostchrome vs playwright-cli (warm daemon)
+
+Both tools with their daemon running, same pages. See the full 20-operation table in [Comparison](#comparison).
+
+| Site | ghostchrome bytes | pw-cli bytes | ghostchrome ms | pw-cli ms |
+|---|---:|---:|---:|---:|
+| example.com (snapshot) | 202 | 411 | 19 | 61 |
+| Hacker News (snapshot) | 13,845 | 57,553 | 110 | 133 |
+| Wikipedia (snapshot) | 2,056 | 10,611 | 46 | 104 |
+| GitHub repo (snapshot) | 15,211 | 108,828 | 273 | 198 |
+
+→ **5.3× fewer tokens overall, faster on 19/20 operations.**
+
 ### Binary & footprint
 
-| | ghostchrome | Playwright-MCP |
+| | ghostchrome | playwright-cli |
 |---|---|---|
 | Runtime | Static Go binary | Node.js |
-| Install size | ~24 MB | ~80 MB Node + ~250 MB Playwright + browsers |
-| Cold boot | <1s | 2-5s (npx + Playwright init) |
-| Dependencies | Chrome on the system *or* auto-downloaded by Rod | npm install + `npx playwright install` |
-| Protocol | CLI stdin/stdout, optional MCP server | MCP (JSON-RPC over stdio) |
+| Install size | ~24 MB | ~330 MB (Node + Playwright + FFmpeg) |
+| Cold daemon start | 315 ms | 600 ms |
+| Daemon required | transparent (auto) | explicit (`open` first) |
+| Dependencies | Chrome on the system *or* auto-downloaded by Rod | npm + `playwright install` |
+| Protocol | CLI stdin/stdout, optional MCP server | CLI stdin/stdout |
 
-Token estimates assume `ceil(bytes/4)`, the standard rule-of-thumb for BPE tokenizers. Numbers above are medians of 2-3 trials on Linux x86_64, Chromium 131, May 2026.
+Token estimates assume `ceil(bytes/4)`, the standard rule-of-thumb for BPE tokenizers. Numbers are medians on Linux x86_64, June 2026.
 
 ---
 
 ## Install
 
-ghostchrome installs the same way [`@playwright/cli`](https://github.com/microsoft/playwright-cli)
+ghostchrome installs the same way [`@playwright/cli`](https://www.npmjs.com/package/@playwright/cli)
 does — one command to get the binary, one command to wire it into your coding
 agent — except there is **no Node runtime and no browser download**: it's a
 single static Go binary.
 
 | | playwright-cli | ghostchrome |
 |---|---|---|
-| Get the tool | `npm install -g @playwright/cli@latest` | `bun install -g @ghostchrome/cli` |
-| Wire into the agent | `playwright-cli install --skills` | `claude mcp add ghostchrome -- ghostchrome mcp` |
-| Runtime | Node.js + Playwright browsers (~330 MB) | one ~24 MB binary, system Chrome |
+| Get the tool | `npm install -g @playwright/cli` | `curl \| bash` or `bun install -g @ghostchrome/cli` |
+| Wire into the agent | `playwright-cli install --skills` | `ghostchrome install --skills` |
+| Daemon | requires `open` before `goto` | transparent — just run any command |
+| Uninstall | manual | `ghostchrome uninstall --purge --yes` |
+| Runtime | Node.js + Playwright + FFmpeg (~330 MB) | one ~24 MB binary, system Chrome |
 
 ### 1. Install the CLI
 
@@ -174,13 +190,15 @@ For Codex, Cursor, Aider, or a custom loop see [Using it with LLM agents](#using
 
 ## Quickstart
 
+Every command auto-spawns a persistent background Chrome on first use — no `serve`, no `open`, no setup. Just run the command.
+
 ### See a page
 
 ```bash
 ghostchrome preview https://example.com
 ```
 
-Single command returns status code, page title, console + network errors, request count, and a compact DOM with refs. The first call an agent makes to a new URL.
+Single command returns status code, page title, console + network errors, request count, and a compact DOM with refs. The first call auto-starts the daemon; subsequent calls reuse it (~15 ms overhead).
 
 ### Extract a clickable DOM
 
@@ -250,36 +268,77 @@ Architecture deep dive: [`docs/architecture.md`](docs/architecture.md). Full CLI
 
 ## Comparison
 
-| | ghostchrome | Playwright-MCP | Playwright (raw) | Puppeteer | chromedp |
-|---|---|---|---|---|---|
-| Target | LLM agents | LLM agents (MCP) | Devs / QA | Devs | Devs (Go) |
-| Runtime | Go binary | Node.js | Node.js | Node.js | Go binary |
-| Install size | ~24 MB | ~330 MB | ~330 MB | ~280 MB | ~20 MB |
-| Snapshot tokens (median) | ~1,500 | ~5,500 | n/a (raw HTML) | n/a | n/a |
-| Snapshot latency (warm) | ~50 ms | ~80 ms | n/a | n/a | n/a |
-| Multi-browser | Chrome only | Chrome / FF / WebKit | Chrome / FF / WebKit | Chrome / FF | Chrome only |
-| Refs for click/type | `@1`, `@2` | aria-ref strings | CSS / XPath | CSS / XPath | CSS / XPath |
-| Auto-wait | yes (4 conditions) | yes | yes (battle-tested) | yes | partial |
-| Trace viewer | partial: CDP artifacts only | no | yes | no | no |
-| Stealth | built-in patches | external plugin | external plugin | external plugin | manual |
+### ghostchrome vs playwright-cli — head-to-head (20 operations)
 
-Pick ghostchrome if you're piloting a browser from an LLM and tokens / latency / footprint matter. Pick Playwright if you're writing E2E test suites or need WebKit/Firefox parity.
+Both tools running in daemon mode (persistent background Chrome, warm session).
+Measured on real public sites, Linux x86_64, June 2026.
+
+| # | Operation | playwright-cli | ghostchrome | Winner |
+|---|---|---:|---:|---|
+| 1 | goto example.com | 95 ms | 35 ms | **ghostchrome** |
+| 2 | goto Hacker News | 704 ms | 655 ms | **ghostchrome** |
+| 3 | goto Wikipedia | 654 ms | 505 ms | **ghostchrome** |
+| 4 | goto GitHub | 1,995 ms | 1,512 ms | **ghostchrome** |
+| 5 | goto httpbin | 414 ms | 361 ms | **ghostchrome** |
+| 6 | snapshot example.com | 61 ms | 19 ms | **ghostchrome** |
+| 7 | snapshot Hacker News | 133 ms | 110 ms | **ghostchrome** |
+| 8 | snapshot Wikipedia | 104 ms | 46 ms | **ghostchrome** |
+| 9 | snapshot GitHub | 198 ms | 273 ms | playwright-cli |
+| 10 | snapshot httpbin | 59 ms | 20 ms | **ghostchrome** |
+| 11 | click | 2,863 ms | 1,168 ms | **ghostchrome** |
+| 12 | type | 88 ms | 25 ms | **ghostchrome** |
+| 13 | go-back | 145 ms | 38 ms | **ghostchrome** |
+| 14 | reload | 272 ms | 176 ms | **ghostchrome** |
+| 15 | resize | 81 ms | 27 ms | **ghostchrome** |
+| 16 | eval | 574 ms | 24 ms | **ghostchrome** |
+| 17 | press Tab | 68 ms | 23 ms | **ghostchrome** |
+| 18 | press Escape | 66 ms | 20 ms | **ghostchrome** |
+| 19 | screenshot | 166 ms | 142 ms | **ghostchrome** |
+| 20 | sessions list | 63 ms | 14 ms | **ghostchrome** |
+
+**Score: ghostchrome 19 / 20, playwright-cli 1 / 20.**
+The single playwright-cli win is snapshot on a very large page (GitHub repo, ~108K nodes) where the first CDP accessibility-tree extraction is expensive. Subsequent snapshots of the same page hit the ghostchrome cache and are instant.
+
+### Feature comparison
+
+| | ghostchrome | playwright-cli | Playwright (raw) | Puppeteer | chromedp |
+|---|---|---|---|---|---|
+| Target | LLM agents | LLM agents | Devs / QA | Devs | Devs (Go) |
+| Runtime | Static Go binary | Node.js | Node.js | Node.js | Go binary |
+| Install | `curl \| sh` or `bun i -g` | `npm i -g @playwright/cli` | npm + browser DL | npm + browser DL | `go install` |
+| Install size | ~24 MB | ~330 MB | ~330 MB | ~280 MB | ~20 MB |
+| Daemon | transparent (auto) | requires `open` first | n/a | n/a | n/a |
+| Snapshot tokens | ~500–3,500 | ~2,700–57,000 | n/a (raw HTML) | n/a | n/a |
+| Token ratio | **1×** | **5.3× larger** | — | — | — |
+| Multi-browser | Chrome only | Chrome / FF / WebKit | Chrome / FF / WebKit | Chrome / FF | Chrome only |
+| Refs for click/type | `@1`, `@2` | `e1`, `e2` | CSS / XPath | CSS / XPath | CSS / XPath |
+| Stealth | built-in patches | none | external plugin | external plugin | manual |
+| Snapshot caching | yes (by URL) | yes (in-process) | n/a | n/a | n/a |
+| Uninstall | `ghostchrome uninstall` | manual | manual | manual | manual |
+
+### When to pick what
+
+- **ghostchrome** — you're piloting a browser from an LLM agent and tokens, latency, and footprint matter. Single binary, zero-config daemon, 5× fewer tokens per snapshot.
+- **playwright-cli** — you need WebKit / Firefox, Playwright Trace Viewer, or `run-code` (arbitrary Playwright API execution).
+- **Playwright (raw)** — you're writing E2E test suites, not driving an agent.
 
 ### Parity with playwright-cli
 
 ghostchrome covers the **agent-relevant verb surface** of
-[`microsoft/playwright-cli`](https://github.com/microsoft/playwright-cli) —
-`open/goto`, `click`, `dblclick`, `type`/`fill` (`--submit`), `check`/`uncheck`,
+[`@playwright/cli`](https://www.npmjs.com/package/@playwright/cli) —
+`open/goto`, `click`, `dblclick`, `type`/`fill`, `check`/`uncheck`,
 `select`, `hover`, `drag`, `press`, `upload`, `snapshot`/`extract`, `eval`,
-`reload`, `back`/`forward`, `tabs new/switch/close`, cookies & storage,
-`screenshot`, `pdf` — while adding things it has no equivalent for: `preview`
-(one-shot page health), `collect` (auto-listing extraction), `perf` (Web
-Vitals), `assert` (CI exit codes), built-in stealth, and 3–4× lower token
-output. What ghostchrome deliberately does **not** fully chase: WebKit/Firefox,
-`pause-at`/`resume`/`step-over`, and full Playwright trace/video/show parity.
-`tracing`/`video`/`show` are implemented in partial mode: CDP artifacts are
-available and useful for agent loops, but Playwright Trace Viewer equivalence is
-not yet complete. `keydown`/`keyup` are implemented as aliases.
+`reload`, `back`/`forward`, `tabs`, cookies & storage, `screenshot`, `pdf`,
+`route`, `console`, `network`, `dialog-*`, `attach`, sessions, config — plus
+things playwright-cli has no equivalent for: `preview` (one-shot page health),
+`collect` (auto-listing extraction), `perf` (Web Vitals), `assert` (CI exit
+codes), built-in stealth, and transparent daemon (no `open` needed).
+
+Explicit non-goals: WebKit/Firefox, `run-code` (Playwright runtime),
+`pause-at`/`resume`/`step-over` (Playwright debug protocol), Playwright Trace
+Viewer-compatible `trace.zip`.
+
+Full parity matrix: [`docs/playwright-cli-parity.md`](docs/playwright-cli-parity.md).
 
 ---
 
