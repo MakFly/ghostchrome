@@ -227,15 +227,6 @@ func resolveStealthTimezone(explicit, primaryLocale string) string {
 	}
 }
 
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
-}
-
 func dedupeStrings(in []string) []string {
 	seen := make(map[string]bool, len(in))
 	out := make([]string, 0, len(in))

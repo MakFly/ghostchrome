@@ -2,9 +2,13 @@ package cmd
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,6 +27,7 @@ var (
 	flagNetworkRequestBody    bool
 	flagNetworkRequestHeaders bool
 	flagNetworkClear          bool
+	flagRequestFilename       string
 )
 
 var consoleCompatCmd = &cobra.Command{
@@ -162,6 +167,289 @@ requests captured while the command is running.`,
 	},
 }
 
+var requestsCompatCmd = &cobra.Command{
+	Use:   "requests",
+	Short: "List network requests",
+	Long: `List all network requests since loading the page.
+Each request is numbered for use with request-level commands. Static resources
+like images, scripts, CSS, fonts, and media are excluded unless --static is passed.`,
+	Args: cobra.NoArgs,
+	Run: func(cmd *cobra.Command, args []string) {
+		if flagNetworkClear {
+			b, _ := openPage()
+			defer b.Close()
+			if err := b.ClearNetworkLog(); err != nil {
+				exitErr("requests", err)
+			}
+			type requestsResult struct {
+				Action  string `json:"action"`
+				Count   int    `json:"count"`
+				Cleared bool   `json:"cleared"`
+			}
+			output(requestsResult{Action: "requests", Count: 0, Cleared: true}, "network log cleared")
+			return
+		}
+
+		allEntries, err := currentPlaywrightRequestsWithStatic(true)
+		if err != nil {
+			exitErr("requests", err)
+		}
+		entries, err := filterNetworkLog(allEntries, flagNetworkFilter, flagNetworkStatic)
+		if err != nil {
+			exitErr("requests", err)
+		}
+		text := formatRequests(entries)
+		if !flagNetworkStatic {
+			all, err := filterNetworkLog(allEntries, flagNetworkFilter, true)
+			if err != nil {
+				exitErr("requests", err)
+			}
+			if len(all) > len(entries) {
+				text = fmt.Sprintf("%s\nNote: %d static request(s) omitted; pass --static to include them", strings.TrimSpace(text), len(all)-len(entries))
+			}
+		}
+
+		type requestsResult struct {
+			Action  string                  `json:"action"`
+			Count   int                     `json:"count"`
+			Entries []*engine.CapturedEntry `json:"entries"`
+		}
+		output(requestsResult{Action: "requests", Count: len(entries), Entries: entries}, text)
+	},
+}
+
+var requestCompatCmd = &cobra.Command{
+	Use:   "request <index>",
+	Short: "Show full details of a single request",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		index, err := parseRequestIndex(args[0])
+		if err != nil {
+			exitErr("request", err)
+		}
+
+		entries, err := currentPlaywrightRequests()
+		if err != nil {
+			exitErr("request", err)
+		}
+		entry, err := pickRequestEntry(entries, index)
+		if err != nil {
+			exitErr("request", err)
+		}
+
+		if flagRequestFilename != "" {
+			if err := writeJSONRequestPayload(flagRequestFilename, entry); err != nil {
+				exitErr("request", err)
+			}
+			output(map[string]any{"action": "request", "index": index, "filename": flagRequestFilename}, fmt.Sprintf("request %d written to %s", index, flagRequestFilename))
+			return
+		}
+		type requestResult struct {
+			Index int `json:"index"`
+			*engine.CapturedEntry
+		}
+		output(&requestResult{Index: index, CapturedEntry: entry}, formatPlaywrightRequestEntry(index, entry))
+	},
+}
+
+var requestHeadersCompatCmd = &cobra.Command{
+	Use:   "request-headers <index>",
+	Short: "Print request headers for a single request",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		index, err := parseRequestIndex(args[0])
+		if err != nil {
+			exitErr("request-headers", err)
+		}
+		entries, err := currentPlaywrightRequests()
+		if err != nil {
+			exitErr("request-headers", err)
+		}
+		entry, err := pickRequestEntry(entries, index)
+		if err != nil {
+			exitErr("request-headers", err)
+		}
+
+		if len(entry.ReqHeaders) == 0 {
+			output(map[string]any{"index": index, "headers": map[string]string{}}, fmt.Sprintf("request %d headers: none", index))
+			return
+		}
+
+		if flagRequestFilename != "" {
+			if err := writeHeadersPayload(flagRequestFilename, entry.ReqHeaders); err != nil {
+				exitErr("request-headers", err)
+			}
+			output(map[string]any{"index": index, "filename": flagRequestFilename}, fmt.Sprintf("request %d headers written to %s", index, flagRequestFilename))
+			return
+		}
+		type headersResult struct {
+			Index   int               `json:"index"`
+			Headers map[string]string `json:"headers"`
+		}
+		output(headersResult{Index: index, Headers: entry.ReqHeaders}, formatPlaywrightHeaders(entry.ReqHeaders, "request"))
+	},
+}
+
+var requestBodyCompatCmd = &cobra.Command{
+	Use:   "request-body <index>",
+	Short: "Print request body for a single request",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		index, err := parseRequestIndex(args[0])
+		if err != nil {
+			exitErr("request-body", err)
+		}
+		entries, err := currentPlaywrightRequests()
+		if err != nil {
+			exitErr("request-body", err)
+		}
+		entry, err := pickRequestEntry(entries, index)
+		if err != nil {
+			exitErr("request-body", err)
+		}
+
+		if flagRequestFilename != "" {
+			if err := writeTextPayload(flagRequestFilename, entry.PostData); err != nil {
+				exitErr("request-body", err)
+			}
+			output(map[string]any{"index": index, "filename": flagRequestFilename}, fmt.Sprintf("request %d body written to %s", index, flagRequestFilename))
+			return
+		}
+
+		type bodyResult struct {
+			Index int    `json:"index"`
+			Body  string `json:"body"`
+		}
+		if entry.PostData == "" {
+			output(bodyResult{Index: index, Body: ""}, fmt.Sprintf("request %d body: empty", index))
+			return
+		}
+		output(bodyResult{Index: index, Body: entry.PostData}, fmt.Sprintf("request %d body:\n%s", index, entry.PostData))
+	},
+}
+
+var responseHeadersCompatCmd = &cobra.Command{
+	Use:   "response-headers <index>",
+	Short: "Print response headers for a single request",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		index, err := parseRequestIndex(args[0])
+		if err != nil {
+			exitErr("response-headers", err)
+		}
+		entries, err := currentPlaywrightRequests()
+		if err != nil {
+			exitErr("response-headers", err)
+		}
+		entry, err := pickRequestEntry(entries, index)
+		if err != nil {
+			exitErr("response-headers", err)
+		}
+
+		if len(entry.ResHeaders) == 0 {
+			output(map[string]any{"index": index, "headers": map[string]string{}}, fmt.Sprintf("request %d response headers: none", index))
+			return
+		}
+
+		if flagRequestFilename != "" {
+			if err := writeHeadersPayload(flagRequestFilename, entry.ResHeaders); err != nil {
+				exitErr("response-headers", err)
+			}
+			output(map[string]any{"index": index, "filename": flagRequestFilename}, fmt.Sprintf("request %d response headers written to %s", index, flagRequestFilename))
+			return
+		}
+
+		type headersResult struct {
+			Index   int               `json:"index"`
+			Headers map[string]string `json:"headers"`
+		}
+		output(headersResult{Index: index, Headers: entry.ResHeaders}, formatPlaywrightHeaders(entry.ResHeaders, "response"))
+	},
+}
+
+var responseBodyCompatCmd = &cobra.Command{
+	Use:   "response-body <index>",
+	Short: "Print the response body for a single request",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		index, err := parseRequestIndex(args[0])
+		if err != nil {
+			exitErr("response-body", err)
+		}
+		b, page := openPage()
+		defer b.Close()
+		entries, err := currentPlaywrightRequestsFromBrowser(b)
+		if err != nil {
+			exitErr("response-body", err)
+		}
+		entry, err := pickRequestEntry(entries, index)
+		if err != nil {
+			exitErr("response-body", err)
+		}
+		if entry.Body == "" && entry.BodyError == "" && entry.RequestID != "" {
+			body, base64, berr := engine.GetResponseBodyByRequestID(page, entry.RequestID)
+			if berr != nil {
+				entry.BodyError = berr.Error()
+			} else {
+				entry.Body = body
+				entry.BodyBase64 = base64
+			}
+		}
+
+		if entry.Body == "" {
+			if entry.BodyError != "" {
+				exitErr("response-body", fmt.Errorf("%s", entry.BodyError))
+			}
+			output(map[string]any{"index": index, "body": ""}, fmt.Sprintf("request %d body: empty", index))
+			return
+		}
+
+		if entry.BodyBase64 {
+			data, err := base64.StdEncoding.DecodeString(entry.Body)
+			if err != nil {
+				exitErr("response-body", fmt.Errorf("decode response body: %w", err))
+			}
+			path := flagRequestFilename
+			if path == "" {
+				path = resolveRequestFilename("response-body", index)
+			}
+			if err := os.WriteFile(path, data, 0o600); err != nil {
+				exitErr("response-body", err)
+			}
+			output(map[string]any{"index": index, "filename": path}, fmt.Sprintf("request %d body written to %s", index, path))
+			return
+		}
+
+		if flagRequestFilename != "" {
+			if err := writeTextPayload(flagRequestFilename, entry.Body); err != nil {
+				exitErr("response-body", err)
+			}
+			output(map[string]any{"index": index, "filename": flagRequestFilename}, fmt.Sprintf("request %d body written to %s", index, flagRequestFilename))
+			return
+		}
+		type bodyResult struct {
+			Index int    `json:"index"`
+			Body  string `json:"body"`
+		}
+		output(bodyResult{Index: index, Body: entry.Body}, fmt.Sprintf("request %d response body:\n%s", index, entry.Body))
+	},
+}
+
+var highlightCompatCmd = &cobra.Command{
+	Use:   "highlight [target]",
+	Short: "Highlight a target element (unsupported in ghostchrome)",
+	Args:  cobra.MaximumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		if flagHighlightHide {
+			unsupportedPlaywrightCommand("highlight", args, "Ghostchrome does not provide persistent action highlighting", "Use playwright-cli or Playwright MCP trace tooling for overlay highlighting.")
+			return
+		}
+		unsupportedPlaywrightCommand("highlight", args, "Ghostchrome does not provide a persisted visual target overlay API", "Use playwright-cli or Playwright MCP trace tooling for action highlighting.")
+	},
+}
+
+var flagHighlightHide bool
+
 func resolveConsoleArgs(args []string, flagLevel string) (level string, targetURL string, err error) {
 	level = flagLevel
 	if !isConsoleLevel(level) {
@@ -295,9 +583,160 @@ func init() {
 	networkCompatCmd.Flags().IntVar(&flagNetworkWait, "wait", 1, "Seconds to keep observing after optional navigation")
 	networkCompatCmd.Flags().IntVar(&flagNetworkMax, "max", 0, "Stop after N completed requests (0 = unlimited)")
 	networkCompatCmd.Flags().StringVar(&flagNetworkFilter, "filter", "", "Filter requests by URL regex")
-	networkCompatCmd.Flags().BoolVar(&flagNetworkStatic, "static", false, "Include static resources such as images, CSS, fonts, and media")
+	networkCompatCmd.Flags().BoolVar(&flagNetworkStatic, "static", false, "Include static resources such as images, scripts, CSS, fonts, and media")
 	networkCompatCmd.Flags().BoolVar(&flagNetworkRequestBody, "request-body", false, "Include request bodies")
 	networkCompatCmd.Flags().BoolVar(&flagNetworkRequestHeaders, "request-headers", false, "Include request headers")
 	networkCompatCmd.Flags().BoolVar(&flagNetworkClear, "clear", false, "Clear the current network log and return no entries")
-	rootCmd.AddCommand(consoleCompatCmd, networkCompatCmd)
+	requestsCompatCmd.Flags().StringVar(&flagNetworkFilter, "filter", "", "Filter requests by URL regex")
+	requestsCompatCmd.Flags().BoolVar(&flagNetworkStatic, "static", false, "Include static resources such as images, scripts, CSS, fonts, and media")
+	requestsCompatCmd.Flags().BoolVar(&flagNetworkClear, "clear", false, "Clear the current network log and return no entries")
+
+	requestCompatCmd.Flags().StringVar(&flagRequestFilename, "filename", "", "Write the request payload to this file")
+	requestHeadersCompatCmd.Flags().StringVar(&flagRequestFilename, "filename", "", "Write request headers to this file")
+	requestBodyCompatCmd.Flags().StringVar(&flagRequestFilename, "filename", "", "Write request body to this file")
+	responseHeadersCompatCmd.Flags().StringVar(&flagRequestFilename, "filename", "", "Write response headers to this file")
+	responseBodyCompatCmd.Flags().StringVar(&flagRequestFilename, "filename", "", "Write response body to this file")
+
+	rootCmd.AddCommand(
+		consoleCompatCmd,
+		networkCompatCmd,
+		requestsCompatCmd,
+		requestCompatCmd,
+		requestHeadersCompatCmd,
+		requestBodyCompatCmd,
+		responseHeadersCompatCmd,
+		responseBodyCompatCmd,
+		highlightCompatCmd,
+	)
+	commandGroups["requests"] = "observe"
+	commandGroups["request"] = "observe"
+	commandGroups["request-headers"] = "observe"
+	commandGroups["request-body"] = "observe"
+	commandGroups["response-headers"] = "observe"
+	commandGroups["response-body"] = "observe"
+	commandGroups["highlight"] = "observe"
+	highlightCompatCmd.Flags().BoolVar(&flagHighlightHide, "hide", false, "Hide all highlights")
+}
+
+func resolveRequestFilename(cmd string, index int) string {
+	if flagRequestFilename != "" {
+		return flagRequestFilename
+	}
+	base := fmt.Sprintf("%s-%d.bin", strings.ReplaceAll(cmd, "-", "_"), index)
+	return filepath.Join(playwrightArtifactPath("network"), base)
+}
+
+func currentPlaywrightRequests() ([]*engine.CapturedEntry, error) {
+	return currentPlaywrightRequestsWithStatic(false)
+}
+
+func currentPlaywrightRequestsWithStatic(includeStatic bool) ([]*engine.CapturedEntry, error) {
+	const requestListWarmup = 900 * time.Millisecond
+	b, _ := openPage()
+	time.Sleep(requestListWarmup)
+	b.Close()
+	return currentPlaywrightRequestsFromBrowserWithStatic(b, includeStatic)
+}
+
+func currentPlaywrightRequestsFromBrowser(b *engine.Browser) ([]*engine.CapturedEntry, error) {
+	return currentPlaywrightRequestsFromBrowserWithStatic(b, false)
+}
+
+func currentPlaywrightRequestsFromBrowserWithStatic(b *engine.Browser, includeStatic bool) ([]*engine.CapturedEntry, error) {
+	if b == nil {
+		return nil, fmt.Errorf("browser is nil")
+	}
+
+	entries := b.NetworkLog()
+	if entries == nil {
+		entries = []*engine.CapturedEntry{}
+	}
+	filtered, err := filterNetworkLog(entries, "", includeStatic)
+	if err != nil {
+		return nil, err
+	}
+	return filtered, nil
+}
+
+func parseRequestIndex(raw string) (int, error) {
+	idx, err := strconv.Atoi(raw)
+	if err != nil || idx <= 0 {
+		return 0, fmt.Errorf("index must be a positive integer, got %q", raw)
+	}
+	return idx, nil
+}
+
+func pickRequestEntry(entries []*engine.CapturedEntry, index int) (*engine.CapturedEntry, error) {
+	if index <= 0 || index > len(entries) {
+		return nil, fmt.Errorf("request %d not found (1..%d)", index, len(entries))
+	}
+	return entries[index-1], nil
+}
+
+func formatRequests(entries []*engine.CapturedEntry) string {
+	if len(entries) == 0 {
+		return "No network requests"
+	}
+	lines := make([]string, 0, len(entries))
+	for i, e := range entries {
+		status := e.Status
+		if status == 0 {
+			status = -1
+		}
+		lines = append(lines, fmt.Sprintf("%d. %s %d %s", i+1, e.Method, status, e.URL))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func formatPlaywrightRequestEntry(index int, entry *engine.CapturedEntry) string {
+	if entry == nil {
+		return fmt.Sprintf("request %d not found", index)
+	}
+	status := entry.Status
+	if status == 0 {
+		status = -1
+	}
+	return fmt.Sprintf("request %d -> %s %d %s", index, entry.Method, status, entry.URL)
+}
+
+func formatPlaywrightHeaders(headers map[string]string, scope string) string {
+	if len(headers) == 0 {
+		return fmt.Sprintf("%s headers: none", strings.ToUpper(scope))
+	}
+	lines := make([]string, 0, len(headers))
+	for k, v := range headers {
+		lines = append(lines, fmt.Sprintf("%s: %s", k, v))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func writeTextPayload(path, text string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(text), 0o600)
+}
+
+func writeHeadersPayload(path string, headers map[string]string) error {
+	data, err := jsonMarshalIndent(headers)
+	if err != nil {
+		return err
+	}
+	return writeTextPayload(path, data)
+}
+
+func writeJSONRequestPayload(path string, payload any) error {
+	data, err := jsonMarshalIndent(payload)
+	if err != nil {
+		return err
+	}
+	return writeTextPayload(path, data)
+}
+
+func jsonMarshalIndent(v any) (string, error) {
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }

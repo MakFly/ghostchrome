@@ -12,6 +12,7 @@ var flagUploadSelector string
 
 var uploadCmd = &cobra.Command{
 	Use:   "upload [ref] <file> [file2 ...]",
+	Aliases: []string{"drop"},
 	Short: "Attach one or more files to a file-input element",
 	Long: `upload attaches files to a <input type="file"> element. Most sites hide
 the input behind a styled button, so provide either:

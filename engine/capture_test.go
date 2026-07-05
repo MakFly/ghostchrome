@@ -10,10 +10,12 @@ func TestIsStaticNetworkEntry(t *testing.T) {
 		want         bool
 	}{
 		{name: "image type", resourceType: "Image", mimeType: "image/png", want: true},
+		{name: "script type", resourceType: "Script", mimeType: "application/javascript", want: true},
 		{name: "stylesheet type", resourceType: "Stylesheet", mimeType: "text/css", want: true},
 		{name: "font mime", resourceType: "Other", mimeType: "font/woff2", want: true},
 		{name: "json api", resourceType: "Fetch", mimeType: "application/json", want: false},
 		{name: "document", resourceType: "Document", mimeType: "text/html", want: false},
+		{name: "text/javascript", resourceType: "Other", mimeType: "text/javascript", want: true},
 	}
 
 	for _, tt := range tests {

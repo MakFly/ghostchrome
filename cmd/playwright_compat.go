@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -161,7 +163,11 @@ var deleteDataCompatCmd = &cobra.Command{
 	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		name := resolveCompatSessionName(args)
-		_ = engine.StopSession(name)
+		if err := engine.StopSession(name); err != nil && !errors.Is(err, engine.ErrSessionNotFound) {
+			exitErr("delete-data", err)
+		} else if err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: session %q not running\n", name)
+		}
 		if err := engine.RemoveProfile(name); err != nil {
 			exitErr("delete-data", err)
 		}
@@ -351,6 +357,7 @@ func init() {
 		openCmd,
 		stateSaveCmd,
 		stateLoadCmd,
+		detachCmd,
 		listCompatCmd,
 		closeCompatCmd,
 		closeAllCompatCmd,
@@ -370,6 +377,7 @@ func init() {
 		keyDownCompatCmd,
 		keyUpCompatCmd,
 	)
+	commandGroups["detach"] = "session"
 }
 
 func resolveCompatSessionName(args []string) string {
@@ -386,10 +394,50 @@ func resolveCompatSessionName(args []string) string {
 	return ""
 }
 
+type compatUnsupportedResult struct {
+	Supported   bool     `json:"supported"`
+	Command     string   `json:"command"`
+	Args        []string `json:"args,omitempty"`
+	Reason      string   `json:"reason"`
+	Alternative string   `json:"alternative"`
+}
+
+func unsupportedPlaywrightCommand(name string, args []string, reason string, alternative string) {
+	result := compatUnsupportedResult{
+		Supported:   false,
+		Command:     name,
+		Args:        args,
+		Reason:      reason,
+		Alternative: alternative,
+	}
+	output(result, fmt.Sprintf("%s unsupported: %s", name, reason))
+	os.Exit(2)
+}
+
+var detachCmd = &cobra.Command{
+	Use:   "detach",
+	Short: "Detach from the current connected browser context",
+	Args:  cobra.NoArgs,
+	Run: func(cmd *cobra.Command, args []string) {
+		if !hasReusableBrowserContext() {
+			exitErr("detach", fmt.Errorf("session 'default' was not attached; use `close` to stop it"))
+		}
+
+		b, _ := openPage()
+		defer b.Close()
+
+		output(map[string]any{"action": "detach", "attached": b.Connected()}, "detached from the current browser connection")
+	},
+}
+
 func hasReusableBrowserContext() bool {
 	return strings.TrimSpace(flagConnect) != "" ||
 		strings.TrimSpace(flagSession) != "" ||
-		sessionNameFromEnv() != ""
+		sessionNameFromEnv() != "" ||
+		(!skipImplicitDaemon && func() bool {
+			_, ok := engine.DefaultSession()
+			return ok
+		}())
 }
 
 func closeActiveTab(command string) {

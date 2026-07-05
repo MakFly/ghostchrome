@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -27,9 +28,9 @@ type CaptureSpec struct {
 	// IncludeBody, when true, fetches the response body via
 	// Network.getResponseBody for every matching entry.
 	IncludeBody bool
-	// ExcludeStatic drops image, stylesheet, font, and media requests from
-	// matching entries. It is intended for Playwright CLI-compatible network
-	// output; raw capture keeps static resources by default.
+// ExcludeStatic drops script, stylesheet, font, image, and media requests from
+// matching entries. It is intended for Playwright CLI-compatible network
+// output; raw capture keeps static resources by default.
 	ExcludeStatic bool
 	// OutputPath, if set, streams each entry as it is captured (NDJSON).
 	OutputPath string
@@ -108,15 +109,47 @@ func StartCapture(page *rod.Page, spec CaptureSpec) (*CaptureSession, error) {
 	s.stop = page.EachEvent(
 		func(e *proto.NetworkRequestWillBeSent) {
 			s.mu.Lock()
-			defer s.mu.Unlock()
-			s.pending[e.RequestID] = &CapturedEntry{
-				RequestID:    string(e.RequestID),
-				Method:       e.Request.Method,
-				URL:          e.Request.URL,
-				ResourceType: string(e.Type),
-				ReqHeaders:   flattenHeaders(e.Request.Headers),
-				PostData:     e.Request.PostData,
-				StartedAt:    time.Now().UTC().Format(time.RFC3339Nano),
+			entry := s.pending[e.RequestID]
+			if entry == nil {
+				entry = &CapturedEntry{
+					RequestID:    string(e.RequestID),
+					Method:       e.Request.Method,
+					URL:          e.Request.URL,
+					ResourceType: string(e.Type),
+					ReqHeaders:   flattenHeaders(e.Request.Headers),
+					PostData:     e.Request.PostData,
+					StartedAt:    time.Now().UTC().Format(time.RFC3339Nano),
+				}
+				s.pending[e.RequestID] = entry
+			}
+
+			var redirect *CapturedEntry
+			if e.RedirectResponse != nil {
+				redirect = &CapturedEntry{
+					RequestID:    string(e.RequestID),
+					Method:       firstNonEmpty(entry.Method, e.Request.Method),
+					URL:          firstNonEmpty(e.RedirectResponse.URL, e.Request.URL),
+					ResourceType: firstNonEmpty(entry.ResourceType, string(e.Type)),
+					Status:       e.RedirectResponse.Status,
+					MimeType:     e.RedirectResponse.MIMEType,
+					ReqHeaders:   cloneStringMap(entry.ReqHeaders),
+					ResHeaders:   flattenHeaders(e.RedirectResponse.Headers),
+					StartedAt:    entry.StartedAt,
+				}
+				if len(redirect.ReqHeaders) == 0 {
+					redirect.ReqHeaders = flattenHeaders(e.Request.Headers)
+				}
+			}
+
+			entry.Method = e.Request.Method
+			entry.URL = e.Request.URL
+			entry.ResourceType = string(e.Type)
+			entry.ReqHeaders = flattenHeaders(e.Request.Headers)
+			entry.PostData = e.Request.PostData
+			s.mu.Unlock()
+
+			if redirect != nil && s.matches(redirect) {
+				s.record(redirect)
 			}
 		},
 		func(e *proto.NetworkResponseReceived) {
@@ -182,6 +215,8 @@ func (s *CaptureSession) matches(e *CapturedEntry) bool {
 // Playwright CLI-style network inspection.
 func IsStaticNetworkEntry(resourceType, mimeType string) bool {
 	switch strings.ToLower(resourceType) {
+	case "script":
+		return true
 	case "image", "stylesheet", "font", "media":
 		return true
 	}
@@ -190,7 +225,9 @@ func IsStaticNetworkEntry(resourceType, mimeType string) bool {
 		strings.Contains(mime, "font") ||
 		strings.HasPrefix(mime, "audio/") ||
 		strings.HasPrefix(mime, "video/") ||
-		mime == "text/css"
+		mime == "text/css" ||
+		strings.Contains(mime, "javascript") ||
+		strings.Contains(mime, "ecmascript")
 }
 
 func (s *CaptureSession) record(e *CapturedEntry) {
@@ -255,6 +292,31 @@ func (s *CaptureSession) Entries() []*CapturedEntry {
 	defer s.mu.Unlock()
 	out := make([]*CapturedEntry, len(s.matched))
 	copy(out, s.matched)
+	return out
+}
+
+// GetResponseBodyByRequestID fetches a response body from the current CDP session.
+func GetResponseBodyByRequestID(page *rod.Page, requestID string) (string, bool, error) {
+	if page == nil || requestID == "" {
+		return "", false, errors.New("missing page/request id")
+	}
+	resp, err := proto.NetworkGetResponseBody{
+		RequestID: proto.NetworkRequestID(requestID),
+	}.Call(page)
+	if err != nil {
+		return "", false, err
+	}
+	return resp.Body, resp.Base64Encoded, nil
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
 	return out
 }
 

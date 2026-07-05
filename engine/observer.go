@@ -26,21 +26,28 @@ const (
 
 // ObserverEvent is one emitted CDP event in a unified format.
 type ObserverEvent struct {
-	TS         int64        `json:"ts"`                    // unix ms
-	Kind       ObserverKind `json:"kind"`
-	Method     string       `json:"method,omitempty"`
-	URL        string       `json:"url,omitempty"`
-	Status     int          `json:"status,omitempty"`
-	MimeType   string       `json:"mime_type,omitempty"`
-	Type       string       `json:"type,omitempty"`
-	Size       int64        `json:"size,omitempty"`
-	DurationMs int64        `json:"duration_ms,omitempty"`
-	Failed     string       `json:"failed,omitempty"`
-	Level      string       `json:"level,omitempty"`
-	Text       string       `json:"text,omitempty"`
-	Source     string       `json:"source,omitempty"`
-	Event      string       `json:"event,omitempty"`
-	Frame      string       `json:"frame,omitempty"`
+	TS         int64             `json:"ts"` // unix ms
+	Kind       ObserverKind      `json:"kind"`
+	Method     string            `json:"method,omitempty"`
+	URL        string            `json:"url,omitempty"`
+	Status     int               `json:"status,omitempty"`
+	MimeType   string            `json:"mime_type,omitempty"`
+	Type       string            `json:"type,omitempty"`
+	RequestID  string            `json:"request_id,omitempty"`
+	Body       string            `json:"body,omitempty"`
+	BodyBase64 bool              `json:"body_base64,omitempty"`
+	BodyError  string            `json:"body_error,omitempty"`
+	Size       int64             `json:"size,omitempty"`
+	DurationMs int64             `json:"duration_ms,omitempty"`
+	Failed     string            `json:"failed,omitempty"`
+	Level      string            `json:"level,omitempty"`
+	Text       string            `json:"text,omitempty"`
+	Source     string            `json:"source,omitempty"`
+	Event      string            `json:"event,omitempty"`
+	Frame      string            `json:"frame,omitempty"`
+	ReqHeaders map[string]string `json:"request_headers,omitempty"`
+	ResHeaders map[string]string `json:"response_headers,omitempty"`
+	PostData   string            `json:"post_data,omitempty"`
 }
 
 // ObserverFilters selectively narrows which events are emitted.
@@ -77,13 +84,20 @@ type ObserverStats struct {
 
 // pendingNet tracks in-flight network requests between requestWillBeSent and loadingFinished/Failed.
 type pendingNet struct {
-	method    string
-	url       string
-	resType   string
-	frameID   string
-	startedAt float64
-	status    int
-	mimeType  string
+	method     string
+	url        string
+	resType    string
+	frameID    string
+	startedAt  float64
+	status     int
+	mimeType   string
+	requestID  string
+	reqHeaders map[string]string
+	resHeaders map[string]string
+	postData   string
+	body       string
+	bodyBase64 bool
+	bodyError  string
 }
 
 // Observer multiplexes CDP Network + Runtime + Page events into a unified channel.
@@ -99,6 +113,7 @@ type Observer struct {
 	pending map[proto.NetworkRequestID]*pendingNet
 	allEvts []ObserverEvent // ring for Drain
 	stats   ObserverStats
+	closing bool
 
 	stopOnce sync.Once
 	stopped  chan struct{}
@@ -169,6 +184,10 @@ func (o *Observer) Events() <-chan ObserverEvent {
 // Stop cancels listening, waits for goroutines, and closes the channel.
 // Idempotent.
 func (o *Observer) Stop() error {
+	o.mu.Lock()
+	o.closing = true
+	o.mu.Unlock()
+
 	if o.cancel != nil {
 		o.cancel()
 	}
@@ -225,6 +244,10 @@ func (o *Observer) WriteNDJSON(ctx context.Context, w io.Writer) error {
 // Returns false if the event was dropped (channel full).
 func (o *Observer) emit(evt ObserverEvent) bool {
 	o.mu.Lock()
+	if o.closing {
+		o.mu.Unlock()
+		return false
+	}
 	// Kind filter
 	if !o.acceptKind(evt.Kind) {
 		o.mu.Unlock()
@@ -307,6 +330,94 @@ func (o *Observer) acceptNetURL(u string) bool {
 	return o.opts.Filters.NetURLRegex.MatchString(u)
 }
 
+func getResponseBody(page *rod.Page, requestID proto.NetworkRequestID) (string, bool, error) {
+	if page == nil || requestID == "" {
+		return "", false, nil
+	}
+	resp, err := proto.NetworkGetResponseBody{RequestID: requestID}.Call(page)
+	if err != nil {
+		return "", false, err
+	}
+	return resp.Body, resp.Base64Encoded, nil
+}
+
+func cloneHeaders(in map[string]string) map[string]string {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func redirectNetEvent(
+	requestID proto.NetworkRequestID,
+	e *proto.NetworkRequestWillBeSent,
+	p *pendingNet,
+) (ObserverEvent, bool) {
+	if e == nil || e.RedirectResponse == nil {
+		return ObserverEvent{}, false
+	}
+
+	url := e.RedirectResponse.URL
+	if url == "" {
+		if p != nil && p.url != "" {
+			url = p.url
+		} else {
+			url = e.Request.URL
+		}
+	}
+	if url == "" {
+		return ObserverEvent{}, false
+	}
+
+	method := firstNonEmpty(e.Request.Method, "")
+	resType := string(e.Type)
+	frameID := string(e.FrameID)
+	evt := ObserverEvent{
+		TS:         time.Now().UnixMilli(),
+		Kind:       KindNet,
+		Method:     method,
+		URL:        url,
+		Status:     e.RedirectResponse.Status,
+		MimeType:   e.RedirectResponse.MIMEType,
+		Type:       resType,
+		RequestID:  string(requestID),
+		ResHeaders: cloneHeaders(flattenHeaders(e.RedirectResponse.Headers)),
+		Frame:      frameID,
+	}
+	if p != nil {
+		method = firstNonEmpty(p.method, method)
+		resType = firstNonEmpty(p.resType, resType)
+		frameID = firstNonEmpty(p.frameID, frameID)
+		evt.Method = method
+		evt.Type = resType
+		evt.Frame = frameID
+		evt.ReqHeaders = cloneHeaders(p.reqHeaders)
+		if p.startedAt > 0 {
+			evt.DurationMs = int64((float64(e.Timestamp) - p.startedAt) * 1000)
+		}
+	} else {
+		evt.ReqHeaders = cloneHeaders(flattenHeaders(e.Request.Headers))
+	}
+
+	if evt.DurationMs < 0 {
+		evt.DurationMs = 0
+	}
+	return evt, true
+}
+
 func (o *Observer) acceptConsoleLevel(l string) bool {
 	if len(o.opts.Filters.ConsoleLevels) == 0 {
 		return true
@@ -333,6 +444,15 @@ func (o *Observer) listenNetwork(ctx context.Context) {
 				p = &pendingNet{}
 				o.pending[e.RequestID] = p
 			}
+
+			var redirectEvent *ObserverEvent
+			if e.RedirectResponse != nil {
+				evt, ok := redirectNetEvent(e.RequestID, e, p)
+				if ok {
+					redirectEvent = &evt
+				}
+			}
+
 			p.method = e.Request.Method
 			p.url = e.Request.URL
 			p.resType = string(e.Type)
@@ -340,7 +460,14 @@ func (o *Observer) listenNetwork(ctx context.Context) {
 			p.startedAt = float64(e.Timestamp)
 			p.status = 0
 			p.mimeType = ""
+			p.requestID = string(e.RequestID)
+			p.reqHeaders = cloneHeaders(flattenHeaders(e.Request.Headers))
+			p.postData = e.Request.PostData
 			o.mu.Unlock()
+
+			if redirectEvent != nil {
+				_ = o.emit(*redirectEvent)
+			}
 		},
 		func(e *proto.NetworkResponseReceived) {
 			o.mu.Lock()
@@ -351,6 +478,7 @@ func (o *Observer) listenNetwork(ctx context.Context) {
 			}
 			p.status = e.Response.Status
 			p.mimeType = e.Response.MIMEType
+			p.resHeaders = cloneHeaders(flattenHeaders(e.Response.Headers))
 			o.mu.Unlock()
 		},
 		func(e *proto.NetworkLoadingFinished) {
@@ -360,27 +488,55 @@ func (o *Observer) listenNetwork(ctx context.Context) {
 				o.mu.Unlock()
 				return
 			}
+			method := p.method
+			url := p.url
+			resType := p.resType
+			frameID := p.frameID
+			startedAt := p.startedAt
+			status := p.status
+			mimeType := p.mimeType
+			requestID := p.requestID
+			reqHeaders := cloneHeaders(p.reqHeaders)
+			resHeaders := cloneHeaders(p.resHeaders)
+			postData := p.postData
+			body, bodyBase64, bodyErr := getResponseBody(o.page, e.RequestID)
+			if bodyErr == nil {
+				p.body = body
+				p.bodyBase64 = bodyBase64
+			} else {
+				p.bodyError = bodyErr.Error()
+			}
+			bodyOut := p.body
+			bodyBase64Out := p.bodyBase64
+			bodyErrorOut := p.bodyError
 			delete(o.pending, e.RequestID)
 			o.mu.Unlock()
 
-			if !o.acceptNetType(p.resType) || !o.acceptNetURL(p.url) {
+			if !o.acceptNetType(resType) || !o.acceptNetURL(url) {
 				return
 			}
 			var durMs int64
-			if p.startedAt > 0 {
-				durMs = int64((float64(e.Timestamp) - p.startedAt) * 1000)
+			if startedAt > 0 {
+				durMs = int64((float64(e.Timestamp) - startedAt) * 1000)
 			}
 			o.emit(ObserverEvent{
 				TS:         time.Now().UnixMilli(),
 				Kind:       KindNet,
-				Method:     p.method,
-				URL:        p.url,
-				Status:     p.status,
-				MimeType:   p.mimeType,
-				Type:       p.resType,
+				Method:     method,
+				URL:        url,
+				Status:     status,
+				MimeType:   mimeType,
+				Type:       resType,
+				RequestID:  requestID,
+				ReqHeaders: reqHeaders,
+				ResHeaders: resHeaders,
+				PostData:   postData,
+				Body:       bodyOut,
+				BodyBase64: bodyBase64Out,
+				BodyError:  bodyErrorOut,
 				Size:       int64(e.EncodedDataLength),
 				DurationMs: durMs,
-				Frame:      p.frameID,
+				Frame:      frameID,
 			})
 		},
 		func(e *proto.NetworkLoadingFailed) {
@@ -391,24 +547,31 @@ func (o *Observer) listenNetwork(ctx context.Context) {
 				return
 			}
 			delete(o.pending, e.RequestID)
+			method := p.method
+			url := p.url
+			resType := p.resType
+			frameID := p.frameID
+			startedAt := p.startedAt
+			requestID := p.requestID
 			o.mu.Unlock()
 
-			if !o.acceptNetType(p.resType) || !o.acceptNetURL(p.url) {
+			if !o.acceptNetType(resType) || !o.acceptNetURL(url) {
 				return
 			}
 			var durMs int64
-			if p.startedAt > 0 {
-				durMs = int64((float64(e.Timestamp) - p.startedAt) * 1000)
+			if startedAt > 0 {
+				durMs = int64((float64(e.Timestamp) - startedAt) * 1000)
 			}
 			o.emit(ObserverEvent{
 				TS:         time.Now().UnixMilli(),
 				Kind:       KindNet,
-				Method:     p.method,
-				URL:        p.url,
-				Type:       p.resType,
+				Method:     method,
+				URL:        url,
+				RequestID:  requestID,
+				Type:       resType,
 				Failed:     e.ErrorText,
 				DurationMs: durMs,
-				Frame:      p.frameID,
+				Frame:      frameID,
 			})
 		},
 	)

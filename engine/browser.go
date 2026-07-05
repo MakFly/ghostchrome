@@ -950,9 +950,10 @@ func (b *Browser) drainBackgroundObserver() {
 	if b.bgObserver == nil {
 		return
 	}
-	events := b.bgObserver.Drain(0)
-	_ = b.bgObserver.Stop()
+	observer := b.bgObserver
 	b.bgObserver = nil
+	_ = observer.Stop()
+	events := observer.Drain(0)
 	if len(events) == 0 {
 		return
 	}
@@ -964,11 +965,18 @@ func (b *Browser) drainBackgroundObserver() {
 			consoleEvents = append(consoleEvents, e)
 		case KindNet:
 			netEntries = append(netEntries, &CapturedEntry{
+				RequestID:    e.RequestID,
 				Method:       e.Method,
 				URL:          e.URL,
 				Status:       e.Status,
 				MimeType:     e.MimeType,
 				ResourceType: e.Type,
+				ReqHeaders:   e.ReqHeaders,
+				ResHeaders:   e.ResHeaders,
+				PostData:     e.PostData,
+				Body:         e.Body,
+				BodyBase64:   e.BodyBase64,
+				BodyError:    e.BodyError,
 			})
 		}
 	}

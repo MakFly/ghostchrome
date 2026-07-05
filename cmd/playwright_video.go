@@ -128,11 +128,11 @@ var videoStopCmd = &cobra.Command{
 			exitErr("video-stop", err)
 		}
 		type videoStopResult struct {
-			Manifest   string `json:"manifest"`
-			Filename   string `json:"filename"`
-			Chapters   int    `json:"chapters"`
-			Frames     int64  `json:"frames_captured"`
-			FramesDir  string `json:"frames_dir"`
+			Manifest  string `json:"manifest"`
+			Filename  string `json:"filename"`
+			Chapters  int    `json:"chapters"`
+			Frames    int64  `json:"frames_captured"`
+			FramesDir string `json:"frames_dir"`
 		}
 		result := videoStopResult{
 			Manifest:  manifestPath,
@@ -143,6 +143,28 @@ var videoStopCmd = &cobra.Command{
 		}
 		text := fmt.Sprintf("video stopped: %d frames captured in %s", frameCount, framesDir)
 		output(result, text)
+	},
+}
+
+var flagVideoShowDuration int
+var flagVideoShowPosition string
+var flagVideoShowCursor string
+
+var videoShowActionsCompatCmd = &cobra.Command{
+	Use:   "video-show-actions",
+	Short: "Display action markers during video capture (unsupported in ghostchrome)",
+	Args:  cobra.NoArgs,
+	Run: func(cmd *cobra.Command, args []string) {
+		unsupportedPlaywrightCommand("video-show-actions", args, "ghostchrome does not emit action overlays in its video metadata", "Use your runner’s existing trace/video tooling for action overlays.")
+	},
+}
+
+var videoHideActionsCompatCmd = &cobra.Command{
+	Use:   "video-hide-actions",
+	Short: "Hide action markers during video capture (unsupported in ghostchrome)",
+	Args:  cobra.NoArgs,
+	Run: func(cmd *cobra.Command, args []string) {
+		unsupportedPlaywrightCommand("video-hide-actions", args, "ghostchrome does not emit action overlays in its video metadata", "Use your runner’s existing trace/video tooling for action overlays.")
 	},
 }
 
@@ -216,8 +238,13 @@ func init() {
 	videoStartCmd.Flags().StringVar(&flagVideoSize, "size", "", "Requested video size, e.g. 800x600")
 	videoChapterCmd.Flags().StringVar(&flagVideoDescription, "description", "", "Chapter description")
 	videoChapterCmd.Flags().IntVar(&flagVideoDuration, "duration", 0, "Chapter card duration in milliseconds")
-	rootCmd.AddCommand(videoStartCmd, videoChapterCmd, videoStopCmd)
+	videoShowActionsCompatCmd.Flags().IntVar(&flagVideoShowDuration, "duration", 500, "Compatibility passthrough flag (unsupported; kept for API parity)")
+	videoShowActionsCompatCmd.Flags().StringVar(&flagVideoShowPosition, "position", "top-right", "Compatibility passthrough flag (unsupported; kept for API parity)")
+	videoShowActionsCompatCmd.Flags().StringVar(&flagVideoShowCursor, "cursor", "pointer", "Compatibility passthrough flag (unsupported; kept for API parity)")
+	rootCmd.AddCommand(videoStartCmd, videoChapterCmd, videoStopCmd, videoShowActionsCompatCmd, videoHideActionsCompatCmd)
 	commandGroups["video-start"] = "observe"
 	commandGroups["video-chapter"] = "observe"
 	commandGroups["video-stop"] = "observe"
+	commandGroups["video-show-actions"] = "observe"
+	commandGroups["video-hide-actions"] = "observe"
 }

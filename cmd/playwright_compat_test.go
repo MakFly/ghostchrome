@@ -1,6 +1,15 @@
 package cmd
 
 import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/MakFly/ghostchrome/engine"
@@ -93,6 +102,17 @@ func TestPlaywrightCompatCommandsRegistered(t *testing.T) {
 		"verify-list-visible",
 		"verify-value",
 		"generate-locator",
+		"requests",
+		"request",
+		"request-headers",
+		"request-body",
+		"response-headers",
+		"response-body",
+		"highlight",
+		"detach",
+		"install-browser",
+		"video-show-actions",
+		"video-hide-actions",
 	}
 
 	for _, name := range commands {
@@ -164,6 +184,24 @@ func TestPlaywrightCompatFlagsRegistered(t *testing.T) {
 		{command: "route", flag: "content-type"},
 		{command: "route", flag: "header"},
 		{command: "route", flag: "remove-header"},
+		{command: "requests", flag: "filter"},
+		{command: "requests", flag: "static"},
+		{command: "requests", flag: "clear"},
+		{command: "request", flag: "filename"},
+		{command: "request-headers", flag: "filename"},
+		{command: "request-body", flag: "filename"},
+		{command: "response-headers", flag: "filename"},
+		{command: "response-body", flag: "filename"},
+		{command: "highlight", flag: "hide"},
+		{command: "install-browser", flag: "list"},
+		{command: "install-browser", flag: "force"},
+		{command: "install-browser", flag: "dry-run"},
+		{command: "install-browser", flag: "with-deps"},
+		{command: "install-browser", flag: "only-shell"},
+		{command: "install-browser", flag: "no-shell"},
+		{command: "video-show-actions", flag: "duration"},
+		{command: "video-show-actions", flag: "position"},
+		{command: "video-show-actions", flag: "cursor"},
 	}
 
 	for _, check := range checks {
@@ -180,15 +218,18 @@ func TestPlaywrightCompatFlagsRegistered(t *testing.T) {
 func TestCloseCompatReusableContextDetection(t *testing.T) {
 	oldConnect := flagConnect
 	oldSession := flagSession
+	oldSkipDaemon := skipImplicitDaemon
 	defer func() {
 		flagConnect = oldConnect
 		flagSession = oldSession
+		skipImplicitDaemon = oldSkipDaemon
 	}()
 
 	t.Setenv("PLAYWRIGHT_CLI_SESSION", "")
 	t.Setenv("GHOSTCHROME_SESSION", "")
 	flagConnect = ""
 	flagSession = ""
+	skipImplicitDaemon = true
 	if hasReusableBrowserContext() {
 		t.Fatal("expected no reusable context by default")
 	}
@@ -203,6 +244,67 @@ func TestCloseCompatReusableContextDetection(t *testing.T) {
 	if !hasReusableBrowserContext() {
 		t.Fatal("expected --session to count as reusable context")
 	}
+
+	skipImplicitDaemon = false
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	port, ws := startRegistryCDPServer(t)
+	if err := os.MkdirAll(filepath.Join(dir, ".ghostchrome"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	reg := map[string]map[string]engine.SessionEntry{
+		"sessions": {
+			"default": {
+				Name:       "default",
+				Port:       port,
+				WSURL:      ws,
+				Profile:    "default",
+				LaunchedAt: "2020-01-01T00:00:00Z",
+			},
+		},
+	}
+	data, err := json.Marshal(reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".ghostchrome", "sessions.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	flagConnect = ""
+	flagSession = ""
+	t.Setenv("PLAYWRIGHT_CLI_SESSION", "")
+	t.Setenv("GHOSTCHROME_SESSION", "")
+	if !hasReusableBrowserContext() {
+		t.Fatal("expected default implicit session to count as reusable context")
+	}
+
+}
+
+func startRegistryCDPServer(t *testing.T) (int, string) {
+	t.Helper()
+	var ws string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/json/version" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"webSocketDebuggerUrl": ws,
+		})
+	}))
+	t.Cleanup(srv.Close)
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(u.Host, ":")
+	port, err := strconv.Atoi(parts[len(parts)-1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws = fmt.Sprintf("ws://127.0.0.1:%d/devtools/browser/default", port)
+	return port, ws
 }
 
 func lookupAnyFlag(cmd *cobra.Command, name string) *pflag.Flag {
@@ -346,7 +448,7 @@ func TestFilterNetworkLog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("filterNetworkLog: %v", err)
 	}
-	if len(got) != 2 {
+	if len(got) != 1 {
 		t.Fatalf("static resources should be excluded by default, got %d entries", len(got))
 	}
 	got, err = filterNetworkLog(entries, "", true)
