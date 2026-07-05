@@ -57,7 +57,7 @@ func TestBrowserPersistsActiveTabAndSnapshots(t *testing.T) {
 		t.Fatalf("navigate: %v", err)
 	}
 
-	result, err := Extract(page, LevelSkeleton, "")
+	result, err := Extract(page, LevelSkeleton, "", false)
 	if err != nil {
 		t.Fatalf("extract: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestResolveRefReportsStaleSnapshots(t *testing.T) {
 		t.Fatalf("navigate: %v", err)
 	}
 
-	result, err := Extract(page, LevelSkeleton, "")
+	result, err := Extract(page, LevelSkeleton, "", false)
 	if err != nil {
 		t.Fatalf("extract: %v", err)
 	}

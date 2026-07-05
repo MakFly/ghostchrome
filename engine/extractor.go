@@ -40,6 +40,14 @@ type ExtractionResult struct {
 	Nodes []ExtractedNode          `json:"nodes"`
 	Refs  map[string]ExtractedNode `json:"refs"`
 	Stats ExtractionStats          `json:"stats"`
+	// SSRPayloads is populated as a fallback when the accessibility tree
+	// comes back empty or fails to load — e.g. an SSR/hydration-driven page
+	// (Next.js, Nuxt, ...) still mid-hydration behind an unresolved bot
+	// challenge. See ssrFallbackPayloads. Only populated when the caller
+	// opts in (includeSSR) — these payloads (__NEXT_DATA__, __APOLLO_STATE__,
+	// RSC chunks, ...) can carry tokens/PII on an authenticated page, so they
+	// must not be exposed to the LLM by default.
+	SSRPayloads []SSRPayload `json:"ssr_payloads,omitempty"`
 }
 
 // ExtractionStats provides extraction metrics.
@@ -96,15 +104,17 @@ var contentRoles = map[string]bool{
 
 // Extract retrieves the accessibility tree from the page and filters it.
 // The CDP call uses its own 30 s timeout so a slow navigation doesn't eat
-// into the extraction budget.
-func Extract(page *rod.Page, level ExtractLevel, selector string) (*ExtractionResult, error) {
-	return ExtractWithTimeout(page, level, selector, defaultExtractTimeout)
+// into the extraction budget. includeSSR controls whether the SSR-fallback
+// payloads (see ExtractionResult.SSRPayloads) are returned; pass false unless
+// the caller explicitly wants them exposed.
+func Extract(page *rod.Page, level ExtractLevel, selector string, includeSSR bool) (*ExtractionResult, error) {
+	return ExtractWithTimeout(page, level, selector, defaultExtractTimeout, includeSSR)
 }
 
 // ExtractWithTimeout is like Extract but accepts an explicit timeout for the
 // CDP AccessibilityGetFullAXTree call. Use 0 to inherit the page's context
 // deadline (previous behavior).
-func ExtractWithTimeout(page *rod.Page, level ExtractLevel, selector string, timeout time.Duration) (*ExtractionResult, error) {
+func ExtractWithTimeout(page *rod.Page, level ExtractLevel, selector string, timeout time.Duration, includeSSR bool) (*ExtractionResult, error) {
 	if err := ValidateExtractLevel(level); err != nil {
 		return nil, err
 	}
@@ -120,6 +130,18 @@ func ExtractWithTimeout(page *rod.Page, level ExtractLevel, selector string, tim
 	_ = proto.AccessibilityEnable{}.Call(p)
 	result, err := proto.AccessibilityGetFullAXTree{}.Call(p)
 	if err != nil {
+		// The AX tree read can fail outright on a page stuck mid-hydration
+		// behind an unresolved bot challenge (the Accessibility domain never
+		// settles). Rather than surface an opaque timeout with zero data,
+		// fall back to scanning the page's raw HTML for SSR data islands
+		// (__NEXT_DATA__, Nuxt, JSON-LD, ...) — the same parser fastfetch uses.
+		// Only when the caller opted in: these payloads can carry
+		// tokens/PII on an authenticated page.
+		if includeSSR {
+			if payloads := ssrFallbackPayloads(p); len(payloads) > 0 {
+				return &ExtractionResult{Refs: map[string]ExtractedNode{}, SSRPayloads: payloads}, nil
+			}
+		}
 		return nil, fmt.Errorf("get accessibility tree: %w", err)
 	}
 
@@ -158,11 +180,37 @@ func ExtractWithTimeout(page *rod.Page, level ExtractLevel, selector string, tim
 		extractedNodes = append(extractedNodes, children...)
 	}
 
+	var ssrPayloads []SSRPayload
+	if len(extractedNodes) == 0 && includeSSR {
+		// The a11y tree came back structurally empty — typical of an
+		// SSR/hydration-driven page (Next.js, Nuxt, ...) whose real content
+		// lives in a data island rather than in rendered, named DOM nodes.
+		// Fall back to the raw HTML rather than reporting nothing. Only when
+		// the caller opted in — see includeSSR doc on Extract.
+		ssrPayloads = ssrFallbackPayloads(p)
+	}
+
 	return &ExtractionResult{
-		Nodes: extractedNodes,
-		Refs:  refs,
-		Stats: stats,
+		Nodes:       extractedNodes,
+		Refs:        refs,
+		Stats:       stats,
+		SSRPayloads: ssrPayloads,
 	}, nil
+}
+
+// ssrFallbackPayloads scans the page's current HTML for SSR data islands.
+// Best-effort: always returns nil (never an error) so callers can use it
+// unconditionally as a fallback when the accessibility tree is empty or
+// fails to load.
+func ssrFallbackPayloads(page *rod.Page) []SSRPayload {
+	if page == nil {
+		return nil
+	}
+	html, err := page.HTML()
+	if err != nil {
+		return nil
+	}
+	return ExtractSSRPayloads(html)
 }
 
 // resolveScope finds all AX node IDs that are descendants of the given CSS selector.

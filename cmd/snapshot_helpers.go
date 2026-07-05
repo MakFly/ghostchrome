@@ -16,7 +16,7 @@ func snapshotPage(b *engine.Browser, page *rod.Page, level engine.ExtractLevel) 
 	if cached := b.CachedExtract(page); cached != nil {
 		return cached
 	}
-	result, err := engine.Extract(page, level, "")
+	result, err := engine.Extract(page, level, "", false)
 	if err != nil {
 		exitErr("extract", err)
 	}
@@ -30,7 +30,7 @@ func snapshotPage(b *engine.Browser, page *rod.Page, level engine.ExtractLevel) 
 // a heavy page after a long navigation) it logs a warning to stderr and
 // returns nil instead of killing the process.
 func trySnapshot(b *engine.Browser, page *rod.Page, level engine.ExtractLevel) *engine.ExtractionResult {
-	result, err := engine.Extract(page, level, "")
+	result, err := engine.Extract(page, level, "", false)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[navigate] snapshot skipped: %v\n", err)
 		return nil

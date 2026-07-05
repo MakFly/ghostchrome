@@ -165,7 +165,7 @@ func (s *Server) handleSnapshot(ctx context.Context, req mcpgo.CallToolRequest) 
 		if err != nil {
 			return errResult(fmt.Errorf("page info: %w", err))
 		}
-		extracted, err := engine.Extract(page, level, selector)
+		extracted, err := engine.Extract(page, level, selector, false)
 		if err != nil {
 			return errResult(fmt.Errorf("extract: %w", err))
 		}

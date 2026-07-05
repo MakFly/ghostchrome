@@ -372,7 +372,7 @@ func (s *agentSession) opExtract(raw json.RawMessage) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	result, err := engine.Extract(page, level, a.Selector)
+	result, err := engine.Extract(page, level, a.Selector, false)
 	if err != nil {
 		return nil, err
 	}

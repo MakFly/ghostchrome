@@ -83,7 +83,7 @@ Extraction levels:
 			navigateIfRequested(page, targetURL, "load")
 		}
 
-		result, err := engine.Extract(page, level, targetSelector)
+		result, err := engine.Extract(page, level, targetSelector, false)
 		if err != nil {
 			exitErr("extract", err)
 		}

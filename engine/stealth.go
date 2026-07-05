@@ -616,7 +616,26 @@ func WaitForBotChallenge(page *rod.Page, timeout time.Duration) bool {
 	for time.Now().Before(deadline) {
 		time.Sleep(1 * time.Second)
 
-		if !isBotChallenge(page) {
+		// One page.Info() + one page.HTML() fetch per tick, reused for both
+		// the "still challenged?" check and the DataDome CAPTCHA check below
+		// (previously each did its own HTML fetch — two round-trips per tick).
+		info, infoErr := page.Info()
+		html, htmlErr := page.HTML()
+
+		var challenged bool
+		switch {
+		case infoErr != nil:
+			challenged = false
+		case htmlErr != nil:
+			// Mirror isBotChallenge's decisive URL/title fast path when the
+			// HTML fetch itself fails.
+			matched, _ := classifyBotChallengeHTML(info.URL, info.Title, "")
+			challenged = matched
+		default:
+			challenged = classifyBotChallengeResult(page, info.URL, info.Title, html)
+		}
+
+		if !challenged {
 			// Challenge cleared — let the real page settle before returning.
 			_ = page.WaitStable(time.Second)
 			return true
@@ -629,16 +648,27 @@ func WaitForBotChallenge(page *rod.Page, timeout time.Duration) bool {
 		}
 
 		if reloads < maxReloads && time.Now().After(nextReload) {
-			// A wedged challenge is almost always caused by stale Cloudflare
-			// challenge-state cookies (cf_chl_*, and a cf_clearance that is
-			// no longer accepted). Dropping every cf_* / __cf* cookie before
-			// reloading gives the next attempt the same clean slate a fresh
-			// profile gets — empirically the state that solves reliably.
-			clearCloudflareCookies(page)
-			if err := page.Reload(); err == nil {
-				reloads++
+			if htmlErr == nil && isInteractiveDataDomeCaptcha(html) {
+				// DataDome served a human-solvable visual CAPTCHA (an iframe
+				// at geo.captcha-delivery.com/captcha/...). Unlike a wedged
+				// Cloudflare challenge, no JS-only resolution exists — a
+				// reload just fetches a *new* puzzle, burning requests
+				// against an already-suspicious IP for zero chance of
+				// automated success. Keep polling (someone watching headful
+				// Chrome might still solve it) but skip the reload.
+				nextReload = time.Now().Add(stuckAfter)
+			} else {
+				// A wedged challenge is almost always caused by stale Cloudflare
+				// challenge-state cookies (cf_chl_*, and a cf_clearance that is
+				// no longer accepted). Dropping every cf_* / __cf* cookie before
+				// reloading gives the next attempt the same clean slate a fresh
+				// profile gets — empirically the state that solves reliably.
+				clearCloudflareCookies(page)
+				if err := page.Reload(); err == nil {
+					reloads++
+				}
+				nextReload = time.Now().Add(stuckAfter)
 			}
-			nextReload = time.Now().Add(stuckAfter)
 		}
 	}
 	return false
@@ -667,20 +697,62 @@ func isBotChallenge(page *rod.Page) bool {
 		return false
 	}
 
-	if strings.Contains(info.URL, "captcha-delivery.com") ||
-		strings.Contains(info.URL, "geo.captcha-delivery.com") {
-		return true
-	}
-
-	// "Just a moment..." / "Attention Required! | Cloudflare" → CF interstitial.
-	if strings.Contains(info.Title, "Just a moment") ||
-		strings.Contains(info.Title, "Attention Required") {
+	// URL/title markers are decisive and don't depend on page.HTML() — check
+	// them first so a transient page.HTML() failure (e.g. the race window
+	// right after a challenge redirect) can't mask an obvious challenge
+	// interstitial.
+	if matched, _ := classifyBotChallengeHTML(info.URL, info.Title, ""); matched {
 		return true
 	}
 
 	html, err := page.HTML()
 	if err != nil {
 		return false
+	}
+
+	return classifyBotChallengeResult(page, info.URL, info.Title, html)
+}
+
+// classifyBotChallengeResult applies classifyBotChallengeHTML to an
+// already-fetched html and, for ambient markers, probes the page's visible
+// text length. Factored out so WaitForBotChallenge's poll loop can reuse a
+// single page.HTML() fetch per tick instead of calling isBotChallenge (which
+// fetches its own) and then re-fetching HTML for the DataDome CAPTCHA check.
+func classifyBotChallengeResult(page *rod.Page, url, title, html string) bool {
+	matched, ambient := classifyBotChallengeHTML(url, title, html)
+	if matched {
+		return true
+	}
+	if !ambient {
+		return false
+	}
+
+	res, err := page.Eval(`() => (document.body && document.body.innerText.length) || 0`)
+	if err != nil {
+		return false
+	}
+	return res.Value.Int() < 800
+}
+
+// classifyBotChallengeHTML holds the pure, page-independent part of
+// isBotChallenge's detection so it can be unit-tested against captured HTML
+// fixtures without spinning up a browser.
+//
+// matched=true is decisive: the page is a challenge interstitial. When
+// matched=false but ambient=true, the HTML contains markers legitimate pages
+// also carry (Cloudflare bot-management assets, Turnstile widgets) — the
+// caller must additionally confirm the visible page is essentially empty
+// before concluding it's a challenge.
+func classifyBotChallengeHTML(url, title, html string) (matched bool, ambient bool) {
+	if strings.Contains(url, "captcha-delivery.com") ||
+		strings.Contains(url, "geo.captcha-delivery.com") {
+		return true, false
+	}
+
+	// "Just a moment..." / "Attention Required! | Cloudflare" → CF interstitial.
+	if strings.Contains(title, "Just a moment") ||
+		strings.Contains(title, "Attention Required") {
+		return true, false
 	}
 
 	// Strong markers only ever appear on an actual challenge interstitial.
@@ -695,7 +767,7 @@ func isBotChallenge(page *rod.Page) bool {
 	}
 	for _, marker := range strongMarkers {
 		if strings.Contains(html, marker) {
-			return true
+			return true, false
 		}
 	}
 
@@ -709,19 +781,21 @@ func isBotChallenge(page *rod.Page) bool {
 		"challenges.cloudflare.com",
 		"cf-turnstile",
 	}
-	hasAmbient := false
 	for _, marker := range ambientMarkers {
 		if strings.Contains(html, marker) {
-			hasAmbient = true
-			break
+			return false, true
 		}
 	}
-	if !hasAmbient {
-		return false
-	}
-	res, err := page.Eval(`() => (document.body && document.body.innerText.length) || 0`)
-	if err != nil {
-		return false
-	}
-	return res.Value.Int() < 800
+	return false, false
+}
+
+// isInteractiveDataDomeCaptcha reports whether html is DataDome's visual/
+// interactive CAPTCHA delivery page — an iframe served from
+// geo.captcha-delivery.com/captcha/... Unlike the lightweight
+// ct.captcha-delivery.com/c.js SDK tag (present on many DataDome-protected
+// pages, including ones that ultimately pass through silently), this iframe
+// is only served once DataDome has decided a human must solve a puzzle: no
+// wait or reload resolves it programmatically.
+func isInteractiveDataDomeCaptcha(html string) bool {
+	return strings.Contains(html, "geo.captcha-delivery.com/captcha")
 }

@@ -357,7 +357,7 @@ func (r *batchRunner) cmdExtract(args string) (any, error) {
 		prev = r.browser.Snapshot(r.page)
 	}
 
-	result, err := engine.Extract(r.page, level, "")
+	result, err := engine.Extract(r.page, level, "", false)
 	if err != nil {
 		return nil, err
 	}

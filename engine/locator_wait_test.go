@@ -181,7 +181,7 @@ func TestWaitForRefAttached(t *testing.T) {
 		t.Fatalf("navigate: %v", err)
 	}
 
-	result, err := Extract(page, LevelSkeleton, "")
+	result, err := Extract(page, LevelSkeleton, "", false)
 	if err != nil {
 		t.Fatalf("extract: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestWaitForRefVisible(t *testing.T) {
 	}
 
 	// Extract immediately — button is visible, gets ref @1.
-	result, err := Extract(page, LevelSkeleton, "")
+	result, err := Extract(page, LevelSkeleton, "", false)
 	if err != nil {
 		t.Fatalf("extract: %v", err)
 	}

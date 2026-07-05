@@ -34,7 +34,7 @@ func TestRefsUseAXTargetsAcrossActions(t *testing.T) {
 		t.Fatalf("navigate: %v", err)
 	}
 
-	result, err := Extract(page, LevelSkeleton, "")
+	result, err := Extract(page, LevelSkeleton, "", false)
 	if err != nil {
 		t.Fatalf("extract: %v", err)
 	}

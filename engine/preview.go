@@ -71,7 +71,7 @@ func Preview(page *rod.Page, url string, waitStrategy string, extractLevel Extra
 		}
 	}
 
-	dom, err := Extract(page, extractLevel, "")
+	dom, err := Extract(page, extractLevel, "", false)
 	if err != nil {
 		return nil, fmt.Errorf("extract: %w", err)
 	}
