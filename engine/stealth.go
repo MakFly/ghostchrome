@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -86,13 +87,29 @@ func detectOSFingerprint() osFingerprint {
 
 // stealthProfile holds the values interpolated into the stealth script and CDP overrides.
 type stealthProfile struct {
-	chromeMajor    string // e.g. "146"
-	chromeFull     string // e.g. "146.0.7680.177"
-	userAgent      string
-	acceptLanguage string   // e.g. "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7"
-	navLanguages   []string // e.g. ["fr-FR", "fr", "en-US", "en"]
-	primaryLang    string   // e.g. "fr-FR"
-	os             osFingerprint
+	chromeMajor         string // e.g. "146"
+	chromeFull          string // e.g. "146.0.7680.177"
+	userAgent           string
+	acceptLanguage      string   // e.g. "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7"
+	navLanguages        []string // e.g. ["fr-FR", "fr", "en-US", "en"]
+	primaryLang         string   // e.g. "fr-FR"
+	os                  osFingerprint
+	hardwareConcurrency int // navigator.hardwareConcurrency, derived from the real host
+}
+
+// detectHardwareConcurrency mirrors the host's real CPU count instead of a
+// hardcoded value, clamped to a plausible consumer-hardware range. Chrome
+// reports the OS logical core count here, so a mismatch (e.g. always "8" on
+// a 32-core CI box) is itself a fingerprintable inconsistency.
+func detectHardwareConcurrency() int {
+	n := runtime.NumCPU()
+	if n < 2 {
+		return 2
+	}
+	if n > 32 {
+		return 32
+	}
+	return n
 }
 
 func newStealthProfile(page *rod.Page) stealthProfile {
@@ -105,13 +122,14 @@ func newStealthProfile(page *rod.Page) stealthProfile {
 	)
 	primary, navLangs, acceptLang := detectLocale()
 	return stealthProfile{
-		chromeMajor:    major,
-		chromeFull:     full,
-		userAgent:      ua,
-		acceptLanguage: acceptLang,
-		navLanguages:   navLangs,
-		primaryLang:    primary,
-		os:             osFp,
+		chromeMajor:         major,
+		chromeFull:          full,
+		userAgent:           ua,
+		acceptLanguage:      acceptLang,
+		navLanguages:        navLangs,
+		primaryLang:         primary,
+		os:                  osFp,
+		hardwareConcurrency: detectHardwareConcurrency(),
 	}
 }
 
@@ -230,14 +248,6 @@ func applyStealthWithProfile(page *rod.Page, profile stealthProfile) error {
 		};
 		cleanObj(document);
 		cleanObj(window);
-
-		// Reactive cleanup via MutationObserver — no leaked timers on SPA navigations.
-		try {
-			const observer = new MutationObserver(() => { cleanObj(document); cleanObj(window); });
-			observer.observe(document, { childList: true, subtree: true, attributes: false });
-			// Safety net: stop observing after 10s, by then any late CDP injection has fired.
-			setTimeout(() => { try { observer.disconnect(); } catch(e) {} }, 10000);
-		} catch(e) {}
 	})();
 
 	// --- defineNative bootstrap ---
@@ -251,7 +261,11 @@ func applyStealthWithProfile(page *rod.Page, profile stealthProfile) error {
 		const proxyToString = new Proxy(origToString, {
 			apply(target, thisArg, args) {
 				if (thisArg && nativeFns.has(thisArg)) {
-					const name = (thisArg.name || '').replace(/^(get |set )/, '');
+					// Real Chrome keeps the "get "/"set " accessor prefix in the
+					// name, e.g. "function get webdriver() { [native code] }" —
+					// __defineNative already sets .name to "get " + prop, so we
+					// must NOT strip it here.
+					const name = thisArg.name || '';
 					return 'function ' + name + '() { [native code] }';
 				}
 				return Reflect.apply(target, thisArg, args);
@@ -295,27 +309,29 @@ func applyStealthWithProfile(page *rod.Page, profile stealthProfile) error {
 	__defineNative(navProto, 'webdriver', () => false);
 
 	// --- chrome object ---
+	// Every synthesized function below is run through __markNative so its
+	// toString() reads "[native code]" like the real window.chrome does.
 	if (!window.chrome) { window.chrome = {}; }
 	if (!window.chrome.runtime) {
 		window.chrome.runtime = {
-			connect: function() {},
-			sendMessage: function() {},
-			onMessage: { addListener: function() {} },
+			connect: window.__markNative(function() {}),
+			sendMessage: window.__markNative(function() {}),
+			onMessage: { addListener: window.__markNative(function() {}) },
 			id: undefined,
 		};
 	}
 	if (!window.chrome.csi) {
-		window.chrome.csi = function() {
+		window.chrome.csi = window.__markNative(function() {
 			return {
 				startE: Date.now(),
 				onloadT: Date.now(),
 				pageT: performance.now(),
 				tran: 15,
 			};
-		};
+		});
 	}
 	if (!window.chrome.loadTimes) {
-		window.chrome.loadTimes = function() {
+		window.chrome.loadTimes = window.__markNative(function() {
 			return {
 				commitLoadTime: Date.now() / 1000,
 				connectionInfo: 'h2',
@@ -331,53 +347,28 @@ func applyStealthWithProfile(page *rod.Page, profile stealthProfile) error {
 				wasFetchedViaSpdy: true,
 				wasNpnNegotiated: true,
 			};
-		};
+		});
 	}
 	if (!window.chrome.app) {
 		window.chrome.app = {
 			isInstalled: false,
 			InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
 			RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' },
-			getDetails: function() { return null; },
-			getIsInstalled: function() { return false; },
-			installState: function() { return 'not_installed'; },
+			getDetails: window.__markNative(function() { return null; }),
+			getIsInstalled: window.__markNative(function() { return false; }),
+			installState: window.__markNative(function() { return 'not_installed'; }),
 		};
 	}
 
 	// --- permissions ---
-	const originalQuery = window.navigator.permissions.query.bind(window.navigator.permissions);
-	const permQuery = function query(parameters) {
-		return parameters.name === 'notifications'
-			? Promise.resolve({ state: Notification.permission })
-			: originalQuery(parameters);
-	};
-	window.__markNative(permQuery);
-	window.navigator.permissions.query = permQuery;
+	// No override: navigator.permissions.query already returns a real
+	// PermissionStatus natively on a headless Chrome — spoofing it here was
+	// net-negative (only makes the override detectable via toString/identity).
 
-	// --- plugins ---
-	// Must pass instanceof PluginArray check
-	__defineNative(navProto, 'plugins', () => {
-		const p = [0, 1, 2];
-		p[0] = { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format', length: 1 };
-		p[1] = { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '', length: 1 };
-		p[2] = { name: 'Native Client', filename: 'internal-nacl-plugin', description: '', length: 2 };
-		p.item = function(i) { return this[i] || null; };
-		p.namedItem = function(n) { return this.find(x => x.name === n) || null; };
-		p.refresh = function() {};
-		return p;
-	});
-
-	// --- mimeTypes ---
-	__defineNative(navProto, 'mimeTypes', () => {
-		const mt = [
-			{ type: 'application/pdf', suffixes: 'pdf', description: 'Portable Document Format' },
-			{ type: 'application/x-nacl', suffixes: '', description: 'Native Client Executable' },
-		];
-		mt.item = function(i) { return this[i] || null; };
-		mt.namedItem = function(n) { return this.find(x => x.type === n) || null; };
-		mt.refresh = function() {};
-		return mt;
-	});
+	// --- plugins / mimeTypes ---
+	// No override: modern Chrome's native PDF-viewer plugin set is already
+	// correct out of the box. The previous flat-array spoof (including a dead
+	// "Native Client" entry) was itself a detectable inconsistency.
 
 	// --- languages ---
 	__defineNative(navProto, 'languages', () => __NAV_LANGUAGES__);
@@ -387,7 +378,7 @@ func applyStealthWithProfile(page *rod.Page, profile stealthProfile) error {
 	__defineNative(navProto, 'platform', () => '__NAV_PLATFORM__');
 
 	// --- hardware ---
-	__defineNative(navProto, 'hardwareConcurrency', () => 8);
+	__defineNative(navProto, 'hardwareConcurrency', () => __HARDWARE_CONCURRENCY__);
 	__defineNative(navProto, 'deviceMemory', () => 8);
 	__defineNative(navProto, 'maxTouchPoints', () => 0);
 
@@ -411,26 +402,43 @@ func applyStealthWithProfile(page *rod.Page, profile stealthProfile) error {
 
 	// --- WebGL ---
 	// The headless renderer reports "SwiftShader" — a hard automation tell.
-	// Override UNMASKED_VENDOR_WEBGL (37445) / UNMASKED_RENDERER_WEBGL (37446)
-	// with values consistent with the spoofed OS.
-	const getParam = WebGLRenderingContext.prototype.getParameter;
-	const wrappedGetParam = function getParameter(p) {
-		if (p === 37445) return '__WEBGL_VENDOR__';
-		if (p === 37446) return '__WEBGL_RENDERER__';
-		return getParam.apply(this, arguments);
-	};
-	window.__markNative(wrappedGetParam);
-	WebGLRenderingContext.prototype.getParameter = wrappedGetParam;
-	if (typeof WebGL2RenderingContext !== 'undefined') {
-		const getParam2 = WebGL2RenderingContext.prototype.getParameter;
-		const wrappedGetParam2 = function getParameter(p) {
-			if (p === 37445) return '__WEBGL_VENDOR__';
-			if (p === 37446) return '__WEBGL_RENDERER__';
-			return getParam2.apply(this, arguments);
-		};
-		window.__markNative(wrappedGetParam2);
-		WebGL2RenderingContext.prototype.getParameter = wrappedGetParam2;
-	}
+	// Real Chrome only surfaces UNMASKED_VENDOR_WEBGL (37445) / UNMASKED_
+	// RENDERER_WEBGL (37446) once a script has obtained the
+	// WEBGL_debug_renderer_info extension on that context — without it,
+	// getParameter(37445/37446) returns null natively. So we track extension
+	// activation per-context and only substitute the spoofed values then;
+	// otherwise we defer to the native getParameter.
+	(function() {
+		const debugInfoContexts = new WeakSet();
+		function wrapWebGLProto(proto) {
+			if (!proto) return;
+			const nativeGetExt = proto.getExtension;
+			const wrappedGetExt = function getExtension(name) {
+				const ext = nativeGetExt.call(this, name);
+				if (name === 'WEBGL_debug_renderer_info' && ext) {
+					debugInfoContexts.add(this);
+				}
+				return ext;
+			};
+			window.__markNative(wrappedGetExt);
+			proto.getExtension = wrappedGetExt;
+
+			const nativeGetParam = proto.getParameter;
+			const wrappedGetParam = function getParameter(p) {
+				if (debugInfoContexts.has(this)) {
+					if (p === 37445) return '__WEBGL_VENDOR__';
+					if (p === 37446) return '__WEBGL_RENDERER__';
+				}
+				return nativeGetParam.apply(this, arguments);
+			};
+			window.__markNative(wrappedGetParam);
+			proto.getParameter = wrappedGetParam;
+		}
+		wrapWebGLProto(WebGLRenderingContext.prototype);
+		if (typeof WebGL2RenderingContext !== 'undefined') {
+			wrapWebGLProto(WebGL2RenderingContext.prototype);
+		}
+	})();
 
 	// --- Brave detection ---
 	__defineNative(navProto, 'brave', () => undefined);
@@ -458,14 +466,20 @@ func applyStealthWithProfile(page *rod.Page, profile stealthProfile) error {
 	}
 
 	// --- window dimensions consistency ---
+	// innerWidth/innerHeight are left un-overridden: EmulationSetDeviceMetricsOverride
+	// already sets the real viewport to 1920x1080, so window.innerHeight and
+	// document.documentElement.clientHeight naturally agree. A hardcoded
+	// innerHeight here previously diverged from that real value — a detectable
+	// self-contradiction.
 	__defineNative(window, 'outerWidth', () => 1920);
 	__defineNative(window, 'outerHeight', () => 1080);
-	__defineNative(window, 'innerWidth', () => 1920);
-	__defineNative(window, 'innerHeight', () => 937);
 	__defineNative(window, 'screenX', () => 0);
 	__defineNative(window, 'screenY', () => 0);
 
 	// --- Remove automation indicators ---
+	// Delete-only: these globals don't exist under rod/CDP, so a real Chrome
+	// reports 'callPhantom' in window === false. Defining them (even as
+	// undefined) made "in" return true — worse than doing nothing.
 	const automationProps = [
 		'callPhantom', '_phantom', '__nightmare', 'domAutomation',
 		'domAutomationController', '_Selenium_IDE_Recorder',
@@ -476,7 +490,6 @@ func applyStealthWithProfile(page *rod.Page, profile stealthProfile) error {
 	];
 	for (const prop of automationProps) {
 		delete window[prop];
-		try { __defineNative(window, prop, () => undefined); } catch(e) {}
 	}
 
 	// --- Stack trace sanitization ---
@@ -505,6 +518,7 @@ func applyStealthWithProfile(page *rod.Page, profile stealthProfile) error {
 	script = strings.ReplaceAll(script, "__NAV_PLATFORM__", profile.os.navPlatform)
 	script = strings.ReplaceAll(script, "__WEBGL_VENDOR__", profile.os.webglVendor)
 	script = strings.ReplaceAll(script, "__WEBGL_RENDERER__", profile.os.webglRenderer)
+	script = strings.ReplaceAll(script, "__HARDWARE_CONCURRENCY__", strconv.Itoa(profile.hardwareConcurrency))
 
 	_, err := page.EvalOnNewDocument(script)
 	if err != nil {

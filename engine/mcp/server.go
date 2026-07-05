@@ -169,14 +169,22 @@ func (s *Server) ensurePageLocked() (*engine.Browser, *rod.Page, error) {
 
 	// Long-lived Observer so the `errors` tool can return events accumulated
 	// since the session started, not only those captured during the call.
-	obs := engine.NewObserver(page, engine.ObserverOpts{BufferSize: 512})
-	obsCtx, cancel := context.WithCancel(context.Background())
-	if err := obs.Start(obsCtx); err != nil {
-		cancel()
-		// Non-fatal: page still works, errors tool will just be empty.
+	// Skipped in stealth mode: it subscribes to Runtime.consoleAPICalled /
+	// Runtime.exceptionThrown, which makes rod auto-enable the Runtime CDP
+	// domain on every session — a persistent, detectable signal in stealth
+	// mode. The `errors` tool degrades to empty instead of leaking it.
+	if s.opts.Stealth {
+		fmt.Fprintln(os.Stderr, "[ghostchrome mcp] observer disabled in stealth (avoids Runtime.enable); errors tool will return empty")
 	} else {
-		s.observer = obs
-		s.observerFn = cancel
+		obs := engine.NewObserver(page, engine.ObserverOpts{BufferSize: 512})
+		obsCtx, cancel := context.WithCancel(context.Background())
+		if err := obs.Start(obsCtx); err != nil {
+			cancel()
+			// Non-fatal: page still works, errors tool will just be empty.
+		} else {
+			s.observer = obs
+			s.observerFn = cancel
+		}
 	}
 
 	// Pre-enable CDP domains the first extract/snapshot will need. Each is
@@ -232,4 +240,3 @@ func (s *Server) snapshotForResolve(page *rod.Page) *engine.PageSnapshot {
 func errResult(err error) (*mcpgo.CallToolResult, error) {
 	return mcpgo.NewToolResultError(err.Error()), nil
 }
-

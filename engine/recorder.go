@@ -74,6 +74,9 @@ func (r *Recorder) Start() error {
 	}
 
 	// Register the binding in the browser target so it's available in the page.
+	// Note: this — and the RuntimeBindingCalled subscription below — auto-enable
+	// the Runtime CDP domain (residual, known: the recorder is opt-in, so this
+	// is acceptable unlike the always-on background observer).
 	if err := (proto.RuntimeAddBinding{Name: recorderBinding}).Call(r.page); err != nil {
 		return fmt.Errorf("recorder: addBinding: %w", err)
 	}

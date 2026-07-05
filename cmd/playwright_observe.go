@@ -53,6 +53,9 @@ messages captured while the command is running.`,
 			return
 		}
 
+		if flagStealth {
+			fmt.Fprintln(os.Stderr, "ghostchrome: console enables the Runtime CDP domain, weakening --stealth")
+		}
 		observer := engine.NewObserver(page, engine.ObserverOpts{
 			Filters: engine.ObserverFilters{
 				Kinds: []engine.ObserverKind{engine.KindConsole, engine.KindError},

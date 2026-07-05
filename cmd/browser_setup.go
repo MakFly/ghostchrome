@@ -196,7 +196,16 @@ func openPage() (*engine.Browser, *rod.Page) {
 	applyConfigPermissions(b)
 	applyConfigStorageState(b, page)
 	autoStartVideoIfConfigured(b)
-	b.StartBackgroundObserver(page)
+	if flagStealth {
+		// The background observer subscribes to Runtime.consoleAPICalled /
+		// Runtime.exceptionThrown, which makes rod auto-enable the Runtime
+		// CDP domain on every command — a persistent, detectable signal in
+		// stealth mode. Skip it; console/network capture stays opt-in via
+		// the explicit `errors`/`preview`/`recorder` commands.
+		fmt.Fprintln(os.Stderr, "ghostchrome: console capture disabled in stealth (avoids Runtime.enable)")
+	} else {
+		b.StartBackgroundObserver(page)
+	}
 
 	return b, page
 }

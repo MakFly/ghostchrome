@@ -210,7 +210,16 @@ func NewLauncher(opts LauncherOpts) *launcher.Launcher {
 		// the same reason.
 		Set("password-store", "basic").
 		Set("use-mock-keychain").
-		Delete("enable-automation")
+		Delete("enable-automation").
+		// Rod's defaults disable site isolation (disable-site-isolation-trials,
+		// the "site-per-process" feature) and force the network service
+		// in-process (NetworkServiceInProcess) — a real Chrome runs with site
+		// isolation ON and the network service out-of-process. Restore that
+		// baseline: it's both a detectable process/security-model signal and
+		// a real security regression to leave disabled.
+		Delete("disable-site-isolation-trials").
+		Set("disable-features", "TranslateUI").
+		Set("enable-features", "NetworkService")
 
 	if opts.ExecutablePath != "" {
 		l = l.Bin(opts.ExecutablePath)

@@ -64,6 +64,9 @@ func TestStealthToStringHidesGetters(t *testing.T) {
 		};
 		return {
 			webdriver: getterSrc(navigator, 'webdriver'),
+			// plugins/permQuery are no longer overridden by ApplyStealth (the
+			// native implementations are already correct); kept here as a
+			// regression guard against a leaky override being reintroduced.
 			plugins: getterSrc(navigator, 'plugins'),
 			languages: getterSrc(navigator, 'languages'),
 			platform: getterSrc(navigator, 'platform'),
@@ -92,6 +95,20 @@ func TestStealthToStringHidesGetters(t *testing.T) {
 		"permQuery":           res.Value.Get("permQuery").Str(),
 	}
 
+	// Getters installed via __defineNative must keep the "get " accessor
+	// prefix in their reported name — that's what a real Chrome accessor
+	// getter looks like (e.g. `function get webdriver() { [native code] }`).
+	// Stripping it (as a previous version of the proxy did) is itself a
+	// detectable inconsistency vs. native Chrome getters.
+	definedGetters := map[string]bool{
+		"webdriver":           true,
+		"languages":           true,
+		"platform":            true,
+		"hardwareConcurrency": true,
+		"screenWidth":         true,
+		"outerWidth":          true,
+	}
+
 	for name, got := range checks {
 		if got == "" {
 			// Property is not an accessor getter on this Chromium build —
@@ -101,6 +118,9 @@ func TestStealthToStringHidesGetters(t *testing.T) {
 		}
 		if !strings.Contains(got, "[native code]") {
 			t.Errorf("%s.toString() leaks source — got %q, want substring %q", name, got, "[native code]")
+		}
+		if definedGetters[name] && !strings.HasPrefix(got, "function get ") {
+			t.Errorf("%s.toString() missing native accessor prefix — got %q, want prefix %q", name, got, "function get ")
 		}
 	}
 

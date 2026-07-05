@@ -28,12 +28,12 @@ type agentRequest struct {
 
 // agentResponse is one line on stdout.
 type agentResponse struct {
-	ID          string                `json:"id"`
-	OK          bool                  `json:"ok"`
-	Result      interface{}           `json:"result,omitempty"`
-	Error       string                `json:"error,omitempty"`
+	ID          string                 `json:"id"`
+	OK          bool                   `json:"ok"`
+	Result      interface{}            `json:"result,omitempty"`
+	Error       string                 `json:"error,omitempty"`
 	Events      []engine.ObserverEvent `json:"events,omitempty"`
-	Observation *engine.Observation   `json:"observation,omitempty"`
+	Observation *engine.Observation    `json:"observation,omitempty"`
 }
 
 // agentSession holds long-lived state across requests.
@@ -201,6 +201,9 @@ func (s *agentSession) ensurePage() (*engine.Browser, *rod.Page, error) {
 
 	// Start observer sidecar if --observe is active.
 	if flagObserve {
+		if flagStealth {
+			fmt.Fprintln(os.Stderr, "ghostchrome: --observe enables the Runtime CDP domain, weakening --stealth")
+		}
 		obsOpts := engine.ObserverOpts{}
 		obs := engine.NewObserver(page, obsOpts)
 		if err := obs.Start(context.Background()); err != nil {

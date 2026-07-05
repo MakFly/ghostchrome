@@ -20,6 +20,9 @@ func startObserveOut(page *rod.Page) func(opName string, ok bool, durationMs int
 		fmt.Fprintf(os.Stderr, "observe-out: %v\n", err)
 		return func(string, bool, int64, string) {}
 	}
+	if flagStealth {
+		fmt.Fprintln(os.Stderr, "ghostchrome: --observe-out enables the Runtime CDP domain, weakening --stealth")
+	}
 	obs := engine.NewObserver(page, engine.ObserverOpts{})
 	if err := obs.Start(context.Background()); err != nil {
 		fmt.Fprintf(os.Stderr, "observe-out: observer start: %v\n", err)
