@@ -1,6 +1,14 @@
 package engine
 
-import "testing"
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strconv"
+	"strings"
+	"testing"
+)
 
 func TestCmdlineIsSessionServe(t *testing.T) {
 	e := SessionEntry{Name: "work", Port: 9222, Profile: "work"}
@@ -24,4 +32,111 @@ func TestCmdlineIsSessionServe(t *testing.T) {
 			t.Errorf("%s: cmdlineIsSessionServe(%q) = %v, want %v", c.name, c.cmd, got, c.want)
 		}
 	}
+}
+
+func TestSuppressDaemonEnvStripsSessionIdentity(t *testing.T) {
+	// A spawned serve must not inherit any signal that would make it re-derive
+	// a session name and acquire yet another serve (the recursive fork bomb).
+	in := []string{
+		"PATH=/usr/bin",
+		"GHOSTCHROME_DAEMON=1",
+		"GHOSTCHROME_NO_DAEMON=0",
+		"GHOSTCHROME_SESSION=iautos-1783290111247382717",
+		"PLAYWRIGHT_CLI_SESSION=iautos-1783290111247382717",
+		"HOME=/home/kev",
+	}
+	out := suppressDaemonEnv(in)
+
+	var noDaemon int
+	for _, e := range out {
+		switch {
+		case strings.HasPrefix(e, "GHOSTCHROME_DAEMON="):
+			t.Errorf("GHOSTCHROME_DAEMON leaked into child env: %q", e)
+		case strings.HasPrefix(e, "GHOSTCHROME_SESSION="):
+			t.Errorf("GHOSTCHROME_SESSION leaked into child env: %q", e)
+		case strings.HasPrefix(e, "PLAYWRIGHT_CLI_SESSION="):
+			t.Errorf("PLAYWRIGHT_CLI_SESSION leaked into child env: %q", e)
+		case e == "GHOSTCHROME_NO_DAEMON=1":
+			noDaemon++
+		case strings.HasPrefix(e, "GHOSTCHROME_NO_DAEMON="):
+			t.Errorf("stale GHOSTCHROME_NO_DAEMON value survived: %q", e)
+		}
+	}
+	if noDaemon != 1 {
+		t.Errorf("expected exactly one GHOSTCHROME_NO_DAEMON=1, got %d", noDaemon)
+	}
+	// Unrelated env must be preserved.
+	var hasPath, hasHome bool
+	for _, e := range out {
+		if e == "PATH=/usr/bin" {
+			hasPath = true
+		}
+		if e == "HOME=/home/kev" {
+			hasHome = true
+		}
+	}
+	if !hasPath || !hasHome {
+		t.Errorf("unrelated env not preserved: PATH=%v HOME=%v", hasPath, hasHome)
+	}
+}
+
+func TestSessionAliveHonorsStoredWebSocketEndpoint(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/json/version" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/browser/live",
+		})
+	}))
+	defer srv.Close()
+	port := parseTestPort(t, srv.URL)
+
+	ws, alive := sessionAlive(SessionEntry{
+		Name:  "default",
+		Port:  port,
+		WSURL: "ws://127.0.0.1:9222/devtools/browser/live",
+	})
+	if !alive {
+		t.Fatal("expected session to be alive")
+	}
+	if ws != "ws://127.0.0.1:9222/devtools/browser/live" {
+		t.Fatalf("unexpected websocket %q", ws)
+	}
+}
+
+func TestSessionAliveRejectsMismatchedWebSocketEndpoint(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/json/version" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/browser/foreign",
+		})
+	}))
+	defer srv.Close()
+	port := parseTestPort(t, srv.URL)
+
+	_, alive := sessionAlive(SessionEntry{
+		Name:  "default",
+		Port:  port,
+		WSURL: "ws://127.0.0.1:9222/devtools/browser/live",
+	})
+	if alive {
+		t.Fatal("expected session to be considered dead when ws endpoint mismatches")
+	}
+}
+
+func parseTestPort(t *testing.T, rawURL string) int {
+	t.Helper()
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(u.Host, ":")
+	port, err := strconv.Atoi(parts[len(parts)-1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return port
 }

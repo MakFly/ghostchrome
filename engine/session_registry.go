@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -43,6 +44,8 @@ type SessionSpawnOpts struct {
 }
 
 const DefaultSessionName = "default"
+
+var ErrSessionNotFound = errors.New("session not found in registry")
 
 var sessionNameRe = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
@@ -115,7 +118,7 @@ func saveSessionRegistry(path string, reg *sessionRegistry) error {
 // authoritative via CDP rather than the stored PID: if our serve is gone the
 // port stops answering.
 func sessionAlive(e SessionEntry) (string, bool) {
-	if e.Port == 0 && e.WSURL != "" {
+	if e.WSURL != "" && e.Port == 0 {
 		browser := rod.New().ControlURL(e.WSURL)
 		if err := browser.Connect(); err != nil {
 			return "", false
@@ -125,6 +128,9 @@ func sessionAlive(e SessionEntry) (string, bool) {
 	}
 	ws, err := DiscoverCDP([]int{e.Port}, 600*time.Millisecond)
 	if err != nil || ws == "" {
+		return "", false
+	}
+	if e.WSURL != "" && ws != e.WSURL {
 		return "", false
 	}
 	return ws, true
@@ -180,12 +186,16 @@ func killSessionProcess(e SessionEntry) {
 
 // suppressDaemonEnv ensures the spawned serve subprocess does NOT trigger the
 // implicit-session daemon again (which would fork-bomb). It strips any legacy
-// GHOSTCHROME_DAEMON var and injects GHOSTCHROME_NO_DAEMON=1.
+// GHOSTCHROME_DAEMON var, strips the session-identity vars so the child serve
+// cannot re-derive a session name from inherited env and acquire yet another
+// serve, and injects GHOSTCHROME_NO_DAEMON=1.
 func suppressDaemonEnv(env []string) []string {
 	out := make([]string, 0, len(env)+1)
 	for _, e := range env {
 		if strings.HasPrefix(e, "GHOSTCHROME_DAEMON=") ||
-			strings.HasPrefix(e, "GHOSTCHROME_NO_DAEMON=") {
+			strings.HasPrefix(e, "GHOSTCHROME_NO_DAEMON=") ||
+			strings.HasPrefix(e, "GHOSTCHROME_SESSION=") ||
+			strings.HasPrefix(e, "PLAYWRIGHT_CLI_SESSION=") {
 			continue
 		}
 		out = append(out, e)
@@ -328,7 +338,7 @@ func ResolveSession(name string) (SessionRegistryEntry, error) {
 	}
 	entry, ok := reg.Sessions[name]
 	if !ok {
-		return SessionRegistryEntry{}, fmt.Errorf("session %q not found in registry", name)
+		return SessionRegistryEntry{}, fmt.Errorf("session %q: %w", name, ErrSessionNotFound)
 	}
 	ws, alive := sessionAlive(entry)
 	if !alive {
@@ -442,7 +452,7 @@ func StopSession(name string) error {
 	}
 	entry, ok := reg.Sessions[name]
 	if !ok {
-		return fmt.Errorf("session %q not found in registry", name)
+		return fmt.Errorf("session %q: %w", name, ErrSessionNotFound)
 	}
 	killSessionProcess(entry)
 	delete(reg.Sessions, name)

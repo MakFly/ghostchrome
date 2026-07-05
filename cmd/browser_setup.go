@@ -21,7 +21,12 @@ func buildBrowserOpts() engine.BrowserOpts {
 	// resolve to a managed, persistent Chrome. Unlike --connect=auto we do NOT
 	// mark the tab fresh — the active tab is reused across calls so state (and
 	// @refs) persist.
-	if flagSession == "" {
+	// A daemon-launching command (serve) manages its OWN Chrome and must never
+	// resolve or acquire a managed session. If it did, an inherited
+	// $GHOSTCHROME_SESSION / $PLAYWRIGHT_CLI_SESSION would make each spawned
+	// serve acquire another serve — a recursive fork bomb. Gate ALL session
+	// resolution (env name, default fallback, and acquire) on !skipImplicitDaemon.
+	if flagSession == "" && !skipImplicitDaemon {
 		flagSession = sessionNameFromEnv()
 	}
 	if flagSession == "" && flagConnect == "" && !skipImplicitDaemon {
@@ -32,7 +37,7 @@ func buildBrowserOpts() engine.BrowserOpts {
 			flagSession = engine.DefaultSessionName
 		}
 	}
-	if flagSession != "" && flagConnect == "" {
+	if flagSession != "" && flagConnect == "" && !skipImplicitDaemon {
 		ws, err := engine.AcquireSession(flagSession, engine.SessionSpawnOpts{
 			Headless:       flagHeadless,
 			Stealth:        flagStealth,
