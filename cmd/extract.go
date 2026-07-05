@@ -83,7 +83,10 @@ Extraction levels:
 			navigateIfRequested(page, targetURL, "load")
 		}
 
-		result, err := engine.Extract(page, level, targetSelector, false)
+		// includeSSR opts in on the recovery path: navChallengeRecovered is
+		// set by navigateIfRequested above when this call's --stealth
+		// navigate just detected+cleared a DataDome/Cloudflare challenge.
+		result, err := engine.Extract(page, level, targetSelector, consumeNavChallengeRecovered())
 		if err != nil {
 			exitErr("extract", err)
 		}

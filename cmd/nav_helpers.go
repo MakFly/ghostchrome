@@ -9,6 +9,29 @@ import (
 	"github.com/go-rod/rod"
 )
 
+// navChallengeRecovered records whether the most recent navigateIfRequested
+// call detected AND cleared a bot challenge (DataDome/Cloudflare
+// interstitial). Extraction helpers read it to opt into the SSR fallback
+// (includeSSR) on the recovery path: a page that just survived a challenge is
+// exactly the case where the caller needs the data — the a11y tree may still
+// be sparse right after the reload, and DataDome/Cloudflare-protected sites
+// are overwhelmingly SSR-rendered (Next.js) to begin with. Always overwritten
+// (never just set-if-true) so a later clean navigate correctly resets it.
+//
+// One-shot: each CLI invocation is its own process, so this package var never
+// outlives a single command — but callers still consume it via
+// consumeNavChallengeRecovered so the "one recovered navigate -> one SSR
+// extract" contract matches the agent (JSONL) session's semantics exactly.
+var navChallengeRecovered bool
+
+// consumeNavChallengeRecovered returns the current flag and resets it to
+// false, mirroring agentSession.consumeChallengeRecovered.
+func consumeNavChallengeRecovered() bool {
+	v := navChallengeRecovered
+	navChallengeRecovered = false
+	return v
+}
+
 func navigateIfRequested(page *rod.Page, targetURL string, waitStrategy string) *engine.PageInfo {
 	if targetURL == "" {
 		return nil
@@ -19,15 +42,15 @@ func navigateIfRequested(page *rod.Page, targetURL string, waitStrategy string) 
 	if err != nil {
 		exitErr("navigate", err)
 	}
-	waitForChallengeIfStealth(page, info)
+	navChallengeRecovered = waitForChallengeIfStealth(page, info)
 	dismissCookiesIfNeeded(page)
 	waitForSelectorOrSleep(page)
 	return info
 }
 
-func waitForChallengeIfStealth(page *rod.Page, info *engine.PageInfo) {
+func waitForChallengeIfStealth(page *rod.Page, info *engine.PageInfo) bool {
 	if !flagStealth || info == nil {
-		return
+		return false
 	}
 	budget := time.Duration(flagTimeout) * time.Second * 4 / 5
 	if budget > 110*time.Second {
@@ -36,7 +59,7 @@ func waitForChallengeIfStealth(page *rod.Page, info *engine.PageInfo) {
 	if budget < 45*time.Second {
 		budget = 45 * time.Second
 	}
-	engine.WaitForBotChallenge(page, budget)
+	return engine.WaitForBotChallenge(page, budget)
 }
 
 func waitForSelectorOrSleep(page *rod.Page) {

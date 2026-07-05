@@ -107,3 +107,97 @@ func TestIsInteractiveDataDomeCaptcha_NotAmbientTag(t *testing.T) {
 		t.Fatal("plain DataDome SDK tag must not be classified as an interactive captcha")
 	}
 }
+
+// TestDecideReloadStrategy_DataDomeClearRetryOnce is the pure-logic guard for
+// the "clear the datadome cookie and retry once" trick: on a wedged, non-
+// interactive DataDome challenge it must select reloadStrategyDataDome
+// exactly once (datadomeCleared=false), then fall back to the Cloudflare
+// branch on every subsequent tick (datadomeCleared=true) — it must never
+// select reloadStrategyDataDome twice in a row.
+func TestDecideReloadStrategy_DataDomeClearRetryOnce(t *testing.T) {
+	const url = "https://www.lacentrale.fr/listing"
+	const html = `<html><head><script src="https://ct.captcha-delivery.com/c.js"></script></head><body></body></html>`
+
+	first := decideReloadStrategy(url, html, false)
+	if first != reloadStrategyDataDome {
+		t.Fatalf("first wedged tick: got strategy %v, want reloadStrategyDataDome", first)
+	}
+
+	second := decideReloadStrategy(url, html, true)
+	if second == reloadStrategyDataDome {
+		t.Fatal("clear-retry must not fire twice — expected fallback to reloadStrategyCloudflare once datadomeCleared=true")
+	}
+	if second != reloadStrategyCloudflare {
+		t.Fatalf("second wedged tick: got strategy %v, want reloadStrategyCloudflare", second)
+	}
+}
+
+// TestDecideReloadStrategy_InteractiveCaptchaSkipsReload verifies the
+// existing behaviour is preserved: the interactive visual CAPTCHA always
+// skips reload, regardless of the DataDome clear-retry state.
+func TestDecideReloadStrategy_InteractiveCaptchaSkipsReload(t *testing.T) {
+	html := `<html><body><iframe src="https://geo.captcha-delivery.com/captcha/?cid=x"></iframe></body></html>`
+	for _, cleared := range []bool{false, true} {
+		if got := decideReloadStrategy("https://example.com/", html, cleared); got != reloadStrategySkip {
+			t.Fatalf("datadomeCleared=%v: got strategy %v, want reloadStrategySkip", cleared, got)
+		}
+	}
+}
+
+// TestDecideReloadStrategy_CloudflareFallback ensures a wedged challenge with
+// no DataDome marker at all keeps using the pre-existing Cloudflare branch.
+func TestDecideReloadStrategy_CloudflareFallback(t *testing.T) {
+	html := `<html><script>cf-challenge-running</script></html>`
+	if got := decideReloadStrategy("https://example.com/", html, false); got != reloadStrategyCloudflare {
+		t.Fatalf("got strategy %v, want reloadStrategyCloudflare", got)
+	}
+}
+
+// TestIsDataDomeMarker covers the URL-only and HTML-only detection paths
+// (both must work — e.g. WaitForBotChallenge falls back to url-only when
+// page.HTML() itself fails mid-challenge).
+func TestIsDataDomeMarker(t *testing.T) {
+	cases := []struct {
+		name string
+		url  string
+		html string
+		want bool
+	}{
+		{"url marker", "https://geo.captcha-delivery.com/captcha/", "", true},
+		{"html marker", "https://example.com/", `<script src="https://ct.captcha-delivery.com/c.js"></script>`, true},
+		{"neither", "https://example.com/", "<html></html>", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isDataDomeMarker(tc.url, tc.html); got != tc.want {
+				t.Errorf("isDataDomeMarker(%q, %q) = %v, want %v", tc.url, tc.html, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestResolveStealthTimezone covers brique #2's locale->timezone default:
+// an explicit override always wins; a French locale defaults to
+// Europe/Paris; anything else (including the en-US fallback) leaves the
+// timezone unset so the host timezone is kept.
+func TestResolveStealthTimezone(t *testing.T) {
+	cases := []struct {
+		name     string
+		explicit string
+		locale   string
+		want     string
+	}{
+		{"explicit override wins", "America/New_York", "fr-FR", "America/New_York"},
+		{"fr-FR defaults to Europe/Paris", "", "fr-FR", "Europe/Paris"},
+		{"bare fr defaults to Europe/Paris", "", "fr", "Europe/Paris"},
+		{"en-US has no default", "", "en-US", ""},
+		{"unknown locale has no default", "", "de-DE", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := resolveStealthTimezone(tc.explicit, tc.locale); got != tc.want {
+				t.Errorf("resolveStealthTimezone(%q, %q) = %q, want %q", tc.explicit, tc.locale, got, tc.want)
+			}
+		})
+	}
+}

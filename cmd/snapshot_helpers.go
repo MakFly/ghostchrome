@@ -12,11 +12,22 @@ import (
 	"github.com/go-rod/rod"
 )
 
-func snapshotPage(b *engine.Browser, page *rod.Page, level engine.ExtractLevel) *engine.ExtractionResult {
-	if cached := b.CachedExtract(page); cached != nil {
-		return cached
+// includeSSR is variadic (not a plain bool) so the ~15 pre-existing
+// call sites — internal ref-only skeleton snapshots for click/hover/etc. that
+// never need SSR — keep compiling unchanged. Only the navigate --extract path
+// passes an explicit value (navChallengeRecovered).
+func snapshotPage(b *engine.Browser, page *rod.Page, level engine.ExtractLevel, includeSSR ...bool) *engine.ExtractionResult {
+	ssr := len(includeSSR) > 0 && includeSSR[0]
+	// A cached result never carries SSRPayloads (SaveSnapshot strips them
+	// before persisting), so serving it here when the caller opted into SSR
+	// would silently swallow the fallback it explicitly asked for. Bypass the
+	// cache and recompute in that case.
+	if !ssr {
+		if cached := b.CachedExtract(page); cached != nil {
+			return cached
+		}
 	}
-	result, err := engine.Extract(page, level, "", false)
+	result, err := engine.Extract(page, level, "", ssr)
 	if err != nil {
 		exitErr("extract", err)
 	}

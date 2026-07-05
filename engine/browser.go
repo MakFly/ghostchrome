@@ -698,12 +698,34 @@ func (b *Browser) SetCurrentPage(page *rod.Page) error {
 	return b.setCurrentTargetID(page.TargetID)
 }
 
+// stripSSRForCache returns a copy of result with SSRPayloads cleared, safe to
+// persist to the on-disk cache. SSRPayloads are only populated on the
+// SSR-fallback opt-in path (see ExtractionResult.SSRPayloads) and can carry
+// tokens/PII from an authenticated page, so they must never be cached where a
+// later non-SSR command (CachedExtract) could read them back. The original
+// result is never mutated — the caller's own copy (used for the immediate
+// command response) is returned untouched when there is nothing to strip.
+func stripSSRForCache(result *ExtractionResult) *ExtractionResult {
+	if result == nil || len(result.SSRPayloads) == 0 {
+		return result
+	}
+	stripped := *result
+	stripped.SSRPayloads = nil
+	return &stripped
+}
+
 // SaveSnapshot persists the latest ref snapshot for the page.
+//
+// SSRPayloads are stripped from the persisted copy before caching (see
+// stripSSRForCache) — the caller's result, used for the immediate command
+// response, is left untouched; only the copy written to disk is stripped, so
+// a later non-SSR command reading this cache via CachedExtract can never leak
+// SSR data it didn't ask for.
 func (b *Browser) SaveSnapshot(page *rod.Page, result *ExtractionResult) error {
 	if !b.connected || b.state == nil || page == nil || result == nil {
 		return nil
 	}
-	snapshot, err := snapshotFromResult(page, result)
+	snapshot, err := snapshotFromResult(page, stripSSRForCache(result))
 	if err != nil {
 		return err
 	}

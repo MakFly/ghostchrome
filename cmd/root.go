@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/MakFly/ghostchrome/engine"
 	"github.com/MakFly/ghostchrome/engine/policy"
@@ -27,6 +28,7 @@ var (
 	flagProxy                string
 	flagProxyBypass          string
 	flagStealth              bool
+	flagTimezone             string
 	flagDismissCookies       bool
 	flagWaitSelector         string
 	flagWaitMs               int
@@ -170,6 +172,12 @@ Run 'ghostchrome linkedin --help' to see LinkedIn recipes.`,
 			return fmt.Errorf("invalid profile %q: use auto, human, or agent", flagProfile)
 		}
 		engine.SetHumanMode(flagHuman)
+		if flagTimezone != "" {
+			if _, err := time.LoadLocation(flagTimezone); err != nil {
+				return fmt.Errorf("invalid --timezone %q: %w", flagTimezone, err)
+			}
+		}
+		engine.SetStealthTimezone(flagTimezone)
 
 		if flagPolicy != "" {
 			p, err := policy.Load(flagPolicy)
@@ -293,6 +301,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&flagFormat, "format", "text", "Output format: json or text")
 	rootCmd.PersistentFlags().StringVar(&flagProfile, "profile", "auto", "Output profile: auto (detect agent env), human, or agent (compact)")
 	rootCmd.PersistentFlags().BoolVar(&flagStealth, "stealth", false, "Enable stealth mode (hide headless fingerprints)")
+	rootCmd.PersistentFlags().StringVar(&flagTimezone, "timezone", "", "Override the JS Date/Intl timezone applied under --stealth (IANA name, e.g. Europe/Paris). Unset + --stealth derives a default from the detected locale (fr* -> Europe/Paris); other locales keep the host timezone.")
 	rootCmd.PersistentFlags().BoolVar(&flagDismissCookies, "dismiss-cookies", false, "Auto-dismiss cookie consent banners")
 	rootCmd.PersistentFlags().StringVar(&flagWaitSelector, "wait-selector", "", "After navigation, wait for this CSS selector to be visible (useful for SPAs)")
 	rootCmd.PersistentFlags().IntVar(&flagWaitMs, "wait-ms", 0, "After navigation (and after --wait-selector if any), sleep this many ms (lets late XHR finish)")

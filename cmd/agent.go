@@ -46,6 +46,21 @@ type agentSession struct {
 	obsFile         *os.File              // non-nil when --observe-out is set
 	lastObservation *engine.Observation   // observation from the previous op
 	recoveryHooks   []engine.RecoveryHook // pluggable recovery hooks
+
+	// challengeRecovered records whether the last "navigate" op detected AND
+	// cleared a bot challenge (DataDome/Cloudflare interstitial). "extract"
+	// reads it to opt into the SSR fallback (includeSSR) on the recovery
+	// path — the primary reason an automation client drives this JSONL loop
+	// against a DataDome-protected, SSR-rendered (Next.js) site in the first
+	// place. Always overwritten by "navigate" (never just set-if-true), so a
+	// later clean navigate correctly resets it.
+	//
+	// One-shot: "extract" consumes it via consumeChallengeRecovered, which
+	// resets it to false immediately after reading. Any op that navigates or
+	// changes the current page (see resetsChallengeRecovered) also resets it
+	// preemptively, so only the "extract" immediately following a recovered
+	// "navigate" opts into SSR — not every extract until the next navigate.
+	challengeRecovered bool
 }
 
 var agentCmd = &cobra.Command{
@@ -78,7 +93,11 @@ Supported ops:
   url
   close
 
-Stale refs auto-trigger one re-extraction + retry transparently.`,
+Stale refs auto-trigger one re-extraction + retry transparently.
+
+With --stealth: after "navigate" detects+clears a DataDome/Cloudflare
+challenge, the very next "extract" auto-includes SSR payloads
+(__NEXT_DATA__ / RSC self.__next_f) until the next "navigate".`,
 	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		runAgentLoop()
@@ -194,7 +213,9 @@ func (s *agentSession) ensurePage() (*engine.Browser, *rod.Page, error) {
 		return nil, nil, fmt.Errorf("page: %w", err)
 	}
 	if flagStealth {
-		_ = engine.ApplyStealth(page)
+		if err := engine.ApplyStealth(page); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: stealth not fully applied: %v\n", err)
+		}
 	}
 	s.browser = b
 	s.page = page
@@ -239,6 +260,9 @@ func (s *agentSession) ensurePage() (*engine.Browser, *rod.Page, error) {
 // dispatch routes the op to its handler. Handlers may return any JSON-encodable
 // value; nil means "ok with no payload".
 func (s *agentSession) dispatch(req agentRequest) (interface{}, error) {
+	if resetsChallengeRecovered(req.Op) {
+		s.challengeRecovered = false
+	}
 	switch req.Op {
 	case "init":
 		_, _, err := s.ensurePage()
@@ -300,6 +324,29 @@ func (s *agentSession) dispatch(req agentRequest) (interface{}, error) {
 	}
 }
 
+// resetsChallengeRecovered reports whether the given JSONL op navigates or
+// otherwise changes the current page. Such ops must reset challengeRecovered
+// preemptively: the one-shot SSR opt-in is only meant for the "extract" call
+// immediately following a recovered "navigate", not for an unrelated page
+// reached via an intervening click/press/back/forward/reload/type/select.
+func resetsChallengeRecovered(op string) bool {
+	switch op {
+	case "back", "forward", "reload", "click", "dblclick", "type", "press", "select":
+		return true
+	default:
+		return false
+	}
+}
+
+// consumeChallengeRecovered returns the current SSR opt-in flag and resets it
+// to false. One-shot: only the first "extract" after a recovered "navigate"
+// sees it as true.
+func (s *agentSession) consumeChallengeRecovered() bool {
+	v := s.challengeRecovered
+	s.challengeRecovered = false
+	return v
+}
+
 // ----- handlers ------------------------------------------------------------
 
 func (s *agentSession) opNavigate(raw json.RawMessage) (interface{}, error) {
@@ -325,7 +372,7 @@ func (s *agentSession) opNavigate(raw json.RawMessage) (interface{}, error) {
 		return nil, err
 	}
 	if flagStealth {
-		engine.WaitForBotChallenge(page, 45*time.Second)
+		s.challengeRecovered = engine.WaitForBotChallenge(page, 45*time.Second)
 	}
 	return info, nil
 }
@@ -372,7 +419,9 @@ func (s *agentSession) opExtract(raw json.RawMessage) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	result, err := engine.Extract(page, level, a.Selector, false)
+	// includeSSR opts in on the recovery path (see challengeRecovered doc).
+	// One-shot: consumeChallengeRecovered resets it immediately after reading.
+	result, err := engine.Extract(page, level, a.Selector, s.consumeChallengeRecovered())
 	if err != nil {
 		return nil, err
 	}

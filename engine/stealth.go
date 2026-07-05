@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-rod/rod"
@@ -178,6 +179,52 @@ func detectLocale() (primary string, navLangs []string, acceptLang string) {
 	navLangs = dedupeStrings(navLangs)
 	acceptLang = fmt.Sprintf("%s,%s;q=0.9,en-US;q=0.8,en;q=0.7", primary, base)
 	return primary, navLangs, acceptLang
+}
+
+// stealthTimezone is the package-level --timezone override consulted by
+// ApplyStealth. Empty means "derive a default from the detected locale"
+// (see resolveStealthTimezone). Mirrors the SetHumanMode/HumanMode pattern.
+var (
+	stealthTimezone   string
+	stealthTimezoneMu sync.RWMutex
+)
+
+// SetStealthTimezone sets the explicit --timezone override applied by
+// ApplyStealth. An empty value falls back to a locale-derived default.
+func SetStealthTimezone(tz string) {
+	stealthTimezoneMu.Lock()
+	stealthTimezone = tz
+	stealthTimezoneMu.Unlock()
+}
+
+func getStealthTimezone() string {
+	stealthTimezoneMu.RLock()
+	defer stealthTimezoneMu.RUnlock()
+	return stealthTimezone
+}
+
+// resolveStealthTimezone picks the timezone ApplyStealth should set via
+// Emulation.setTimezoneOverride: the explicit override when given, otherwise
+// a default derived from the detected locale. This keeps navigator.language /
+// Accept-Language / Intl timezone as one consistent geo identity — a mismatch
+// there (e.g. French Accept-Language but a US/host Intl timezone) is a strong
+// DataDome/Cloudflare signal. Locales without a known mapping (including the
+// en-US fallback) return "" — ApplyStealth then leaves the host timezone
+// untouched rather than guessing.
+func resolveStealthTimezone(explicit, primaryLocale string) string {
+	if explicit != "" {
+		return explicit
+	}
+	base := primaryLocale
+	if idx := strings.IndexByte(base, '-'); idx > 0 {
+		base = base[:idx]
+	}
+	switch strings.ToLower(base) {
+	case "fr":
+		return "Europe/Paris"
+	default:
+		return ""
+	}
 }
 
 func firstNonEmpty(values ...string) string {
@@ -585,6 +632,16 @@ func applyStealthWithProfile(page *rod.Page, profile stealthProfile) error {
 		return err
 	}
 
+	// Timezone: keep Intl.DateTimeFormat().resolvedOptions().timeZone
+	// consistent with the Accept-Language/navigator.language identity set
+	// above (and, transitively, with the proxy's exit geo). See
+	// resolveStealthTimezone for the fallback rule.
+	if tz := resolveStealthTimezone(getStealthTimezone(), profile.primaryLang); tz != "" {
+		if err := ApplyTimezone(page, tz); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -612,6 +669,10 @@ func WaitForBotChallenge(page *rod.Page, timeout time.Duration) bool {
 	nextReload := time.Now().Add(stuckAfter)
 	reloads := 0
 	nudged := false
+	// datadomeCleared bounds the DataDome cookie-clear-retry to exactly one
+	// attempt per WaitForBotChallenge call — a dedicated, one-shot counter
+	// separate from the Cloudflare cf_*/reload budget below.
+	datadomeCleared := false
 
 	for time.Now().Before(deadline) {
 		time.Sleep(1 * time.Second)
@@ -621,6 +682,9 @@ func WaitForBotChallenge(page *rod.Page, timeout time.Duration) bool {
 		// (previously each did its own HTML fetch — two round-trips per tick).
 		info, infoErr := page.Info()
 		html, htmlErr := page.HTML()
+		if htmlErr != nil {
+			html = ""
+		}
 
 		var challenged bool
 		switch {
@@ -648,7 +712,8 @@ func WaitForBotChallenge(page *rod.Page, timeout time.Duration) bool {
 		}
 
 		if reloads < maxReloads && time.Now().After(nextReload) {
-			if htmlErr == nil && isInteractiveDataDomeCaptcha(html) {
+			switch decideReloadStrategy(info.URL, html, datadomeCleared) {
+			case reloadStrategySkip:
 				// DataDome served a human-solvable visual CAPTCHA (an iframe
 				// at geo.captcha-delivery.com/captcha/...). Unlike a wedged
 				// Cloudflare challenge, no JS-only resolution exists — a
@@ -656,8 +721,19 @@ func WaitForBotChallenge(page *rod.Page, timeout time.Duration) bool {
 				// against an already-suspicious IP for zero chance of
 				// automated success. Keep polling (someone watching headful
 				// Chrome might still solve it) but skip the reload.
-				nextReload = time.Now().Add(stuckAfter)
-			} else {
+			case reloadStrategyDataDome:
+				// A poisoned `datadome` cookie (left over from a prior request
+				// burst DataDome already flagged) makes a persistent profile
+				// fail the challenge instantly on every retry. Drop it once
+				// and reload for a fresh challenge — a clean cookie passes.
+				// Bounded to a single attempt (datadomeCleared latches true);
+				// further wedged ticks fall through to the Cloudflare branch.
+				datadomeCleared = true
+				clearDataDomeCookies(page)
+				if err := page.Reload(); err == nil {
+					reloads++
+				}
+			default:
 				// A wedged challenge is almost always caused by stale Cloudflare
 				// challenge-state cookies (cf_chl_*, and a cf_clearance that is
 				// no longer accepted). Dropping every cf_* / __cf* cookie before
@@ -667,11 +743,47 @@ func WaitForBotChallenge(page *rod.Page, timeout time.Duration) bool {
 				if err := page.Reload(); err == nil {
 					reloads++
 				}
-				nextReload = time.Now().Add(stuckAfter)
 			}
+			nextReload = time.Now().Add(stuckAfter)
 		}
 	}
 	return false
+}
+
+// reloadStrategy is the action WaitForBotChallenge's poll loop takes on a
+// wedged challenge tick.
+type reloadStrategy int
+
+const (
+	// reloadStrategyCloudflare clears cf_*/__cf* cookies and reloads. Default
+	// fallback for any wedged challenge that isn't specifically DataDome.
+	reloadStrategyCloudflare reloadStrategy = iota
+	// reloadStrategySkip is DataDome's interactive visual CAPTCHA: no reload
+	// helps, so the loop just keeps polling.
+	reloadStrategySkip
+	// reloadStrategyDataDome clears the `datadome` cookie and reloads once.
+	reloadStrategyDataDome
+)
+
+// decideReloadStrategy is the pure decision logic behind WaitForBotChallenge's
+// reload branch, factored out (like classifyBotChallengeHTML) so the
+// DataDome clear-retry-once bound is unit-testable without a live browser.
+func decideReloadStrategy(url, html string, datadomeCleared bool) reloadStrategy {
+	if isInteractiveDataDomeCaptcha(html) {
+		return reloadStrategySkip
+	}
+	if !datadomeCleared && isDataDomeMarker(url, html) {
+		return reloadStrategyDataDome
+	}
+	return reloadStrategyCloudflare
+}
+
+// isDataDomeMarker reports whether url/html carries a DataDome-specific
+// marker (the captcha-delivery.com domain family covers both the lightweight
+// c.js SDK tag and the 403/interstitial page), as opposed to a Cloudflare
+// marker. Used to pick the cookie-clear branch on a wedged challenge.
+func isDataDomeMarker(url, html string) bool {
+	return strings.Contains(url, "captcha-delivery.com") || strings.Contains(html, "captcha-delivery.com")
 }
 
 // clearCloudflareCookies removes Cloudflare cookies (cf_*, __cf*) from the
@@ -685,6 +797,23 @@ func clearCloudflareCookies(page *rod.Page) {
 	for _, c := range cookies {
 		n := strings.ToLower(c.Name)
 		if strings.HasPrefix(n, "cf_") || strings.HasPrefix(n, "__cf") {
+			_ = proto.NetworkDeleteCookies{Name: c.Name, Domain: c.Domain}.Call(page)
+		}
+	}
+}
+
+// clearDataDomeCookies removes the `datadome` cookie (case-insensitive, any
+// domain) from the browser. A poisoned datadome cookie — left over from a
+// prior request burst DataDome already flagged — makes a persistent profile
+// fail the challenge instantly on every subsequent attempt; dropping it gives
+// the next challenge the same clean slate a fresh profile would get.
+func clearDataDomeCookies(page *rod.Page) {
+	cookies, err := page.Browser().GetCookies()
+	if err != nil {
+		return
+	}
+	for _, c := range cookies {
+		if strings.EqualFold(c.Name, "datadome") {
 			_ = proto.NetworkDeleteCookies{Name: c.Name, Domain: c.Domain}.Call(page)
 		}
 	}

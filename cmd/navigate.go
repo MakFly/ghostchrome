@@ -40,7 +40,7 @@ Examples:
 		// If --extract is set, also extract DOM
 		if flagNavExtract != "" {
 			level := engine.ExtractLevel(flagNavExtract)
-			result := snapshotPage(b, page, level)
+			result := snapshotPage(b, page, level, consumeNavChallengeRecovered())
 			text := fmt.Sprintf("[%d] %s — %s (%dms)\n%s", info.Status, info.Title, info.URL, info.TimeMs, engine.FormatTextProfile(result, renderProfile()))
 			text = appendAutoPlaywrightSnapshot(text, result)
 			flush("navigate", true, durationMs, fmt.Sprintf("[%d] %s", info.Status, info.URL))
@@ -53,7 +53,7 @@ Examples:
 		}
 
 		if isGoto {
-			result := snapshotPage(b, page, engine.LevelSkeleton)
+			result := snapshotPage(b, page, engine.LevelSkeleton, consumeNavChallengeRecovered())
 			text := formatPlaywrightPageStateOutput(info, result)
 			flush("goto", true, durationMs, fmt.Sprintf("[%d] %s", info.Status, info.URL))
 			type gotoResult struct {
