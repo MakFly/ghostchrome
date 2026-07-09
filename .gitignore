@@ -55,8 +55,11 @@ benchmark/results-warm.json
 /packages/linkedin/
 /packages/instagram/
 /packages/cars-listings/
+/packages/websearch/
 /cmd/leboncoin.go
 /cmd/linkedin.go
 /cmd/instagram.go
 /cmd/cars_listings.go
+/cmd/websearch.go
+/cmd/websearch_mcp.go
 docs/

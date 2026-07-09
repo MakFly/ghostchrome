@@ -79,11 +79,20 @@ func (s *Server) PrewarmAsync() {
 	}()
 }
 
+// ExtraToolRegistrars lets optional, build-tagged recipes (compiled with
+// `-tags recipes`) attach extra MCP tools without touching the core tool set.
+// A recipe appends to it from an init(); Build() applies them after the core
+// tools. Empty in the default binary — zero token cost when no recipe is on.
+var ExtraToolRegistrars []func(srv *mcpsrv.MCPServer)
+
 // Build returns an MCP server with every ghostchrome tool registered.
 // Caller is expected to call mcpsrv.ServeStdio on it.
 func (s *Server) Build(name, version string) *mcpsrv.MCPServer {
 	srv := mcpsrv.NewMCPServer(name, version, mcpsrv.WithToolCapabilities(true))
 	registerTools(srv, s)
+	for _, reg := range ExtraToolRegistrars {
+		reg(srv)
+	}
 	return srv
 }
 
