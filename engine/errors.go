@@ -57,76 +57,84 @@ func NewErrorCollector(page *rod.Page) *ErrorCollector {
 	c.cancel = cancel
 	c.done = make(chan struct{})
 
-	wait := scoped.EachEvent(
-		func(e *proto.RuntimeConsoleAPICalled) {
-			typ := string(e.Type)
-			if typ != "error" && typ != "warning" {
-				return
-			}
-
-			// Build message from args
-			var parts []string
-			for _, arg := range e.Args {
-				if !arg.Value.Nil() {
-					parts = append(parts, arg.Value.String())
-				} else if arg.Description != "" {
-					parts = append(parts, arg.Description)
-				} else if arg.UnserializableValue != "" {
-					parts = append(parts, string(arg.UnserializableValue))
+	// Runtime.* subscriptions make go-rod auto-send `Runtime.enable` — a signal
+	// DataDome & co. read as an automation tell. Under evasion we omit them
+	// (the Log-domain handler below still captures network/CSP/deprecation).
+	handlers := make([]interface{}, 0, 3)
+	if !EvadeRuntimeEnable() {
+		handlers = append(handlers,
+			func(e *proto.RuntimeConsoleAPICalled) {
+				typ := string(e.Type)
+				if typ != "error" && typ != "warning" {
+					return
 				}
-			}
-			msg := strings.Join(parts, " ")
-			if msg == "" {
-				msg = "(empty)"
-			}
 
-			// Build source from stack trace
-			source := ""
-			if e.StackTrace != nil && len(e.StackTrace.CallFrames) > 0 {
-				f := e.StackTrace.CallFrames[0]
-				source = fmt.Sprintf("%s:%d", f.URL, f.LineNumber)
-			}
-
-			c.mu.Lock()
-			c.errors = append(c.errors, ErrorEntry{
-				Type:    "console",
-				Level:   typ,
-				Message: msg,
-				Source:  source,
-				TimeMs:  time.Since(c.startAt).Milliseconds(),
-			})
-			c.mu.Unlock()
-		},
-		func(e *proto.RuntimeExceptionThrown) {
-			msg := ""
-			source := ""
-			if e.ExceptionDetails.Exception != nil {
-				if e.ExceptionDetails.Exception.Description != "" {
-					msg = e.ExceptionDetails.Exception.Description
-				} else if !e.ExceptionDetails.Exception.Value.Nil() {
-					msg = e.ExceptionDetails.Exception.Value.String()
+				// Build message from args
+				var parts []string
+				for _, arg := range e.Args {
+					if !arg.Value.Nil() {
+						parts = append(parts, arg.Value.String())
+					} else if arg.Description != "" {
+						parts = append(parts, arg.Description)
+					} else if arg.UnserializableValue != "" {
+						parts = append(parts, string(arg.UnserializableValue))
+					}
 				}
-			}
-			if msg == "" && e.ExceptionDetails.Text != "" {
-				msg = e.ExceptionDetails.Text
-			}
-			if e.ExceptionDetails.URL != "" {
-				source = fmt.Sprintf("%s:%d", e.ExceptionDetails.URL, e.ExceptionDetails.LineNumber)
-			} else if e.ExceptionDetails.StackTrace != nil && len(e.ExceptionDetails.StackTrace.CallFrames) > 0 {
-				f := e.ExceptionDetails.StackTrace.CallFrames[0]
-				source = fmt.Sprintf("%s:%d", f.URL, f.LineNumber)
-			}
+				msg := strings.Join(parts, " ")
+				if msg == "" {
+					msg = "(empty)"
+				}
 
-			c.mu.Lock()
-			c.errors = append(c.errors, ErrorEntry{
-				Type:    "console",
-				Level:   "error",
-				Message: msg,
-				Source:  source,
-				TimeMs:  time.Since(c.startAt).Milliseconds(),
-			})
-			c.mu.Unlock()
-		},
+				// Build source from stack trace
+				source := ""
+				if e.StackTrace != nil && len(e.StackTrace.CallFrames) > 0 {
+					f := e.StackTrace.CallFrames[0]
+					source = fmt.Sprintf("%s:%d", f.URL, f.LineNumber)
+				}
+
+				c.mu.Lock()
+				c.errors = append(c.errors, ErrorEntry{
+					Type:    "console",
+					Level:   typ,
+					Message: msg,
+					Source:  source,
+					TimeMs:  time.Since(c.startAt).Milliseconds(),
+				})
+				c.mu.Unlock()
+			},
+			func(e *proto.RuntimeExceptionThrown) {
+				msg := ""
+				source := ""
+				if e.ExceptionDetails.Exception != nil {
+					if e.ExceptionDetails.Exception.Description != "" {
+						msg = e.ExceptionDetails.Exception.Description
+					} else if !e.ExceptionDetails.Exception.Value.Nil() {
+						msg = e.ExceptionDetails.Exception.Value.String()
+					}
+				}
+				if msg == "" && e.ExceptionDetails.Text != "" {
+					msg = e.ExceptionDetails.Text
+				}
+				if e.ExceptionDetails.URL != "" {
+					source = fmt.Sprintf("%s:%d", e.ExceptionDetails.URL, e.ExceptionDetails.LineNumber)
+				} else if e.ExceptionDetails.StackTrace != nil && len(e.ExceptionDetails.StackTrace.CallFrames) > 0 {
+					f := e.ExceptionDetails.StackTrace.CallFrames[0]
+					source = fmt.Sprintf("%s:%d", f.URL, f.LineNumber)
+				}
+
+				c.mu.Lock()
+				c.errors = append(c.errors, ErrorEntry{
+					Type:    "console",
+					Level:   "error",
+					Message: msg,
+					Source:  source,
+					TimeMs:  time.Since(c.startAt).Milliseconds(),
+				})
+				c.mu.Unlock()
+			},
+		)
+	}
+	handlers = append(handlers,
 		func(e *proto.LogEntryAdded) {
 			if e.Entry == nil {
 				return
@@ -163,6 +171,8 @@ func NewErrorCollector(page *rod.Page) *ErrorCollector {
 			c.mu.Unlock()
 		},
 	)
+
+	wait := scoped.EachEvent(handlers...)
 
 	go func() {
 		defer close(c.done)

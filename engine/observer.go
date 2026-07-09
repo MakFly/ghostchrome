@@ -157,8 +157,13 @@ func (o *Observer) Start(ctx context.Context) error {
 	o.wg.Add(1)
 	go o.listenNetwork(ctx)
 
-	o.wg.Add(1)
-	go o.listenConsole(ctx)
+	// Runtime.consoleAPICalled auto-sends `Runtime.enable` (a DataDome
+	// automation tell). Skip it under evasion; the network/log/page listeners
+	// use other CDP domains and stay active.
+	if !EvadeRuntimeEnable() {
+		o.wg.Add(1)
+		go o.listenConsole(ctx)
+	}
 
 	o.wg.Add(1)
 	go o.listenLog(ctx)

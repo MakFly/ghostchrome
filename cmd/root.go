@@ -28,6 +28,7 @@ var (
 	flagProxy                string
 	flagProxyBypass          string
 	flagStealth              bool
+	flagEvadeRuntime         bool
 	flagTimezone             string
 	flagDismissCookies       bool
 	flagWaitSelector         string
@@ -172,6 +173,12 @@ Run 'ghostchrome linkedin --help' to see LinkedIn recipes.`,
 			return fmt.Errorf("invalid profile %q: use auto, human, or agent", flagProfile)
 		}
 		engine.SetHumanMode(flagHuman)
+
+		// Runtime.enable evasion (anti-bot): flag wins, else env opt-in.
+		if !flagEvadeRuntime && os.Getenv("GHOSTCHROME_EVADE_RUNTIME") == "1" {
+			flagEvadeRuntime = true
+		}
+		engine.SetEvadeRuntimeEnable(flagEvadeRuntime)
 		if flagTimezone != "" {
 			if _, err := time.LoadLocation(flagTimezone); err != nil {
 				return fmt.Errorf("invalid --timezone %q: %w", flagTimezone, err)
@@ -301,6 +308,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&flagFormat, "format", "text", "Output format: json or text")
 	rootCmd.PersistentFlags().StringVar(&flagProfile, "profile", "auto", "Output profile: auto (detect agent env), human, or agent (compact)")
 	rootCmd.PersistentFlags().BoolVar(&flagStealth, "stealth", false, "Enable stealth mode (hide headless fingerprints)")
+	rootCmd.PersistentFlags().BoolVar(&flagEvadeRuntime, "evade-runtime", false, "Avoid CDP Runtime.enable (rebrowser-style anti-bot evasion; disables JS console-error capture). Also via GHOSTCHROME_EVADE_RUNTIME=1")
 	rootCmd.PersistentFlags().StringVar(&flagTimezone, "timezone", "", "Override the JS Date/Intl timezone applied under --stealth (IANA name, e.g. Europe/Paris). Unset + --stealth derives a default from the detected locale (fr* -> Europe/Paris); other locales keep the host timezone.")
 	rootCmd.PersistentFlags().BoolVar(&flagDismissCookies, "dismiss-cookies", false, "Auto-dismiss cookie consent banners")
 	rootCmd.PersistentFlags().StringVar(&flagWaitSelector, "wait-selector", "", "After navigation, wait for this CSS selector to be visible (useful for SPAs)")
