@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "ghostchrome": {
+      "command": "ghostchrome",
+      "args": ["mcp", "--stealth"]
+    }
+  }
+}
