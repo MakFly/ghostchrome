@@ -126,7 +126,6 @@ the SDK types match that output, not your assumptions.
    (`just e2e` against a live Chrome) so real shapes flow through both SDKs.
 5. The parity test in `internal/ops/` fails loudly if JSONL / MCP / AI surfaces
    drift from the catalog — keep all three in sync.
-6. Run `ig index .` after file changes.
 
 Build/test everything via the root `justfile` (`build`, `test`, `test-all`,
 `contract`, `e2e`) or directly: `go test ./...`, then the two SDK suites.

@@ -40,7 +40,6 @@ This is the high-risk path because several surfaces must stay aligned.
    types as needed.
 6. Update SDK tests, especially contract coverage tests.
 7. Update examples if method signatures or expected shapes changed.
-8. Run `ig index .` after file changes, per the project guidance.
 
 Important: do not guess SDK result shapes from `contracts/commands.json`.
 Measure them from the binary.

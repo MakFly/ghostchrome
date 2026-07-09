@@ -55,7 +55,7 @@ The repo exposes three main automation surfaces:
 - Preferred runtime mode is attaching to an existing Chrome with
   `--connect=auto`; cold spawn remains a fallback path.
 - Use `bun` for JS/TS package commands. Do not use `npm` or `npx`.
-- Use `ig` for code search. Fall back only if `ig --version` fails.
+- Use `rg` (ripgrep) or the built-in search tools for code search.
 
 ## Files In This Referential
 
