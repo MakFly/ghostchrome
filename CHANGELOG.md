@@ -3,6 +3,19 @@
 All notable changes to ghostchrome are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/); the project follows SemVer.
 
+## [Unreleased]
+
+### Fixed
+- **MCP survives Chrome death** — the MCP server held its browser/page
+  singleton forever without re-validating it: when Chrome crashed, every
+  tool call failed with `context deadline exceeded` until the server was
+  restarted by hand. `ensurePageLocked` now pings the browser (cheap
+  `Browser.getVersion`, 2s bound) before reuse; on a dead Chrome it tears
+  down all per-browser state (snapshot/refs included) and relaunches a
+  fresh browser transparently. If the relaunch itself fails, the tool
+  returns an explicit `chrome process died and could not be relaunched`
+  error instead of the opaque timeout.
+
 ## [0.3.0] — 2026-06-11
 
 ### Added

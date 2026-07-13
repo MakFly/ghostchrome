@@ -689,6 +689,19 @@ func (b *Browser) RodBrowser() *rod.Browser {
 	return b.browser
 }
 
+// Alive reports whether the underlying Chrome still answers CDP within d.
+// A crashed or killed Chrome leaves the rod handle poisoned — every call
+// on it fails with a context error — so callers holding a long-lived
+// Browser use this cheap probe (one Browser.getVersion round-trip, ~1ms
+// on a live process, instant failure on a dead one) before trusting it.
+func (b *Browser) Alive(d time.Duration) bool {
+	if b == nil || b.browser == nil {
+		return false
+	}
+	_, err := b.browser.Timeout(d).Version()
+	return err == nil
+}
+
 // SetCurrentPage marks the provided page as the current tab for the session.
 func (b *Browser) SetCurrentPage(page *rod.Page) error {
 	if page == nil {

@@ -100,6 +100,12 @@ func (s *Server) Build(name, version string) *mcpsrv.MCPServer {
 func (s *Server) Close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.closeLocked()
+}
+
+// closeLocked tears down the browser and every piece of per-browser state
+// (observer, blocker, snapshot). Caller MUST hold s.mu.
+func (s *Server) closeLocked() {
 	if s.observer != nil {
 		_ = s.observer.Stop()
 		s.observer = nil
@@ -120,13 +126,38 @@ func (s *Server) Close() {
 	}
 }
 
+// alivenessProbeTimeout bounds the per-call liveness ping on the held
+// browser. Deliberately much shorter than the 30s CDP default: on a live
+// Chrome the ping is ~1ms, on a dead one it fails instantly.
+const alivenessProbeTimeout = 2 * time.Second
+
 // ensurePage opens the browser+page on first call. Subsequent calls reuse
-// the held instances. Caller MUST hold s.mu (or be inside a tool handler
-// that does so via withPage).
+// the held instances after a cheap liveness probe: if Chrome died under us
+// (crash, OOM kill, ...) the stale handles are torn down and a fresh
+// browser is launched instead of failing every call forever. Caller MUST
+// hold s.mu (or be inside a tool handler that does so via withPage).
 func (s *Server) ensurePageLocked() (*engine.Browser, *rod.Page, error) {
 	if s.page != nil && s.browser != nil {
-		return s.browser, s.page, nil
+		if s.browser.Alive(alivenessProbeTimeout) {
+			return s.browser, s.page, nil
+		}
+		// Relaunch invalidates refs (@1, @2) from earlier snapshots;
+		// closeLocked drops the snapshot so ref-based tools tell the agent
+		// to re-snapshot instead of clicking into the void.
+		fmt.Fprintln(os.Stderr, "[ghostchrome mcp] chrome is unresponsive, relaunching a fresh browser")
+		s.closeLocked()
+		b, page, err := s.launchPageLocked()
+		if err != nil {
+			return nil, nil, fmt.Errorf("chrome process died and could not be relaunched: %w", err)
+		}
+		return b, page, nil
 	}
+	return s.launchPageLocked()
+}
+
+// launchPageLocked launches (or connects to) Chrome and initializes all
+// per-browser state. Caller MUST hold s.mu.
+func (s *Server) launchPageLocked() (*engine.Browser, *rod.Page, error) {
 	bopts := engine.BrowserOpts{
 		ConnectURL: s.opts.Connect,
 		Headless:   s.opts.Headless,
