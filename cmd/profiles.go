@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/MakFly/ghostchrome/engine"
 	"github.com/spf13/cobra"
@@ -83,9 +84,72 @@ var profilesRmCmd = &cobra.Command{
 	},
 }
 
+var (
+	flagGCOlderThan time.Duration
+	flagGCYes       bool
+)
+
+var profilesGCCmd = &cobra.Command{
+	Use:   "gc",
+	Short: "Reclaim orphan profiles idle beyond --older-than (dry-run unless --yes)",
+	Long: `Garbage-collect stale Chrome profiles that accumulate disk over time.
+
+A profile is a candidate only when ALL hold:
+  - it is not the implicit "default" daemon profile;
+  - it is not backing a currently-live session;
+  - no file in it has changed within --older-than (it is genuinely idle).
+
+By default this only PRINTS the candidates (dry run). Review the list, then
+re-run with --yes to delete. Persistent login profiles (LinkedIn, Google, ...)
+that you still use appear only once they have been idle past the window — check
+the dry run before confirming so none is reclaimed by surprise.`,
+	Args: cobra.NoArgs,
+	Run: func(cmd *cobra.Command, args []string) {
+		candidates, err := engine.GCProfiles(flagGCOlderThan, !flagGCYes)
+		if err != nil {
+			exitErr("gc profiles", err)
+		}
+		sort.Slice(candidates, func(i, j int) bool { return candidates[i].Bytes > candidates[j].Bytes })
+
+		var freed int64
+		for _, c := range candidates {
+			freed += c.Bytes
+		}
+
+		if flagFormat == "json" {
+			enc := json.NewEncoder(cmd.OutOrStdout())
+			enc.SetIndent("", "  ")
+			_ = enc.Encode(map[string]any{
+				"dry_run":    !flagGCYes,
+				"candidates": candidates,
+				"freed":      freed,
+			})
+			return
+		}
+
+		if len(candidates) == 0 {
+			fmt.Fprintln(cmd.OutOrStdout(), "no idle orphan profiles to reclaim")
+			return
+		}
+
+		fmt.Fprintf(cmd.OutOrStdout(), "%-24s  %10s  %s\n", "NAME", "SIZE", "IDLE SINCE")
+		for _, c := range candidates {
+			fmt.Fprintf(cmd.OutOrStdout(), "%-24s  %10s  %s\n", c.Name, humanBytes(c.Bytes), c.Modified.Format("2006-01-02"))
+		}
+		if flagGCYes {
+			fmt.Fprintf(cmd.OutOrStdout(), "removed %d profile(s), reclaimed %s\n", len(candidates), humanBytes(freed))
+		} else {
+			fmt.Fprintf(cmd.OutOrStdout(), "(dry run) %d profile(s), %s reclaimable — re-run with --yes to delete\n", len(candidates), humanBytes(freed))
+		}
+	},
+}
+
 func init() {
 	profilesCmd.AddCommand(profilesListCmd)
 	profilesCmd.AddCommand(profilesRmCmd)
+	profilesGCCmd.Flags().DurationVar(&flagGCOlderThan, "older-than", 168*time.Hour, "only reclaim profiles idle at least this long (e.g. 24h, 168h)")
+	profilesGCCmd.Flags().BoolVar(&flagGCYes, "yes", false, "actually delete (default is a dry run)")
+	profilesCmd.AddCommand(profilesGCCmd)
 	rootCmd.AddCommand(profilesCmd)
 	commandGroups["profiles"] = "session"
 }

@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // ProfileInfo describes a persistent Chrome profile on disk
@@ -61,6 +62,76 @@ func ListProfiles() ([]ProfileInfo, error) {
 		out = append(out, ProfileInfo{Name: e.Name(), Path: p, Bytes: dirSize(p)})
 	}
 	return out, nil
+}
+
+// ProfileGCCandidate is an orphan profile eligible for reclamation.
+type ProfileGCCandidate struct {
+	Name     string    `json:"name"`
+	Bytes    int64     `json:"bytes"`
+	Modified time.Time `json:"modified"`
+}
+
+// dirModTime returns the most recent file modification time in a directory
+// tree (best-effort). It is the "last active" signal for a profile: Chrome
+// rewrites files under the profile on every use, so an old max-mtime means the
+// profile has genuinely been idle.
+func dirModTime(path string) time.Time {
+	var newest time.Time
+	_ = filepath.WalkDir(path, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info, ierr := d.Info(); ierr == nil {
+			if m := info.ModTime(); m.After(newest) {
+				newest = m
+			}
+		}
+		return nil
+	})
+	return newest
+}
+
+// GCProfiles finds — and, unless dryRun, deletes — orphan profile directories
+// that are safe to reclaim: never the implicit "default" daemon profile, never
+// a profile backing a currently-live session, and only those idle for at least
+// ttl (no file modified within the window). The idle gate protects persistent
+// login profiles that are still in active rotation even when no session is up
+// right now. Callers should surface the returned candidates before deleting
+// (the CLI defaults to a dry run) so a login profile is never removed silently.
+func GCProfiles(ttl time.Duration, dryRun bool) ([]ProfileGCCandidate, error) {
+	profiles, err := ListProfiles()
+	if err != nil {
+		return nil, err
+	}
+
+	keep := map[string]bool{DefaultSessionName: true}
+	if sessions, serr := ListSessions(); serr == nil {
+		for _, s := range sessions {
+			if s.Alive && s.Profile != "" {
+				keep[s.Profile] = true
+			}
+		}
+	}
+
+	cutoff := time.Now().Add(-ttl)
+	var candidates []ProfileGCCandidate
+	for _, p := range profiles {
+		if keep[p.Name] {
+			continue
+		}
+		mod := dirModTime(p.Path)
+		if mod.After(cutoff) {
+			continue // recently used — keep
+		}
+		candidates = append(candidates, ProfileGCCandidate{Name: p.Name, Bytes: p.Bytes, Modified: mod})
+	}
+
+	if !dryRun {
+		for _, c := range candidates {
+			_ = RemoveProfile(c.Name)
+		}
+	}
+	return candidates, nil
 }
 
 // RemoveProfile deletes a profile directory. The name is validated and the

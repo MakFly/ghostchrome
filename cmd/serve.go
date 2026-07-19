@@ -2,10 +2,13 @@ package cmd
 
 import (
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -73,6 +76,20 @@ Then in another terminal:
 			}
 		}
 
+		// Opt-in idle shutdown. Off by default so the daemon stays persistent
+		// (see the runtime policy in CLAUDE.md); when GHOSTCHROME_IDLE_TIMEOUT is
+		// set, serve exits after that long with no browser activity — matching
+		// agent-browser's AGENT_BROWSER_IDLE_TIMEOUT_MS and bounding the disk/RAM
+		// growth of a forgotten daemon.
+		idleTimeout := serveIdleTimeout()
+		var lastActivity time.Time
+		var lastTargets string
+		if idleTimeout > 0 && port > 0 {
+			lastActivity = time.Now()
+			lastTargets, _ = fetchCDPTargets(port)
+			fmt.Fprintf(os.Stderr, "idle-timeout: serve will exit after %s of inactivity\n", idleTimeout)
+		}
+
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 		ticker := time.NewTicker(3 * time.Second)
@@ -90,9 +107,58 @@ Then in another terminal:
 						return
 					}
 				}
+				// Idle shutdown: the CDP target set (open tabs + their URLs)
+				// changes whenever an agent navigates or opens/closes a tab. If
+				// it hasn't changed for idleTimeout, the daemon is idle — exit.
+				if idleTimeout > 0 && port > 0 {
+					if cur, ok := fetchCDPTargets(port); ok {
+						if cur != lastTargets {
+							lastTargets = cur
+							lastActivity = time.Now()
+						} else if time.Since(lastActivity) >= idleTimeout {
+							fmt.Fprintf(os.Stderr, "idle for %s — serve exiting\n", idleTimeout)
+							return
+						}
+					}
+				}
 			}
 		}
 	},
+}
+
+// serveIdleTimeout parses GHOSTCHROME_IDLE_TIMEOUT. Empty/invalid/<=0 disables
+// idle shutdown (the default). Accepts a Go duration ("30m", "90s") or a bare
+// integer number of seconds.
+func serveIdleTimeout() time.Duration {
+	v := strings.TrimSpace(os.Getenv("GHOSTCHROME_IDLE_TIMEOUT"))
+	if v == "" {
+		return 0
+	}
+	if d, err := time.ParseDuration(v); err == nil {
+		return d
+	}
+	if n, err := strconv.Atoi(v); err == nil && n > 0 {
+		return time.Duration(n) * time.Second
+	}
+	fmt.Fprintf(os.Stderr, "ignoring invalid GHOSTCHROME_IDLE_TIMEOUT=%q\n", v)
+	return 0
+}
+
+// fetchCDPTargets returns the raw /json/list body — a stable signature of the
+// open targets and their URLs — used as a cheap activity fingerprint. The bool
+// is false when the endpoint can't be read (treated as "no change").
+func fetchCDPTargets(port int) (string, bool) {
+	client := &http.Client{Timeout: 1500 * time.Millisecond}
+	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/json/list", port))
+	if err != nil {
+		return "", false
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return "", false
+	}
+	return string(body), true
 }
 
 func warmUpStealth(wsURL string) error {
