@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -222,6 +223,63 @@ func TestExtractionForRef(t *testing.T) {
 	}
 	if _, ok := ExtractionForRef(result, "@2"); ok {
 		t.Fatal("missing ref should not resolve")
+	}
+}
+
+// TestMarshalJSONStripsRefChildren guards the wire-compaction fix: the JSONL /
+// SDK payload must NOT duplicate each interactive node's subtree inside the
+// refs map (that subtree already lives in nodes). The in-memory struct keeps
+// its children so ExtractionForRef still works.
+func TestMarshalJSONStripsRefChildren(t *testing.T) {
+	combo := ExtractedNode{
+		Role: "combobox", Ref: "@1", Name: "Country",
+		Children: []ExtractedNode{
+			{Role: "StaticText", Name: "UNIQUE_CHILD_TOKEN"},
+		},
+	}
+	result := &ExtractionResult{
+		Nodes: []ExtractedNode{
+			{Role: "form", Children: []ExtractedNode{combo}},
+		},
+		Refs: map[string]ExtractedNode{"@1": combo},
+	}
+
+	raw, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var wire struct {
+		Nodes []map[string]any          `json:"nodes"`
+		Refs  map[string]map[string]any `json:"refs"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	// refs entry keeps its scalar metadata but drops the redundant subtree.
+	ref, ok := wire.Refs["@1"]
+	if !ok {
+		t.Fatal("refs @1 missing")
+	}
+	if _, hasChildren := ref["children"]; hasChildren {
+		t.Fatalf("refs @1 must not carry children on the wire: %v", ref)
+	}
+	if ref["name"] != "Country" {
+		t.Fatalf("refs @1 lost its metadata: %v", ref)
+	}
+
+	// The subtree is still present exactly once — in nodes.
+	if !strings.Contains(string(raw), "UNIQUE_CHILD_TOKEN") {
+		t.Fatal("child subtree should survive inside nodes")
+	}
+	if strings.Count(string(raw), "UNIQUE_CHILD_TOKEN") != 1 {
+		t.Fatalf("child subtree duplicated on the wire: %s", raw)
+	}
+
+	// In-memory struct is untouched: ExtractionForRef still sees the subtree.
+	if len(result.Refs["@1"].Children) != 1 {
+		t.Fatal("in-memory refs children must be preserved for ExtractionForRef")
 	}
 }
 

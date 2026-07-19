@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -48,6 +49,31 @@ type ExtractionResult struct {
 	// RSC chunks, ...) can carry tokens/PII on an authenticated page, so they
 	// must not be exposed to the LLM by default.
 	SSRPayloads []SSRPayload `json:"ssr_payloads,omitempty"`
+}
+
+// MarshalJSON serializes the extraction result for the wire: the JSONL `agent`
+// protocol (what the TS/Python SDKs speak), `extract --json`, and the MCP
+// surface. In memory every entry in Refs carries the interactive node's full
+// Children subtree — ExtractionForRef relies on it to scope output to a single
+// ref — but that subtree is already present in Nodes, so serializing it again
+// for every interactive element duplicated a large slice of the payload the
+// agent/SDK receives (the SDK's lightweight RefEntry type never modeled those
+// children). Strip Children from Refs on the wire only; the in-memory struct is
+// left untouched, so ExtractionForRef and other internal readers still see the
+// subtree. Every interactive node already has its own top-level key in Refs, so
+// dropping the nested subtree loses no ref.
+func (r ExtractionResult) MarshalJSON() ([]byte, error) {
+	type wire ExtractionResult // sheds MarshalJSON to avoid infinite recursion
+	w := wire(r)
+	if len(r.Refs) > 0 {
+		trimmed := make(map[string]ExtractedNode, len(r.Refs))
+		for ref, node := range r.Refs {
+			node.Children = nil
+			trimmed[ref] = node
+		}
+		w.Refs = trimmed
+	}
+	return json.Marshal(w)
 }
 
 // ExtractionStats provides extraction metrics.
