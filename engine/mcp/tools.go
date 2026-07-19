@@ -1,10 +1,11 @@
 // Package mcp tool registrations.
 //
-// MCP v1.0 surface: 11 essential tools for an LLM-agent browser loop.
-// Everything that isn't on the hot path (sniff/trace/cookies/storage/tabs/
-// viewport/dialog/blocker_stats) lives in the CLI only — adding tools here
-// has a real token cost in every `tools/list` the model receives, so we
-// stay deliberately small.
+// MCP v2.0 surface: 16 tools for an LLM-agent browser loop (snapshot, navigate,
+// click, type, select, press, wait_for, eval, screenshot, hover, drag,
+// fill_form, upload, tabs, back, forward). Everything that isn't on the hot path
+// (sniff/trace/cookies/storage/viewport/dialog/blocker_stats) lives in the CLI
+// only — adding tools here has a real token cost in every `tools/list` the
+// model receives, so we stay deliberately small.
 package mcp
 
 import (

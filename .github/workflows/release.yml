@@ -29,6 +29,11 @@ jobs:
           go vet ./...
 
       - name: Build binaries
+        # CGO_ENABLED=0 forces the pure-Go net/os-user resolvers so every binary
+        # is truly statically linked (no libc/ld dependency) — matching the
+        # "single static Go binary" promise. Rod is pure Go, so nothing is lost.
+        env:
+          CGO_ENABLED: "0"
         run: |
           mkdir -p dist
           VER="${{ github.ref_name }}"
@@ -94,3 +99,40 @@ jobs:
           for d in cli-linux-x64 cli-linux-arm64 cli-darwin-x64 cli-darwin-arm64 cli-win32-x64 cli; do
             (cd "$NPM_DIR/$d" && bun publish --access public)
           done
+
+      - name: Publish TypeScript SDK (@ghostchrome/sdk)
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NPM_TOKEN" ]; then
+            echo "NPM_TOKEN secret not set — skipping TS SDK publish."
+            exit 0
+          fi
+          VER="${{ github.ref_name }}"; VER="${VER#v}"
+          cd sdk/typescript
+          tmp=$(mktemp); jq --arg v "$VER" '.version=$v' package.json > "$tmp" && mv "$tmp" package.json
+          bun install
+          bun run build
+          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
+          bun publish --access public
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Publish Python SDK (ghostchrome → PyPI)
+        env:
+          PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+        run: |
+          if [ -z "$PYPI_TOKEN" ]; then
+            echo "PYPI_TOKEN secret not set — skipping PyPI publish."
+            exit 0
+          fi
+          VER="${{ github.ref_name }}"; VER="${VER#v}"
+          cd sdk/python
+          # Stamp the tag version into pyproject so the wheel matches the release.
+          sed -i -E "s/^version = \".*\"/version = \"$VER\"/" pyproject.toml
+          python -m pip install --upgrade build twine
+          python -m build
+          TWINE_USERNAME=__token__ TWINE_PASSWORD="$PYPI_TOKEN" python -m twine upload dist/*

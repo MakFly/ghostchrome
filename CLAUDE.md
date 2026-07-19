@@ -89,7 +89,7 @@ The SDKs live **in this repo** under `sdk/typescript/` and `sdk/python/` (TypeSc
 and Python only — no external `../ghostchrome-sdk` repo, no PHP). They are typed
 against the generated contract and driven by the JSONL `agent` loop.
 
-Status: both SDKs are at **v0.2.0**, cover **100% of the JSONL-surface ops**, are
+Status: both SDKs are at **v0.4.0**, cover **100% of the JSONL-surface ops**, are
 publish-ready (TS `bun run build` → `dist/`; Python ships `py.typed`), and their
 result types are matched to what the binary actually emits.
 

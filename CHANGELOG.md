@@ -5,7 +5,43 @@ All notable changes to ghostchrome are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-07-20
+
+### Added
+- **Opt-in daemon idle shutdown** — set `GHOSTCHROME_IDLE_TIMEOUT` (a Go
+  duration like `30m`, or bare seconds) and a `serve` daemon exits after that
+  long with no browser activity (tracked via the CDP target set). Off by
+  default, so the persistent-daemon runtime policy is unchanged; bounds the
+  disk/RAM growth of a forgotten daemon.
+- **`profiles gc`** — reclaim stale Chrome profiles. Dry-run by default; only
+  targets profiles that are not the `default` daemon profile, not backing a
+  live session, and idle past `--older-than` (default 168h). Delete with
+  `--yes`. Login profiles still in rotation are preserved by the idle gate.
+
+### Changed
+- **Static binaries** — release and local (`just install`) builds now set
+  `CGO_ENABLED=0`, producing a truly statically linked binary (no libc/ld
+  dependency), matching the "single static Go binary" promise. Local builds
+  also stamp the real version via `-X main.version` instead of `dev`.
+- **Version coherence** — all in-repo package manifests (npm CLI + platform
+  packages, TypeScript SDK, Python SDK) and the docs now report `0.3.0`,
+  removing the prior `0.1.0`/`0.2.0`/`0.3.0` drift. Release CI now also builds
+  and publishes the typed SDKs (`@ghostchrome/sdk`, PyPI `ghostchrome`) on tag,
+  gated on `NPM_TOKEN`/`PYPI_TOKEN`.
+
 ### Fixed
+- **JSONL/SDK extract payload no longer duplicates subtrees** — the `agent`
+  JSONL protocol (and `extract --json` / MCP) serialized every interactive
+  node's full `children` subtree twice: once in `nodes` and again inside each
+  `refs` entry. `ExtractionResult` now strips `children` from `refs` on the
+  wire (the in-memory struct is untouched, so `ExtractionForRef` still works),
+  turning `refs` into a flat index. Measured ~15% smaller extract JSON
+  (~8k fewer tokens) on a rich page; the SDK's `RefEntry` type already assumed
+  this shape.
+- **MCP tool-count comment** — the package doc claimed "11 essential tools"
+  while 16 are registered; corrected to match reality.
+- **TypeScript SDK repository URL** pointed at a non-existent
+  `ghostchrome/ghostchrome`; fixed to `MakFly/ghostchrome`.
 - **MCP survives Chrome death** — the MCP server held its browser/page
   singleton forever without re-validating it: when Chrome crashed, every
   tool call failed with `context deadline exceeded` until the server was
