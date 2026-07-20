@@ -36,6 +36,13 @@ type Options struct {
 	// (engine.AntiBotPatterns). Auto-enabled when Stealth is true unless
 	// GHOSTCHROME_MCP_NO_BLOCKER=1 is set.
 	BlockTrackers bool
+	// IdleTimeout, when > 0, releases the held Chrome after this long with no
+	// tool activity. Unlike the serve daemon (which exits), the MCP server
+	// stays up and relaunches Chrome on the next tool call — bounding the RAM a
+	// forgotten-but-still-open session holds. The zero value disables reaping;
+	// cmd/mcp.go supplies a 15m default (GHOSTCHROME_IDLE_TIMEOUT overrides,
+	// =0 disables).
+	IdleTimeout time.Duration
 	// Policy restricts which domains can be navigated to, and which actions
 	// (eval, upload, clipboard) are allowed. Nil means no restrictions.
 	Policy *policy.Policy
@@ -46,13 +53,14 @@ type Options struct {
 type Server struct {
 	opts Options
 
-	mu         sync.Mutex
-	browser    *engine.Browser
-	page       *rod.Page
-	snapshot   *engine.PageSnapshot     // last in-memory snapshot (for ref resolution)
-	observer   *engine.Observer         // long-lived; feeds error/network info into snapshot
-	observerFn context.CancelFunc       // cancel attached to the observer's context
-	blocker    *engine.InterceptSession // non-nil when anti-bot blocker is active
+	mu           sync.Mutex
+	browser      *engine.Browser
+	page         *rod.Page
+	snapshot     *engine.PageSnapshot     // last in-memory snapshot (for ref resolution)
+	observer     *engine.Observer         // long-lived; feeds error/network info into snapshot
+	observerFn   context.CancelFunc       // cancel attached to the observer's context
+	blocker      *engine.InterceptSession // non-nil when anti-bot blocker is active
+	lastActivity time.Time                // updated on every ensurePageLocked; drives the idle reaper
 }
 
 // New returns a Server that lazy-initializes the browser on the first tool
@@ -77,6 +85,51 @@ func (s *Server) PrewarmAsync() {
 		defer s.mu.Unlock()
 		_, _, _ = s.ensurePageLocked()
 	}()
+}
+
+// StartIdleReaper launches a background loop that releases the held browser
+// after opts.IdleTimeout of no tool activity. The MCP server itself stays
+// alive: the next tool call relaunches Chrome via ensurePageLocked (the same
+// path as crash-recovery), so a forgotten-but-open session stops squatting
+// ~600MB of idle Chrome. No-op when IdleTimeout <= 0. The goroutine lives for
+// the process lifetime; once the browser is released, ticks are near-free
+// (browser == nil short-circuits) until the next call relaunches it.
+func (s *Server) StartIdleReaper() {
+	if s.opts.IdleTimeout <= 0 {
+		return
+	}
+	go func() {
+		// Poll at a quarter of the timeout, clamped to [5s, 1m], so the reap
+		// fires within ~timeout+interval without a hot spin loop.
+		interval := s.opts.IdleTimeout / 4
+		if interval < 5*time.Second {
+			interval = 5 * time.Second
+		}
+		if interval > time.Minute {
+			interval = time.Minute
+		}
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for range t.C {
+			s.reapIfIdle()
+		}
+	}()
+}
+
+// reapIfIdle releases the held browser when IdleTimeout has elapsed with no
+// tool activity. Split out of the ticker loop so it can be unit-tested without
+// waiting on the (>=5s) poll interval. No-op when idle reaping is disabled, no
+// browser is held, or activity is recent.
+func (s *Server) reapIfIdle() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.opts.IdleTimeout <= 0 || s.browser == nil || s.lastActivity.IsZero() {
+		return
+	}
+	if time.Since(s.lastActivity) >= s.opts.IdleTimeout {
+		fmt.Fprintf(os.Stderr, "[ghostchrome mcp] idle for %s — releasing chrome (relaunches on next call)\n", s.opts.IdleTimeout)
+		s.closeLocked()
+	}
 }
 
 // ExtraToolRegistrars lets optional, build-tagged recipes (compiled with
@@ -137,6 +190,9 @@ const alivenessProbeTimeout = 2 * time.Second
 // browser is launched instead of failing every call forever. Caller MUST
 // hold s.mu (or be inside a tool handler that does so via withPage).
 func (s *Server) ensurePageLocked() (*engine.Browser, *rod.Page, error) {
+	// Refresh the idle clock on every call (cached-page reuse, cold launch, and
+	// crash-relaunch alike) so the reaper only fires after real inactivity.
+	s.lastActivity = time.Now()
 	if s.page != nil && s.browser != nil {
 		if s.browser.Alive(alivenessProbeTimeout) {
 			return s.browser, s.page, nil
