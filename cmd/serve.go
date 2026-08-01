@@ -21,6 +21,19 @@ import (
 
 var flagPort int
 
+const (
+	// How long a single Chrome liveness probe may take before it counts as a
+	// failure, and how many consecutive failures mean Chrome is really gone.
+	//
+	// Both matter on a loaded host. A busy Chrome answers /json/version late,
+	// not never: with the previous 1.5s single-strike check, a scraper on a
+	// 2-vCPU VM tore down its browser thousands of times without a single real
+	// crash behind it. 5s × 3 strikes on a 3s tick means a genuine death is
+	// still reported within ~10-15s, while a rendering hiccup costs nothing.
+	serveProbeTimeout  = 5 * time.Second
+	serveHealthStrikes = 3
+)
+
 var serveCmd = &cobra.Command{
 	Use:   "serve",
 	Short: "Launch a persistent Chrome and print the WebSocket debugger URL",
@@ -97,6 +110,7 @@ Then in another terminal:
 		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 		ticker := time.NewTicker(3 * time.Second)
 		defer ticker.Stop()
+		missed := 0 // consecutive failed health probes
 		for {
 			select {
 			case <-sig:
@@ -104,11 +118,35 @@ Then in another terminal:
 				return
 			case <-ticker.C:
 				// If Chrome is gone, exit instead of lingering with no browser.
+				//
+				// But "one probe timed out" is not "Chrome is gone". This probe
+				// used to be single-strike with a 1.5s deadline, and on a busy
+				// or CPU-throttled host that killed healthy browsers: Chrome
+				// rendering a heavy page simply answers /json/version late.
+				// Observed on a 2-vCPU VM running a scraper — 3 064 teardowns
+				// across the run history, none of them a real crash (no
+				// segfault, no OOM in the kernel log). Each one aborted whatever
+				// the client had in flight.
+				//
+				// So: a longer deadline, and a browser is only declared dead
+				// after serveHealthStrikes consecutive failures — the same
+				// reasoning as a container healthcheck's `retries`. A genuine
+				// death still gets noticed, just ~30s later instead of 3s.
 				if port > 0 {
-					if _, err := engine.DiscoverCDP([]int{port}, 1500*time.Millisecond); err != nil {
-						fmt.Fprintln(os.Stderr, "chrome no longer reachable — serve exiting")
+					if _, err := engine.DiscoverCDP([]int{port}, serveProbeTimeout); err != nil {
+						missed++
+						if missed < serveHealthStrikes {
+							fmt.Fprintf(os.Stderr,
+								"chrome did not answer the health probe (%d/%d): %v\n",
+								missed, serveHealthStrikes, err)
+							continue
+						}
+						fmt.Fprintf(os.Stderr,
+							"chrome no longer reachable after %d consecutive probes — serve exiting\n",
+							missed)
 						return
 					}
+					missed = 0
 				}
 				// Idle shutdown: the CDP target set (open tabs + their URLs)
 				// changes whenever an agent navigates or opens/closes a tab. If
