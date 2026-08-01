@@ -2,7 +2,6 @@ package mcp
 
 import (
 	"errors"
-	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -147,7 +146,7 @@ func runMCPFunctionalCase(t *testing.T, name string) {
 			t.Fatalf("withPage result=%v called=%v err=%v", result, called, err)
 		}
 	default:
-		t.Fatal(fmt.Sprintf("unknown MCP case %q", name))
+		t.Fatalf("unknown MCP case %q", name)
 	}
 }
 
