@@ -14,6 +14,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -42,7 +44,11 @@ func main() {
 	}
 
 	fmt.Fprintln(os.Stderr, "[ghostchrome-mcp] ready on stdio")
-	if err := mcpsrv.ServeStdio(s.Build("ghostchrome", version)); err != nil {
+	// SIGTERM/SIGINT surface as context.Canceled from ServeStdio: that is a
+	// normal shutdown, not an error. Close Chrome gracefully in both cases —
+	// os.Exit would skip the defer and leave the kill to leakless.
+	if err := mcpsrv.ServeStdio(s.Build("ghostchrome", version)); err != nil && !errors.Is(err, context.Canceled) {
+		s.Close()
 		fmt.Fprintf(os.Stderr, "mcp server: %v\n", err)
 		os.Exit(1)
 	}

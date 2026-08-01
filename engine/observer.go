@@ -172,13 +172,18 @@ func (o *Observer) Start(ctx context.Context) error {
 	go o.listenPage(ctx)
 
 	// Closer goroutine: wait for all listeners then close the events channel.
-	go func() {
-		o.wg.Wait()
-		o.stopOnce.Do(func() { close(o.events) })
-		close(o.stopped)
-	}()
+	go o.waitAndClose()
 
 	return nil
+}
+
+func (o *Observer) waitAndClose() {
+	o.wg.Wait()
+	o.mu.Lock()
+	o.closing = true
+	o.stopOnce.Do(func() { close(o.events) })
+	o.mu.Unlock()
+	close(o.stopped)
 }
 
 // Events returns the read-only event channel.
@@ -249,19 +254,17 @@ func (o *Observer) WriteNDJSON(ctx context.Context, w io.Writer) error {
 // Returns false if the event was dropped (channel full).
 func (o *Observer) emit(evt ObserverEvent) bool {
 	o.mu.Lock()
+	defer o.mu.Unlock()
 	if o.closing {
-		o.mu.Unlock()
 		return false
 	}
 	// Kind filter
 	if !o.acceptKind(evt.Kind) {
-		o.mu.Unlock()
 		return true
 	}
 	// MaxEvents enforcement
 	if o.opts.MaxEvents > 0 && o.stats.Total >= o.opts.MaxEvents {
 		o.stats.Dropped++
-		o.mu.Unlock()
 		// Signal stop by cancelling context
 		if o.cancel != nil {
 			o.cancel()
@@ -282,15 +285,12 @@ func (o *Observer) emit(evt ObserverEvent) bool {
 		o.stats.Page++
 	}
 	o.stats.Total++
-	o.mu.Unlock()
 
 	select {
 	case o.events <- evt:
 		return true
 	default:
-		o.mu.Lock()
 		o.stats.Dropped++
-		o.mu.Unlock()
 		return false
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -336,18 +337,23 @@ func newIsolatedPage(t *testing.T) (*Browser, *rod.Page) {
 func newConnectedBrowser(t *testing.T) (string, *rod.Browser) {
 	t.Helper()
 
-	controlURL, err := launcher.New().Headless(true).NoSandbox(needsNoSandbox()).Launch()
+	l := launcher.New().Headless(true).NoSandbox(needsNoSandbox()).
+		UserDataDir(filepath.Join(t.TempDir(), "chrome-profile"))
+	controlURL, err := l.Launch()
 	if err != nil {
+		CleanupFailedLauncher(l, true)
 		t.Fatalf("launch connected browser: %v", err)
 	}
 
 	raw := rod.New().ControlURL(controlURL).Timeout(10 * time.Second)
+	t.Cleanup(func() {
+		_ = raw.Close()
+		l.Kill()
+		l.Cleanup()
+	})
 	if err := raw.Connect(); err != nil {
 		t.Fatalf("connect raw browser: %v", err)
 	}
-	t.Cleanup(func() {
-		_ = raw.Close()
-	})
 
 	return controlURL, raw
 }

@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -17,15 +18,20 @@ func TestStealthToStringHidesGetters(t *testing.T) {
 	if testing.Short() {
 		t.Skip("requires Chrome")
 	}
-	l := launcher.New().Headless(true).Leakless(false)
+	l := launcher.New().Headless(true).Leakless(false).
+		UserDataDir(filepath.Join(t.TempDir(), "chrome-profile"))
 	if needsNoSandbox() {
 		l = l.NoSandbox(true)
 	}
 	controlURL, err := l.Launch()
 	if err != nil {
+		CleanupFailedLauncher(l, true)
 		t.Skipf("launch chrome: %v (skipping: chrome not available)", err)
 	}
-	defer l.Kill()
+	defer func() {
+		l.Kill()
+		l.Cleanup()
+	}()
 
 	b := rod.New().ControlURL(controlURL)
 	if err := b.Connect(); err != nil {

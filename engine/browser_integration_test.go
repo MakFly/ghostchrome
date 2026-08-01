@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -27,15 +28,20 @@ func TestBrowserPersistsActiveTabAndSnapshots(t *testing.T) {
 	}))
 	defer server.Close()
 
-	l := launcher.New().Headless(true).Leakless(false)
+	l := launcher.New().Headless(true).Leakless(false).
+		UserDataDir(filepath.Join(t.TempDir(), "chrome-profile"))
 	if needsNoSandbox() {
 		l = l.NoSandbox(true)
 	}
 	controlURL, err := l.Launch()
 	if err != nil {
+		CleanupFailedLauncher(l, true)
 		t.Fatalf("launch browser: %v", err)
 	}
-	defer l.Kill()
+	defer func() {
+		l.Kill()
+		l.Cleanup()
+	}()
 
 	statePath, err := sessionStatePath(controlURL)
 	if err != nil {
@@ -203,23 +209,27 @@ func TestHandleNextDialogWaitsForAndHandlesDialogs(t *testing.T) {
 func testBrowser(t *testing.T) (*Browser, func()) {
 	t.Helper()
 
-	l := launcher.New().Headless(true).Leakless(false)
+	l := launcher.New().Headless(true).Leakless(false).
+		UserDataDir(filepath.Join(t.TempDir(), "chrome-profile"))
 	if needsNoSandbox() {
 		l = l.NoSandbox(true)
 	}
 	controlURL, err := l.Launch()
 	if err != nil {
+		CleanupFailedLauncher(l, true)
 		t.Fatalf("launch browser: %v", err)
 	}
 
 	b, err := NewBrowser(controlURL, true, 10)
 	if err != nil {
 		l.Kill()
+		l.Cleanup()
 		t.Fatalf("new browser: %v", err)
 	}
 
 	return b, func() {
 		b.Close()
 		l.Kill()
+		l.Cleanup()
 	}
 }

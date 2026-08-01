@@ -3,6 +3,7 @@ package cmd
 import (
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 
 	"github.com/MakFly/ghostchrome/engine"
@@ -24,12 +25,17 @@ func TestSnapshotPageBypassesCacheWhenSSRRequested(t *testing.T) {
 	}))
 	defer server.Close()
 
-	l := launcher.New().Headless(true).Leakless(false).NoSandbox(true)
+	l := launcher.New().Headless(true).Leakless(false).NoSandbox(true).
+		UserDataDir(filepath.Join(t.TempDir(), "chrome-profile"))
 	controlURL, err := l.Launch()
 	if err != nil {
+		engine.CleanupFailedLauncher(l, true)
 		t.Fatalf("launch browser: %v", err)
 	}
-	defer l.Kill()
+	defer func() {
+		l.Kill()
+		l.Cleanup()
+	}()
 
 	b, err := engine.NewBrowser(controlURL, true, 10)
 	if err != nil {

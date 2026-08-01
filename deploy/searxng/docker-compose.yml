@@ -14,7 +14,6 @@ services:
     # (https://hub.docker.com/r/searxng/searxng/tags) — cf. pré-mortem PRD.
     image: searxng/searxng:latest
     container_name: searxng
-    restart: unless-stopped
     ports:
       # Host port overridable to dodge conflicts (default 8080). Match it with
       # `websearch --searxng-url http://localhost:<port>` if you change it.

@@ -35,6 +35,48 @@ func TestObserverFilters_NetTypes(t *testing.T) {
 	}
 }
 
+func TestObserverConcurrentEmitAndStop(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	o := &Observer{
+		opts:    ObserverOpts{BufferSize: 1},
+		events:  make(chan ObserverEvent, 1),
+		pending: make(map[proto.NetworkRequestID]*pendingNet),
+		cancel:  cancel,
+		stopped: make(chan struct{}),
+	}
+	o.wg.Add(1)
+	go o.waitAndClose()
+
+	var emitters sync.WaitGroup
+	emitters.Add(32)
+	for range 32 {
+		go func() {
+			defer emitters.Done()
+			for range 100 {
+				o.emit(ObserverEvent{TS: time.Now().UnixMilli(), Kind: KindPage})
+			}
+		}()
+	}
+
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		_ = o.Stop()
+	}()
+	cancel()
+	o.wg.Done()
+	emitters.Wait()
+	select {
+	case <-stopped:
+	case <-ctx.Done():
+		select {
+		case <-stopped:
+		case <-time.After(time.Second):
+			t.Fatal("Observer.Stop did not return")
+		}
+	}
+}
+
 func TestObserverFilters_NetURLRegex(t *testing.T) {
 	re := regexp.MustCompile(`api\.example\.com`)
 	filters := ObserverFilters{NetURLRegex: re}

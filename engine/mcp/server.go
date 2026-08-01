@@ -9,6 +9,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -61,6 +62,10 @@ type Server struct {
 	observerFn   context.CancelFunc       // cancel attached to the observer's context
 	blocker      *engine.InterceptSession // non-nil when anti-bot blocker is active
 	lastActivity time.Time                // updated on every ensurePageLocked; drives the idle reaper
+	closed       bool                     // terminal state set only by Server.Close
+	done         chan struct{}            // stops background reapers after terminal close
+	closeDone    chan struct{}            // closes after terminal teardown and prewarm drain
+	prewarmWG    sync.WaitGroup           // drains any prewarm admitted before terminal close
 }
 
 // New returns a Server that lazy-initializes the browser on the first tool
@@ -72,17 +77,32 @@ func New(opts Options) *Server {
 	if opts.Policy != nil {
 		engine.ActivePolicy = opts.Policy
 	}
-	return &Server{opts: opts}
+	return &Server{opts: opts, done: make(chan struct{}), closeDone: make(chan struct{})}
 }
+
+var errServerClosed = errors.New("mcp server is closed")
 
 // PrewarmAsync spawns Chrome in the background so the first user-facing tool
 // call doesn't pay the ~1.3s cold-start. Safe to call from main(): if the
 // browser is already up it's a no-op; if init fails, the next withPage()
 // will surface the error normally.
 func (s *Server) PrewarmAsync() {
+	s.mu.Lock()
+	if s.closed {
+		done := s.closeDone
+		s.mu.Unlock()
+		<-done
+		return
+	}
+	s.prewarmWG.Add(1)
+	s.mu.Unlock()
 	go func() {
+		defer s.prewarmWG.Done()
 		s.mu.Lock()
 		defer s.mu.Unlock()
+		if s.closed {
+			return
+		}
 		_, _, _ = s.ensurePageLocked()
 	}()
 }
@@ -110,8 +130,13 @@ func (s *Server) StartIdleReaper() {
 		}
 		t := time.NewTicker(interval)
 		defer t.Stop()
-		for range t.C {
-			s.reapIfIdle()
+		for {
+			select {
+			case <-t.C:
+				s.reapIfIdle()
+			case <-s.done:
+				return
+			}
 		}
 	}()
 }
@@ -123,7 +148,7 @@ func (s *Server) StartIdleReaper() {
 func (s *Server) reapIfIdle() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.opts.IdleTimeout <= 0 || s.browser == nil || s.lastActivity.IsZero() {
+	if s.closed || s.opts.IdleTimeout <= 0 || s.browser == nil || s.lastActivity.IsZero() {
 		return
 	}
 	if time.Since(s.lastActivity) >= s.opts.IdleTimeout {
@@ -152,8 +177,18 @@ func (s *Server) Build(name, version string) *mcpsrv.MCPServer {
 // Close releases the underlying browser. Safe to call multiple times.
 func (s *Server) Close() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	if s.closed {
+		done := s.closeDone
+		s.mu.Unlock()
+		<-done
+		return
+	}
+	s.closed = true
+	close(s.done)
 	s.closeLocked()
+	s.mu.Unlock()
+	s.prewarmWG.Wait()
+	close(s.closeDone)
 }
 
 // closeLocked tears down the browser and every piece of per-browser state
@@ -190,9 +225,13 @@ const alivenessProbeTimeout = 2 * time.Second
 // browser is launched instead of failing every call forever. Caller MUST
 // hold s.mu (or be inside a tool handler that does so via withPage).
 func (s *Server) ensurePageLocked() (*engine.Browser, *rod.Page, error) {
+	if s.closed {
+		return nil, nil, errServerClosed
+	}
 	// Refresh the idle clock on every call (cached-page reuse, cold launch, and
 	// crash-relaunch alike) so the reaper only fires after real inactivity.
 	s.lastActivity = time.Now()
+	defer func() { s.lastActivity = time.Now() }()
 	if s.page != nil && s.browser != nil {
 		if s.browser.Alive(alivenessProbeTimeout) {
 			return s.browser, s.page, nil

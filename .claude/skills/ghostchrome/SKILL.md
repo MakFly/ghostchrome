@@ -22,7 +22,17 @@ Install (if not already on PATH): `bun install -g @ghostchrome/cli`, or
 | Scrape a known site (autoscout24, leboncoin, linkedin) | The recipe — one shell call, structured JSON out |
 | Tight pipelined flow, one subprocess, no per-call spawn | The `agent` JSONL loop |
 | Need to keep one Chrome alive across many actions | `-s <name>` (CLI) or the `agent` loop |
+| Client can't run shell commands, or Chrome must die with the client process | The MCP server (`ghostchrome mcp`) |
 | Just check a page exists / read static HTML | NOT ghostchrome — use `WebFetch` |
+
+**CLI vs MCP:** in a shell-capable dev session (Claude Code with Bash), prefer
+the CLI — full command surface (preview, perf, capture, batch, recipes,
+sessions), shell composition (`jq`, pipes, scripts), and a persistent daemon
+that keeps state across calls. Reach for MCP only when the client speaks MCP
+tools but not the shell (Claude Desktop, Cursor chat), or when you want a
+Chrome whose lifetime is strictly bound to the client: `ghostchrome mcp`
+spawns its own Chrome, never touches the CLI daemon, and that Chrome dies
+with the server process (leakless-supervised — even on SIGKILL).
 
 ## CLI with a managed session (`-s`, simplest for agents)
 
@@ -181,6 +191,13 @@ drop-in alternative to `@playwright/mcp`). Register it with Claude Code:
 claude mcp add ghostchrome -- ghostchrome mcp            # spawns its own Chrome
 claude mcp add ghostchrome -- ghostchrome mcp --connect=auto   # attach to a running one
 ```
+
+The 16 tools are a subset of the CLI surface (snapshot, navigate, click, type,
+select, press, hover, drag, fill_form, upload, tabs, wait_for, eval,
+screenshot, back/forward) — no recipes, no perf/capture/batch. Lifecycle: one
+Chrome per MCP server, isolated from the CLI daemon, closed when the client
+disconnects (stdin EOF and SIGTERM close it gracefully; a hard kill is caught
+by the leakless supervisor). See "CLI vs MCP" above for when to pick which.
 
 ## Where to read more
 

@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -38,7 +39,7 @@ Then in another terminal:
 	Run: func(cmd *cobra.Command, args []string) {
 		skipImplicitDaemon = true
 		opts := buildBrowserOpts()
-		wsURL, err := engine.NewLauncher(engine.LauncherOpts{
+		launcherOpts := engine.LauncherOpts{
 			Headless:       flagHeadless,
 			Invisible:      flagInvisible,
 			RemotePort:     flagPort,
@@ -48,14 +49,16 @@ Then in another terminal:
 			Extensions:     opts.Extensions,
 			ExecutablePath: opts.ExecutablePath,
 			Args:           opts.LaunchArgs,
-		}).Launch()
+		}
+		wsURL, cleanup, err := launchServeChrome(launcherOpts)
 		if err != nil {
 			exitErr("launch chrome", err)
 		}
+		defer cleanup()
 
 		// Apply stealth to a warm-up page
 		if flagStealth {
-			if err := warmUpStealth(wsURL); err != nil {
+			if err := warmUpServeChrome(wsURL, cleanup); err != nil {
 				exitErr("stealth", err)
 			}
 		}
@@ -124,6 +127,34 @@ Then in another terminal:
 			}
 		}
 	},
+}
+
+func launchServeChrome(opts engine.LauncherOpts) (string, func(), error) {
+	l := engine.NewLauncher(opts)
+	removeProfile := engine.LauncherOwnsRodTempProfile(l, opts.UserDataDir, opts.Args)
+	wsURL, err := l.Launch()
+	if err != nil {
+		engine.CleanupFailedLauncher(l, removeProfile)
+		return "", nil, err
+	}
+
+	var once sync.Once
+	cleanup := func() {
+		once.Do(func() {
+			engine.CleanupLauncher(l, removeProfile)
+		})
+	}
+	return wsURL, cleanup, nil
+}
+
+var serveStealthWarmup = warmUpStealth
+
+func warmUpServeChrome(wsURL string, cleanup func()) error {
+	if err := serveStealthWarmup(wsURL); err != nil {
+		cleanup()
+		return err
+	}
+	return nil
 }
 
 // serveIdleTimeout parses GHOSTCHROME_IDLE_TIMEOUT. Empty/invalid/<=0 disables
