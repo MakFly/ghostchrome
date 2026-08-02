@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -141,15 +142,29 @@ func TestDefaultPageProfileAppliesHeadersLanguageAndViewport(t *testing.T) {
 		t.Skip("requires Chrome")
 	}
 	var (
-		acceptLanguage  string
-		upgradeInsecure string
-		dntHeader       string
+		mu       sync.Mutex
+		navHdrs  http.Header
+		navSeen  bool
+		document = "/"
 	)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		acceptLanguage = r.Header.Get("Accept-Language")
-		upgradeInsecure = r.Header.Get("Upgrade-Insecure-Requests")
-		dntHeader = r.Header.Get("Dnt")
+		// Only the navigation request is recorded. Chrome asks for
+		// /favicon.ico on its own, and a subresource carries no
+		// Upgrade-Insecure-Requests — so whenever that second request landed
+		// before the assertions ran, it overwrote the very header this test
+		// exists to check and the run failed with `got ""`. Which of the two
+		// arrived first was a race, which is why it failed roughly one run in
+		// two rather than always.
+		if r.URL.Path != document {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		mu.Lock()
+		if !navSeen {
+			navHdrs, navSeen = r.Header.Clone(), true
+		}
+		mu.Unlock()
 		fmt.Fprint(w, "<!doctype html><title>profile</title><h1>profile</h1>")
 	}))
 	defer server.Close()
@@ -158,6 +173,19 @@ func TestDefaultPageProfileAppliesHeadersLanguageAndViewport(t *testing.T) {
 	if _, err := Navigate(page, server.URL, "load"); err != nil {
 		t.Fatalf("navigate: %v", err)
 	}
+
+	// The handler runs on the server's goroutine: -race is right to object to
+	// reading these without the lock, whatever the timing happens to be.
+	mu.Lock()
+	seen, hdrs := navSeen, navHdrs
+	mu.Unlock()
+
+	if !seen {
+		t.Fatal("le serveur n'a jamais vu la requête de navigation")
+	}
+	acceptLanguage := hdrs.Get("Accept-Language")
+	upgradeInsecure := hdrs.Get("Upgrade-Insecure-Requests")
+	dntHeader := hdrs.Get("Dnt")
 
 	if !strings.Contains(acceptLanguage, "fr-FR") {
 		t.Fatalf("expected Accept-Language to contain fr-FR, got %q", acceptLanguage)
