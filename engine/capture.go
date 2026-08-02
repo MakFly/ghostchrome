@@ -28,9 +28,9 @@ type CaptureSpec struct {
 	// IncludeBody, when true, fetches the response body via
 	// Network.getResponseBody for every matching entry.
 	IncludeBody bool
-// ExcludeStatic drops script, stylesheet, font, image, and media requests from
-// matching entries. It is intended for Playwright CLI-compatible network
-// output; raw capture keeps static resources by default.
+	// ExcludeStatic drops script, stylesheet, font, image, and media requests from
+	// matching entries. It is intended for Playwright CLI-compatible network
+	// output; raw capture keeps static resources by default.
 	ExcludeStatic bool
 	// OutputPath, if set, streams each entry as it is captured (NDJSON).
 	OutputPath string

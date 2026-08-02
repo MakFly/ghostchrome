@@ -15,16 +15,16 @@ import (
 )
 
 type ScreenRecorder struct {
-	page     *rod.Page
-	outDir   string
-	quality  int
-	maxW     int
-	maxH     int
-	nth      int
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
-	count    atomic.Int64
-	startAt  time.Time
+	page    *rod.Page
+	outDir  string
+	quality int
+	maxW    int
+	maxH    int
+	nth     int
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup
+	count   atomic.Int64
+	startAt time.Time
 }
 
 type ScreenRecorderOpts struct {

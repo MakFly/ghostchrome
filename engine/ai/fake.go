@@ -46,7 +46,7 @@ func (p *FakeProvider) Step(_ context.Context, history []Message, tools []ToolSp
 // each op. Use to drive Run end-to-end without a real browser.
 type FakeRunner struct {
 	URL     string
-	Results map[string]any                       // op → result
+	Results map[string]any                        // op → result
 	OnOp    func(op string, args json.RawMessage) // optional spy
 }
 

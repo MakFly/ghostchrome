@@ -25,14 +25,18 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
-      - uses: golangci/golangci-lint-action@v6
+      - uses: golangci/golangci-lint-action@v9
         with:
-          # Build golangci-lint from source with the runner's Go (1.26.x) so its
-          # build-Go isn't older than go.mod's target (prebuilt binaries lag and
-          # are rejected: "go version used to build golangci-lint is lower").
-          # Pinned to the last v1 release — .golangci.yml is v1-format config.
-          version: v1.64.8
-          install-mode: goinstall
+          # v2, and the prebuilt binary again. The old v1.64.8 pin existed
+          # because .golangci.yml was v1-format; it also had to be built from
+          # source, since v1's prebuilt binaries were built with a Go older
+          # than go.mod's target and refused to run. The v2 releases track a
+          # current Go, so `install-mode: goinstall` and its ~2 min of build
+          # are no longer the price of linting.
+          #
+          # Same version as the local toolchain on purpose: a linter that only
+          # exists in CI is a linter nobody runs before pushing.
+          version: v2.12.2
 
   integration:
     runs-on: ubuntu-latest

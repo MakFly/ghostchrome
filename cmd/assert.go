@@ -39,10 +39,10 @@ Chain in shell:
 }
 
 var (
-	flagAssertRegex   bool
-	flagAssertMin     int
-	flagAssertMax     int
-	flagAssertEquals  int
+	flagAssertRegex  bool
+	flagAssertMin    int
+	flagAssertMax    int
+	flagAssertEquals int
 )
 
 var assertTextCmd = &cobra.Command{

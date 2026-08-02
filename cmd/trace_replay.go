@@ -30,8 +30,8 @@ Examples:
 			exitErr("trace-replay", err)
 		}
 		type replayResult struct {
-			File    string             `json:"file"`
-			Count   int                `json:"count"`
+			File    string              `json:"file"`
+			Count   int                 `json:"count"`
 			Entries []engine.TraceEntry `json:"entries"`
 		}
 		res := replayResult{

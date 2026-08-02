@@ -36,10 +36,10 @@ type ToolCallReq struct {
 
 // Step is the LLM's decision for one iteration.
 type Step struct {
-	Text        string         // assistant prose (kept for trace)
-	ToolCalls   []ToolCallReq  // 0+ tool calls to execute (often 1)
-	StopReason  string         // "end_turn" | "tool_use" | "max_tokens" | …
-	FinalAnswer string         // populated when the model emits the `done` tool
+	Text        string        // assistant prose (kept for trace)
+	ToolCalls   []ToolCallReq // 0+ tool calls to execute (often 1)
+	StopReason  string        // "end_turn" | "tool_use" | "max_tokens" | …
+	FinalAnswer string        // populated when the model emits the `done` tool
 }
 
 // Provider is the LLM backend abstraction. Implementations are stateless;
@@ -66,21 +66,21 @@ type Runner interface {
 // LoopOpts configures one Run call.
 type LoopOpts struct {
 	Goal     string
-	MaxSteps int     // hard cap (default 15)
-	Verbose  bool    // emit one stderr trace line per tool call
+	MaxSteps int  // hard cap (default 15)
+	Verbose  bool // emit one stderr trace line per tool call
 	OnStep   func(StepRecord)
 }
 
 // StepRecord is appended to Result.Steps for each iteration. Compact by
 // design — never embed raw DOM/HTML payloads here.
 type StepRecord struct {
-	Index       int                `json:"index"`
-	Op          string             `json:"op,omitempty"`
-	Args        json.RawMessage    `json:"args,omitempty"`
-	OK          bool               `json:"ok"`
-	Error       string             `json:"error,omitempty"`
+	Index       int                 `json:"index"`
+	Op          string              `json:"op,omitempty"`
+	Args        json.RawMessage     `json:"args,omitempty"`
+	OK          bool                `json:"ok"`
+	Error       string              `json:"error,omitempty"`
 	Observation *engine.Observation `json:"observation,omitempty"`
-	Text        string             `json:"text,omitempty"` // assistant prose for this step
+	Text        string              `json:"text,omitempty"` // assistant prose for this step
 }
 
 // Result is the JSON envelope emitted by `ghostchrome ai`.

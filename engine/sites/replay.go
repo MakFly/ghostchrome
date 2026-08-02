@@ -26,35 +26,35 @@ type ReplayInput struct {
 // optional decoded top-level array stats so the LLM can decide whether
 // the params it just sent yielded the expected list.
 type ReplayResult struct {
-	Status        int               `json:"status"`
-	URL           string            `json:"url"`
-	Headers       map[string]string `json:"headers,omitempty"`
-	MimeType      string            `json:"mime_type,omitempty"`
-	Body          string            `json:"body,omitempty"`
-	BodyBytes     int               `json:"body_bytes"`
-	DurationMs    int64             `json:"duration_ms"`
-	ItemCount     int               `json:"item_count,omitempty"`
-	ItemPath      string            `json:"item_path,omitempty"`
-	SampleItem    string            `json:"sample_item,omitempty"`
-	Truncated     bool              `json:"truncated,omitempty"`
+	Status     int               `json:"status"`
+	URL        string            `json:"url"`
+	Headers    map[string]string `json:"headers,omitempty"`
+	MimeType   string            `json:"mime_type,omitempty"`
+	Body       string            `json:"body,omitempty"`
+	BodyBytes  int               `json:"body_bytes"`
+	DurationMs int64             `json:"duration_ms"`
+	ItemCount  int               `json:"item_count,omitempty"`
+	ItemPath   string            `json:"item_path,omitempty"`
+	SampleItem string            `json:"sample_item,omitempty"`
+	Truncated  bool              `json:"truncated,omitempty"`
 }
 
 // noiseHeaders are removed from the replayed request because they are
 // either set automatically by Go's http client (Host, Content-Length) or
 // browser-specific noise that would fingerprint us as a bot.
 var noiseHeaders = map[string]bool{
-	":method":        true,
-	":path":          true,
-	":authority":     true,
-	":scheme":        true,
-	"host":           true,
-	"content-length": true,
-	"sec-ch-ua-platform-version": true,
-	"sec-ch-ua-arch": true,
-	"sec-ch-ua-bitness":         true,
-	"sec-ch-ua-full-version":    true,
+	":method":                     true,
+	":path":                       true,
+	":authority":                  true,
+	":scheme":                     true,
+	"host":                        true,
+	"content-length":              true,
+	"sec-ch-ua-platform-version":  true,
+	"sec-ch-ua-arch":              true,
+	"sec-ch-ua-bitness":           true,
+	"sec-ch-ua-full-version":      true,
 	"sec-ch-ua-full-version-list": true,
-	"sec-ch-ua-model": true,
+	"sec-ch-ua-model":             true,
 }
 
 // HTTPClient is package-level for test injection.

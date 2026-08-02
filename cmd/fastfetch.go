@@ -68,18 +68,18 @@ func init() {
 
 // fastfetchEnvelope is the default JSON output shape — ergonomic for jq pipes.
 type fastfetchEnvelope struct {
-	URL          string              `json:"url"`
-	Status       int                 `json:"status"`
-	ElapsedMs    int64               `json:"elapsed_ms"`
-	Mode         string              `json:"mode"` // "http" or "browser"
-	Blocked      bool                `json:"blocked,omitempty"`
-	Reason       string              `json:"reason,omitempty"`
-	HTMLSize     int                 `json:"html_size"`
-	HasNextData  bool                `json:"has_next_data"`
-	NextData     json.RawMessage     `json:"next_data,omitempty"`
-	SSRSources   []string            `json:"ssr_sources,omitempty"`
-	SSRPayloads  []engine.SSRPayload `json:"ssr_payloads,omitempty"`
-	JSONLDTypes  []string            `json:"json_ld_types,omitempty"`
+	URL         string              `json:"url"`
+	Status      int                 `json:"status"`
+	ElapsedMs   int64               `json:"elapsed_ms"`
+	Mode        string              `json:"mode"` // "http" or "browser"
+	Blocked     bool                `json:"blocked,omitempty"`
+	Reason      string              `json:"reason,omitempty"`
+	HTMLSize    int                 `json:"html_size"`
+	HasNextData bool                `json:"has_next_data"`
+	NextData    json.RawMessage     `json:"next_data,omitempty"`
+	SSRSources  []string            `json:"ssr_sources,omitempty"`
+	SSRPayloads []engine.SSRPayload `json:"ssr_payloads,omitempty"`
+	JSONLDTypes []string            `json:"json_ld_types,omitempty"`
 }
 
 func runFastfetch(_ *cobra.Command, args []string) {

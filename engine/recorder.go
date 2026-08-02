@@ -31,19 +31,19 @@ type RecorderOpts struct {
 //
 // Call Start() once then either Wait() (blocks until done) or Stop().
 type Recorder struct {
-	page    *rod.Page
-	opts    RecorderOpts
-	w       io.Writer
-	mu      sync.Mutex
-	enc     *json.Encoder
+	page *rod.Page
+	opts RecorderOpts
+	w    io.Writer
+	mu   sync.Mutex
+	enc  *json.Encoder
 
 	stopCDP   func()
 	done      chan struct{}
 	closeOnce sync.Once
 
 	// typing coalescer state
-	typeTimers  map[string]*time.Timer  // key: stable selector
-	typePending map[string]string       // key: stable selector → accumulated text
+	typeTimers  map[string]*time.Timer // key: stable selector
+	typePending map[string]string      // key: stable selector → accumulated text
 	typeMu      sync.Mutex
 
 	lastURL string
@@ -244,8 +244,8 @@ func (r *Recorder) handleBinding(payload string) {
 	case "click":
 		r.flushTypingFor("") // flush any pending type before click
 		r.emit(RecorderOp{Op: "click", Args: map[string]any{
-			"target":  ev.Sel,
-			"byText":  ev.Txt,
+			"target": ev.Sel,
+			"byText": ev.Txt,
 		}})
 
 	case "input":
