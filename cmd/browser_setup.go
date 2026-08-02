@@ -171,6 +171,10 @@ func openPage() (*engine.Browser, *rod.Page) {
 	if err != nil {
 		exitErr("browser", err)
 	}
+	// Callers still `defer b.Close()` for the success path; this covers the
+	// exit paths, which skip defers. Close is closeOnce-guarded, so whichever
+	// fires second is a no-op.
+	registerCleanup(b.Close)
 
 	page, err := b.Page()
 	// A freshly spawned session Chrome can still be churning targets when we

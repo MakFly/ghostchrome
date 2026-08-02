@@ -15,7 +15,7 @@ import (
 // this so CI/agents see a consistent format.
 func assertFail(name string, details string) {
 	fmt.Fprintf(os.Stderr, "FAIL [assert:%s] %s\n", name, details)
-	os.Exit(1)
+	exitNow(1)
 }
 
 func assertPass(name string, details string) {

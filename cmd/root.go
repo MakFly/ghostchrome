@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/MakFly/ghostchrome/engine"
@@ -335,7 +336,47 @@ func Execute() error {
 	return rootCmd.Execute()
 }
 
+// Cleanups a command registered before it may exit. `os.Exit` does not run
+// deferred functions, so a command that fails through `exitErr` never reached
+// its own `defer b.Close()`. When the browser was attached with
+// `--connect=auto`, the page that Close would have shut is a live renderer in a
+// Chrome that outlives the process: every failed invocation leaves one behind,
+// holding ~90 MiB until the browser is recycled. Draining the stack here makes
+// the failure path release what the success path already released.
+var (
+	cleanupMu sync.Mutex
+	cleanups  []func()
+)
+
+func registerCleanup(fn func()) {
+	cleanupMu.Lock()
+	cleanups = append(cleanups, fn)
+	cleanupMu.Unlock()
+}
+
+// runCleanups drains the stack in reverse registration order. It is safe to
+// call twice — the second call finds it empty — so a command keeping its own
+// `defer` costs nothing.
+func runCleanups() {
+	cleanupMu.Lock()
+	pending := cleanups
+	cleanups = nil
+	cleanupMu.Unlock()
+
+	for i := len(pending) - 1; i >= 0; i-- {
+		pending[i]()
+	}
+}
+
+// exitNow is `os.Exit` for the paths that can be reached with a page open: it
+// releases the page first. Use it instead of a bare `os.Exit` anywhere after
+// openPage.
+func exitNow(code int) {
+	runCleanups()
+	os.Exit(code)
+}
+
 func exitErr(msg string, err error) {
 	fmt.Fprintf(os.Stderr, "error: %s: %v\n", msg, err)
-	os.Exit(1)
+	exitNow(1)
 }

@@ -75,7 +75,7 @@ Examples:
 		output(metrics, text)
 
 		if len(misses) > 0 {
-			os.Exit(1)
+			exitNow(1)
 		}
 	},
 }

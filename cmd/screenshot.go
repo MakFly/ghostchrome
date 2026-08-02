@@ -186,12 +186,12 @@ func runScreenshotDiff(currentPath string, current []byte) *engine.ImageDiffResu
 	}
 	if res.Skipped {
 		fmt.Fprintf(os.Stderr, "FAIL [screenshot] %s\n", res.SkipReason)
-		os.Exit(1)
+		exitNow(1)
 	}
 	if res.DiffRatio > flagScreenshotThreshold {
 		fmt.Fprintf(os.Stderr, "FAIL [screenshot] diff %.4f > threshold %.4f (%d/%d px)\n",
 			res.DiffRatio, flagScreenshotThreshold, res.PixelsChanged, res.PixelsTotal)
-		os.Exit(1)
+		exitNow(1)
 	}
 	return res
 }

@@ -38,7 +38,7 @@ func output(jsonVal any, textVal string) {
 		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: json marshal: %v\n", err)
-			os.Exit(1)
+			exitNow(1)
 		}
 		fmt.Println(string(data))
 	default:
