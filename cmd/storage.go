@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/MakFly/ghostchrome/engine"
-	"github.com/MakFly/ghostchrome/engine/vault"
+	"github.com/dev-toolings/ghostchrome/engine"
+	"github.com/dev-toolings/ghostchrome/engine/vault"
 	"github.com/spf13/cobra"
 )
 

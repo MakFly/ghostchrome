@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MakFly/ghostchrome/engine"
+	"github.com/dev-toolings/ghostchrome/engine"
 )
 
 // AnthropicProvider talks directly to the Messages API. Stays HTTP-native to

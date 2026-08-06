@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ghostchrome uninstaller — one-liner:
-#   curl -fsSL https://raw.githubusercontent.com/MakFly/ghostchrome/main/scripts/uninstall.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/dev-toolings/ghostchrome/main/scripts/uninstall.sh | bash
 #
 # Equivalent to: ghostchrome uninstall --purge --yes
 # but works even if the binary is already gone.

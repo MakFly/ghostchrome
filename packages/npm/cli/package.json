@@ -13,10 +13,10 @@
     "scraping",
     "cli"
   ],
-  "homepage": "https://github.com/MakFly/ghostchrome#readme",
+  "homepage": "https://github.com/dev-toolings/ghostchrome#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/MakFly/ghostchrome.git",
+    "url": "git+https://github.com/dev-toolings/ghostchrome.git",
     "directory": "packages/npm/cli"
   },
   "license": "MIT",

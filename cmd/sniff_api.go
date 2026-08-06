@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/MakFly/ghostchrome/engine/sites"
+	"github.com/dev-toolings/ghostchrome/engine/sites"
 	"github.com/spf13/cobra"
 )
 

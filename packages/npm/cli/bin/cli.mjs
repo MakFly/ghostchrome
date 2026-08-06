@@ -19,7 +19,7 @@ try {
   console.error(
     `ghostchrome: no prebuilt binary for ${platform}-${arch} (missing ${pkg}).\n` +
       `Supported: linux-x64, linux-arm64, darwin-x64, darwin-arm64, win32-x64.\n` +
-      `Install another way: https://github.com/MakFly/ghostchrome#install`,
+      `Install another way: https://github.com/dev-toolings/ghostchrome#install`,
   );
   process.exit(1);
 }

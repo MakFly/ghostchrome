@@ -4,7 +4,7 @@
   "description": "ghostchrome prebuilt binary for linux-x64.",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/MakFly/ghostchrome.git",
+    "url": "git+https://github.com/dev-toolings/ghostchrome.git",
     "directory": "packages/npm/cli-linux-x64"
   },
   "license": "MIT",

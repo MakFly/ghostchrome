@@ -90,7 +90,7 @@ if [ -z "${SKIP_PUBLIC:-}" ]; then
   ALL_SITES+=(
     "example|https://example.com"
     "hn|https://news.ycombinator.com"
-    "github|https://github.com/MakFly/ghostchrome"
+    "github|https://github.com/dev-toolings/ghostchrome"
   )
 fi
 

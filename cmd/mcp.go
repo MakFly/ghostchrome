@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	enginemcp "github.com/MakFly/ghostchrome/engine/mcp"
+	enginemcp "github.com/dev-toolings/ghostchrome/engine/mcp"
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 	"github.com/spf13/cobra"
 )

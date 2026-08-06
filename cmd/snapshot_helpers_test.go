@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MakFly/ghostchrome/engine"
+	"github.com/dev-toolings/ghostchrome/engine"
 )
 
 func TestPlaywrightSnapshotFilename(t *testing.T) {

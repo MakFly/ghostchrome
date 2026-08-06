@@ -13,7 +13,7 @@ import (
 	"runtime"
 	"sort"
 
-	"github.com/MakFly/ghostchrome/internal/ops"
+	"github.com/dev-toolings/ghostchrome/internal/ops"
 )
 
 func main() {

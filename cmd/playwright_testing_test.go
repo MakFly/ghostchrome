@@ -3,7 +3,7 @@ package cmd
 import (
 	"testing"
 
-	"github.com/MakFly/ghostchrome/engine"
+	"github.com/dev-toolings/ghostchrome/engine"
 )
 
 func TestLocatorFromEngineLocator(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	_ "embed"
 	"os"
 
-	"github.com/MakFly/ghostchrome/cmd"
+	"github.com/dev-toolings/ghostchrome/cmd"
 )
 
 var version = "dev"

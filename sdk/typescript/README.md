@@ -1,6 +1,6 @@
 # @ghostchrome/sdk
 
-TypeScript SDK for [ghostchrome](https://github.com/MakFly/ghostchrome) — typed async client for the JSONL agent loop.
+TypeScript SDK for [ghostchrome](https://github.com/dev-toolings/ghostchrome) — typed async client for the JSONL agent loop.
 
 All result shapes are measured from the live binary, never guessed.
 

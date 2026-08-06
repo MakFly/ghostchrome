@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/MakFly/ghostchrome/benchmark/report"
+	"github.com/dev-toolings/ghostchrome/benchmark/report"
 )
 
 func main() {

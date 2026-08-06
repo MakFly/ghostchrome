@@ -1,10 +1,10 @@
 #!/bin/sh
 # ghostchrome installer — works on macOS and Linux
-# Usage: curl -fsSL https://raw.githubusercontent.com/MakFly/ghostchrome/main/install.sh | sh
+# Usage: curl -fsSL https://raw.githubusercontent.com/dev-toolings/ghostchrome/main/install.sh | sh
 
 set -e
 
-REPO="MakFly/ghostchrome"
+REPO="dev-toolings/ghostchrome"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 
 # Detect OS and arch

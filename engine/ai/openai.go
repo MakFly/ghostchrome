@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MakFly/ghostchrome/engine"
+	"github.com/dev-toolings/ghostchrome/engine"
 )
 
 // OpenAIProvider hits the Chat Completions endpoint with function-style tool

@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/MakFly/ghostchrome/engine"
-	"github.com/MakFly/ghostchrome/engine/policy"
+	"github.com/dev-toolings/ghostchrome/engine"
+	"github.com/dev-toolings/ghostchrome/engine/policy"
 	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 )

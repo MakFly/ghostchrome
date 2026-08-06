@@ -19,8 +19,8 @@ package ops_test
 import (
 	"testing"
 
-	"github.com/MakFly/ghostchrome/engine/ai"
-	"github.com/MakFly/ghostchrome/internal/ops"
+	"github.com/dev-toolings/ghostchrome/engine/ai"
+	"github.com/dev-toolings/ghostchrome/internal/ops"
 )
 
 // ── Known op-name sets per surface ────────────────────────────────────────────

@@ -41,7 +41,7 @@ All notable changes to ghostchrome are documented here. The format is based on
 - **MCP tool-count comment** — the package doc claimed "11 essential tools"
   while 16 are registered; corrected to match reality.
 - **TypeScript SDK repository URL** pointed at a non-existent
-  `ghostchrome/ghostchrome`; fixed to `MakFly/ghostchrome`.
+  `ghostchrome/ghostchrome`; fixed to `dev-toolings/ghostchrome`.
 - **MCP survives Chrome death** — the MCP server held its browser/page
   singleton forever without re-validating it: when Chrome crashed, every
   tool call failed with `context deadline exceeded` until the server was
@@ -138,4 +138,4 @@ CDP for LLM agents.
   `go build -tags recipes .`.
 - Runnable end-to-end examples under `examples/`.
 
-[0.1.0]: https://github.com/MakFly/ghostchrome/releases/tag/v0.1.0
+[0.1.0]: https://github.com/dev-toolings/ghostchrome/releases/tag/v0.1.0

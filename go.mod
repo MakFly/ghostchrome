@@ -1,4 +1,4 @@
-module github.com/MakFly/ghostchrome
+module github.com/dev-toolings/ghostchrome
 
 go 1.26.1
 

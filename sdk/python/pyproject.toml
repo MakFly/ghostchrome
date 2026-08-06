@@ -28,7 +28,7 @@ classifiers = [
 dev = ["pytest"]
 
 [project.urls]
-Homepage = "https://github.com/MakFly/ghostchrome"
+Homepage = "https://github.com/dev-toolings/ghostchrome"
 
 [tool.hatch.build.targets.wheel]
 packages = ["ghostchrome"]

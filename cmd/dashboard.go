@@ -6,7 +6,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/MakFly/ghostchrome/engine/dashboard"
+	"github.com/dev-toolings/ghostchrome/engine/dashboard"
 	"github.com/spf13/cobra"
 )
 

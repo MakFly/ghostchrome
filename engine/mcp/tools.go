@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MakFly/ghostchrome/engine"
+	"github.com/dev-toolings/ghostchrome/engine"
 	"github.com/go-rod/rod"
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	mcpsrv "github.com/mark3labs/mcp-go/server"

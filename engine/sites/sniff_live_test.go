@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MakFly/ghostchrome/engine"
-	"github.com/MakFly/ghostchrome/engine/sites"
+	"github.com/dev-toolings/ghostchrome/engine"
+	"github.com/dev-toolings/ghostchrome/engine/sites"
 )
 
 // TestSniffCapcar is a live network test gated by `-tags live`.

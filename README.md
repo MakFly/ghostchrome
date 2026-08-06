@@ -2,8 +2,8 @@
 
 **Ultra-light browser automation CLI for LLM agents.** Single Go binary, native Chrome DevTools Protocol, 5× fewer tokens than Playwright CLI, faster on 19/20 operations, no Node runtime. A modern Playwright alternative built for AI agents that drive a browser in a loop.
 
-[![Go](https://img.shields.io/github/go-mod/go-version/MakFly/ghostchrome?logo=go)](go.mod)
-[![Release](https://img.shields.io/github/v/release/MakFly/ghostchrome?label=release&logo=github)](https://github.com/MakFly/ghostchrome/releases)
+[![Go](https://img.shields.io/github/go-mod/go-version/dev-toolings/ghostchrome?logo=go)](go.mod)
+[![Release](https://img.shields.io/github/v/release/dev-toolings/ghostchrome?label=release&logo=github)](https://github.com/dev-toolings/ghostchrome/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![tokens vs playwright-mcp](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FMakFly%2Fghostchrome%2Fmain%2Fbenchmark%2Fbadges-warm%2Ftokens.json)](benchmark/results-warm.md)
 [![latency vs playwright-mcp](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FMakFly%2Fghostchrome%2Fmain%2Fbenchmark%2Fbadges-warm%2Flatency.json)](benchmark/results-warm.md)
@@ -148,7 +148,7 @@ curl installer below does this automatically, or run `ghostchrome skills install
 Prefer a single binary with no package manager? Use the installer:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MakFly/ghostchrome/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/dev-toolings/ghostchrome/main/scripts/install.sh | bash
 ```
 
 Either way, verify it works:
@@ -173,9 +173,9 @@ For Codex, Cursor, Aider, or a custom loop see [Using it with LLM agents](#using
 ### Other install methods
 
 - **Prebuilt binaries** — macOS (Intel/ARM), Linux (amd64/arm64), Windows on the
-  [Releases](https://github.com/MakFly/ghostchrome/releases) page (`ghostchrome` +
+  [Releases](https://github.com/dev-toolings/ghostchrome/releases) page (`ghostchrome` +
   `ghostchrome-mcp`, with `checksums.txt`).
-- **From source** — `git clone https://github.com/MakFly/ghostchrome && cd ghostchrome && go build -o ghostchrome .`
+- **From source** — `git clone https://github.com/dev-toolings/ghostchrome && cd ghostchrome && go build -o ghostchrome .`
 
 > **Note:** `go install …@latest` is not supported on this repo. Versioning was
 > reset to `v0.1.0`, but the earlier `v1.0.0` is pinned immutably in the Go module
@@ -405,7 +405,7 @@ In-repo at [`sdk/python/`](sdk/python) and [`sdk/typescript/`](sdk/typescript). 
 Both SDKs require the `ghostchrome` binary on `PATH`.
 
 ```python
-# pip install "git+https://github.com/MakFly/ghostchrome.git#subdirectory=sdk/python"
+# pip install "git+https://github.com/dev-toolings/ghostchrome.git#subdirectory=sdk/python"
 from ghostchrome import Ghostchrome
 
 with Ghostchrome(extra_flags=["--connect=auto"]) as gc:

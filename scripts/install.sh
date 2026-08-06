@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ghostchrome installer — one-liner:
-#   curl -fsSL https://raw.githubusercontent.com/MakFly/ghostchrome/main/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/dev-toolings/ghostchrome/main/scripts/install.sh | bash
 #
 # Environment overrides:
 #   GHOSTCHROME_INSTALL_DIR  — binary location (default: ~/.local/bin)
@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-REPO="MakFly/ghostchrome"
+REPO="dev-toolings/ghostchrome"
 INSTALL_DIR="${GHOSTCHROME_INSTALL_DIR:-$HOME/.local/bin}"
 BIN="ghostchrome"
 

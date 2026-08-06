@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/MakFly/ghostchrome/engine"
+	"github.com/dev-toolings/ghostchrome/engine"
 )
 
 // actionResult is a common result struct for interaction commands (click, hover, type).

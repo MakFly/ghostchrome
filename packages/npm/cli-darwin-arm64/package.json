@@ -4,7 +4,7 @@
   "description": "ghostchrome prebuilt binary for darwin-arm64.",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/MakFly/ghostchrome.git",
+    "url": "git+https://github.com/dev-toolings/ghostchrome.git",
     "directory": "packages/npm/cli-darwin-arm64"
   },
   "license": "MIT",

@@ -12,7 +12,7 @@ three surfaces useful to an agent: **per-call CLI commands with a managed
 that return structured JSON in a single call.
 
 Install (if not already on PATH): `bun install -g @ghostchrome/cli`, or
-`curl -fsSL https://raw.githubusercontent.com/MakFly/ghostchrome/main/install.sh | sh`.
+`curl -fsSL https://raw.githubusercontent.com/dev-toolings/ghostchrome/main/install.sh | sh`.
 
 ## When to use which surface
 
