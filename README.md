@@ -5,9 +5,9 @@
 [![Go](https://img.shields.io/github/go-mod/go-version/dev-toolings/ghostchrome?logo=go)](go.mod)
 [![Release](https://img.shields.io/github/v/release/dev-toolings/ghostchrome?label=release&logo=github)](https://github.com/dev-toolings/ghostchrome/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![tokens vs playwright-mcp](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FMakFly%2Fghostchrome%2Fmain%2Fbenchmark%2Fbadges-warm%2Ftokens.json)](benchmark/results-warm.md)
-[![latency vs playwright-mcp](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FMakFly%2Fghostchrome%2Fmain%2Fbenchmark%2Fbadges-warm%2Flatency.json)](benchmark/results-warm.md)
-[![binary size](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FMakFly%2Fghostchrome%2Fmain%2Fbenchmark%2Fbadges%2Fsize.json)](#install)
+[![tokens vs playwright-mcp](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fdev-toolings%2Fghostchrome%2Fmain%2Fbenchmark%2Fbadges-warm%2Ftokens.json)](benchmark/results-warm.md)
+[![latency vs playwright-mcp](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fdev-toolings%2Fghostchrome%2Fmain%2Fbenchmark%2Fbadges-warm%2Flatency.json)](benchmark/results-warm.md)
+[![binary size](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fdev-toolings%2Fghostchrome%2Fmain%2Fbenchmark%2Fbadges%2Fsize.json)](#install)
 
 ```console
 $ ghostchrome preview http://localhost:3000
