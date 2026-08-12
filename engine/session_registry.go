@@ -236,6 +236,12 @@ func AcquireSession(name string, opts SessionSpawnOpts) (string, error) {
 		delete(reg.Sessions, name)
 	}
 
+	// The previous Chrome for this session was killed, not closed, so its
+	// SingletonLock may still be in the profile. Chrome would abort on it.
+	if profileDir, err := ResolveProfileDir(name); err == nil {
+		clearStaleProfileLock(profileDir)
+	}
+
 	port, err := freePort()
 	if err != nil {
 		return "", fmt.Errorf("allocate port: %w", err)
