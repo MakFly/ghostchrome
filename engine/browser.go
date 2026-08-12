@@ -333,6 +333,7 @@ type Browser struct {
 	state        *sessionState
 	targetTab    *int
 	applyProfile bool
+	managed      bool   // true when ConnectURL points at a ghostchrome-managed session
 	contextName  string // non-empty when operating inside a named BrowserContext
 
 	// providerCleanup releases provider-owned Chrome resources (set only
@@ -386,6 +387,13 @@ type BrowserOpts struct {
 	// explicit — mutating a foreign Chrome tab violates the runtime policy
 	// stated in CLAUDE.md.
 	ApplyProfile bool
+
+	// ManagedSession is set when ConnectURL points at a Chrome ghostchrome
+	// itself spawned and owns (the transparent daemon or an explicit
+	// `-s <name>` session). Only those sessions replay the persisted
+	// emulation profile across invocations: doing it on a foreign Chrome
+	// would mutate a user tab, which the runtime policy forbids.
+	ManagedSession bool
 
 	// ProviderFunc, when set, replaces the local launcher for Chrome
 	// provisioning. Returns a WS URL and a cleanup function. Ignored
@@ -502,6 +510,7 @@ func NewBrowserWith(opts BrowserOpts) (*Browser, error) {
 		state:        state,
 		targetTab:    opts.TargetTabIndex,
 		applyProfile: applyProfile,
+		managed:      connectURL != "" && opts.ManagedSession,
 		contextName:  opts.ContextName,
 
 		providerCleanup: providerCleanup,
@@ -634,13 +643,61 @@ func splitChromiumArg(arg string) (name string, values []string, ok bool) {
 	return arg, nil, true
 }
 
-// maybeApplyProfile is a no-op unless the browser was constructed with
-// ApplyProfile=true (auto-launch always sets this).
+// maybeApplyProfile installs the default page profile (auto-launch only, see
+// ApplyProfile) and then replays the session's persisted emulation profile, in
+// that order: the emulation the user explicitly asked for must win over the
+// baseline viewport.
 func (b *Browser) maybeApplyProfile(p *rod.Page) {
-	if b == nil || !b.applyProfile {
+	if b == nil {
 		return
 	}
-	_ = ApplyDefaultPageProfile(p)
+	if b.applyProfile {
+		_ = ApplyDefaultPageProfile(p)
+	}
+	b.restoreEmulation(p)
+}
+
+// restoreEmulation replays the emulation profile persisted by an earlier
+// invocation. CDP emulation overrides die with the DevTools session, so
+// without this a managed daemon session loses its viewport between two
+// commands.
+func (b *Browser) restoreEmulation(p *rod.Page) {
+	if b == nil || p == nil || !b.managed || b.state == nil {
+		return
+	}
+	state := b.state.Emulation
+	if state.Empty() {
+		return
+	}
+	if err := ApplyEmulationState(p, state); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: emulation not restored: %v\n", err)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "[emulation] restored %s (clear with `ghostchrome emulate --reset`)\n", state.Summary())
+}
+
+// EmulationState returns the emulation profile persisted for this session.
+func (b *Browser) EmulationState() EmulationState {
+	if b == nil || !b.managed || b.state == nil {
+		return EmulationState{}
+	}
+	return b.state.Emulation
+}
+
+// SetEmulationState persists the emulation profile so the next invocation can
+// replay it. It is a no-op outside managed sessions (one-shot launches keep
+// their overrides for the whole process; foreign Chromes must not be mutated).
+func (b *Browser) SetEmulationState(state EmulationState) error {
+	if b == nil || !b.managed || b.state == nil {
+		return nil
+	}
+	b.state.Emulation = state
+	return saveSessionState(b.statePath, b.state)
+}
+
+// ClearEmulationState forgets the persisted emulation profile.
+func (b *Browser) ClearEmulationState() error {
+	return b.SetEmulationState(EmulationState{})
 }
 
 // Page returns the active page or creates a new one.

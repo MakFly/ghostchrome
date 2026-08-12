@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/proto"
@@ -17,6 +18,66 @@ type sessionState struct {
 	PlaywrightLog   PlaywrightLogState      `json:"playwright_log,omitempty"`
 	BrowserTrace    BrowserTraceState       `json:"browser_trace,omitempty"`
 	Video           VideoState              `json:"video,omitempty"`
+	Emulation       EmulationState          `json:"emulation,omitempty"`
+}
+
+// EmulationState is the emulation profile of a managed session.
+//
+// CDP emulation overrides (device metrics, touch, UA, color-scheme, timezone)
+// live in the DevTools session, not in the page: Chrome drops them the moment
+// the client detaches. With the transparent daemon, every CLI invocation is a
+// new short-lived session against a long-lived Chrome, so a viewport set by one
+// command was gone by the next one and the page snapped back to the real window
+// size. Persisting the profile here lets the next command replay it on attach.
+type EmulationState struct {
+	Device      string  `json:"device,omitempty"`
+	Width       int     `json:"width,omitempty"`
+	Height      int     `json:"height,omitempty"`
+	DPR         float64 `json:"dpr,omitempty"`
+	Mobile      bool    `json:"mobile,omitempty"`
+	Touch       bool    `json:"touch,omitempty"`
+	UserAgent   string  `json:"user_agent,omitempty"`
+	ColorScheme string  `json:"color_scheme,omitempty"`
+	Timezone    string  `json:"timezone,omitempty"`
+}
+
+// Empty reports whether the profile carries nothing to replay.
+func (s EmulationState) Empty() bool {
+	return s.Width <= 0 && s.Height <= 0 && !s.Touch && s.UserAgent == "" && s.ColorScheme == "" && s.Timezone == ""
+}
+
+// Summary renders the profile as a single compact line for CLI feedback.
+func (s EmulationState) Summary() string {
+	parts := make([]string, 0, 4)
+	if s.Device != "" {
+		parts = append(parts, s.Device)
+	}
+	if s.Width > 0 && s.Height > 0 {
+		dpr := s.DPR
+		if dpr <= 0 {
+			dpr = 1
+		}
+		parts = append(parts, fmt.Sprintf("%dx%d@%.4gx", s.Width, s.Height, dpr))
+	}
+	if s.Mobile {
+		parts = append(parts, "mobile")
+	}
+	if s.Touch {
+		parts = append(parts, "touch")
+	}
+	if s.ColorScheme != "" {
+		parts = append(parts, s.ColorScheme)
+	}
+	if s.Timezone != "" {
+		parts = append(parts, s.Timezone)
+	}
+	if s.UserAgent != "" {
+		parts = append(parts, "custom-ua")
+	}
+	if len(parts) == 0 {
+		return "none"
+	}
+	return strings.Join(parts, " ")
 }
 
 // PlaywrightLogState stores bounded command-observation buffers for

@@ -10,6 +10,10 @@ import (
 	"github.com/ysmood/gson"
 )
 
+// maxTouchPoints is what a touch device reports through
+// navigator.maxTouchPoints while touch emulation is on.
+const maxTouchPoints = 5
+
 // Device describes a hardware profile used by the emulate command.
 // Dimensions are CSS pixels; DPR is devicePixelRatio.
 type Device struct {
@@ -107,12 +111,8 @@ func ApplyDevice(page *rod.Page, d Device) error {
 		return fmt.Errorf("device metrics: %w", err)
 	}
 
-	maxTouch := touchPoints(d.Touch)
-	if err := (proto.EmulationSetTouchEmulationEnabled{
-		Enabled:        d.Touch,
-		MaxTouchPoints: &maxTouch,
-	}).Call(page); err != nil {
-		return fmt.Errorf("touch emulation: %w", err)
+	if err := setTouchEmulation(page, d.Touch); err != nil {
+		return err
 	}
 
 	if d.UserAgent != "" {
@@ -123,11 +123,114 @@ func ApplyDevice(page *rod.Page, d Device) error {
 	return nil
 }
 
-func touchPoints(enabled bool) int {
-	if enabled {
-		return 5
+// EmulationFromDevice converts a preset into the persistable profile that
+// ApplyDevice just installed on the page.
+func EmulationFromDevice(d Device) EmulationState {
+	return EmulationState{
+		Device:    d.Name,
+		Width:     d.Width,
+		Height:    d.Height,
+		DPR:       d.DPR,
+		Mobile:    d.Mobile,
+		Touch:     d.Touch,
+		UserAgent: d.UserAgent,
 	}
-	return 0
+}
+
+// ApplyEmulationState replays a persisted emulation profile on a page. It is
+// the exact counterpart of what ApplyDevice / SetViewport / ApplyUserAgent
+// installed in the session that saved the profile.
+func ApplyEmulationState(page *rod.Page, s EmulationState) error {
+	if page == nil || s.Empty() {
+		return nil
+	}
+	if s.Width > 0 && s.Height > 0 {
+		dpr := s.DPR
+		if dpr <= 0 {
+			dpr = 1
+		}
+		sw, sh := s.Width, s.Height
+		if err := (proto.EmulationSetDeviceMetricsOverride{
+			Width:             s.Width,
+			Height:            s.Height,
+			DeviceScaleFactor: dpr,
+			Mobile:            s.Mobile,
+			ScreenWidth:       &sw,
+			ScreenHeight:      &sh,
+		}).Call(page); err != nil {
+			return fmt.Errorf("device metrics: %w", err)
+		}
+	}
+	if s.Touch {
+		if err := setTouchEmulation(page, true); err != nil {
+			return err
+		}
+	}
+	if s.UserAgent != "" {
+		if err := ApplyUserAgent(page, s.UserAgent); err != nil {
+			return err
+		}
+	}
+	if s.ColorScheme != "" {
+		if err := ApplyColorScheme(page, s.ColorScheme); err != nil {
+			return err
+		}
+	}
+	if s.Timezone != "" {
+		if err := ApplyTimezone(page, s.Timezone); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ResetEmulation drops every emulation override on the page and restores the
+// browser's own User-Agent. Device metrics fall back to the real window size,
+// which is what an un-emulated tab looks like.
+func ResetEmulation(page *rod.Page) error {
+	if page == nil {
+		return nil
+	}
+	if err := (proto.EmulationClearDeviceMetricsOverride{}).Call(page); err != nil {
+		return fmt.Errorf("clear device metrics: %w", err)
+	}
+	if err := setTouchEmulation(page, false); err != nil {
+		return err
+	}
+	// An empty Features list clears every previously emulated media feature.
+	if err := (proto.EmulationSetEmulatedMedia{}).Call(page); err != nil {
+		return fmt.Errorf("clear emulated media: %w", err)
+	}
+	// Empty TimezoneID means "restore the host timezone" per the CDP contract.
+	if err := (proto.EmulationSetTimezoneOverride{TimezoneID: ""}).Call(page); err != nil {
+		return fmt.Errorf("clear timezone override: %w", err)
+	}
+	version, err := proto.BrowserGetVersion{}.Call(page)
+	if err != nil {
+		return fmt.Errorf("browser version: %w", err)
+	}
+	if version.UserAgent != "" {
+		if err := ApplyUserAgent(page, version.UserAgent); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// setTouchEmulation toggles touch input emulation. MaxTouchPoints is only sent
+// when enabling: Chrome rejects the call with "Touch points must be between 1
+// and 16" if the field is present while disabling, which used to make every
+// non-touch device preset (desktop, desktop-2k) fail outright.
+func setTouchEmulation(page *rod.Page, enabled bool) error {
+	req := proto.EmulationSetTouchEmulationEnabled{Enabled: enabled}
+	if enabled {
+		maxTouch := maxTouchPoints
+		req.MaxTouchPoints = &maxTouch
+	}
+	if err := req.Call(page); err != nil {
+		return fmt.Errorf("touch emulation: %w", err)
+	}
+	return nil
 }
 
 // ApplyUserAgent overrides navigator.userAgent and the HTTP User-Agent header.

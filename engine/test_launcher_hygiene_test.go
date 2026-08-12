@@ -66,7 +66,7 @@ func TestDirectTestLaunchersAreIsolated(t *testing.T) {
 			t.Fatalf("scan %s tests: %v", relRoot, err)
 		}
 	}
-	if launchers != 6 {
-		t.Fatalf("direct test launchers inventoried = %d, want 6; review every new launcher explicitly", launchers)
+	if launchers != 7 {
+		t.Fatalf("direct test launchers inventoried = %d, want 7; review every new launcher explicitly", launchers)
 	}
 }

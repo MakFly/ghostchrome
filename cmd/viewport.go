@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 
 	"github.com/dev-toolings/ghostchrome/engine"
@@ -78,6 +79,17 @@ Examples:
 		err := engine.SetViewport(page, width, height)
 		if err != nil {
 			exitErr("viewport", err)
+		}
+		// Persist so the next CLI invocation replays it: the CDP override
+		// itself dies with this process's DevTools session.
+		state := b.EmulationState()
+		state.Device = deviceLabel
+		state.Width = width
+		state.Height = height
+		state.DPR = 1
+		state.Mobile = width < engine.MobileViewportThreshold
+		if err := b.SetEmulationState(state); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: viewport not persisted for this session: %v\n", err)
 		}
 
 		if url != "" {

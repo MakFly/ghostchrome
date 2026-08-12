@@ -29,9 +29,14 @@ func buildBrowserOpts() engine.BrowserOpts {
 	if flagSession == "" && !skipImplicitDaemon {
 		flagSession = sessionNameFromEnv()
 	}
+	// A connect URL resolved from the session registry points at a Chrome we
+	// own, so it is safe (and expected) to replay our own emulation profile on
+	// it. A user-supplied --connect is not: it may be their personal browser.
+	managedSession := false
 	if flagSession == "" && flagConnect == "" && !skipImplicitDaemon {
 		if ws, ok := engine.DefaultSession(); ok {
 			flagConnect = ws
+			managedSession = true
 			fmt.Fprintf(os.Stderr, "[session %s] %s\n", engine.DefaultSessionName, ws)
 		} else if implicitSessionEnabled() {
 			flagSession = engine.DefaultSessionName
@@ -51,6 +56,7 @@ func buildBrowserOpts() engine.BrowserOpts {
 		}
 		fmt.Fprintf(os.Stderr, "[session %s] %s\n", flagSession, ws)
 		flagConnect = ws
+		managedSession = true
 	}
 
 	connectURL := flagConnect
@@ -77,6 +83,7 @@ func buildBrowserOpts() engine.BrowserOpts {
 		LaunchArgs:     flagConfigLaunchArgs,
 		AttachFresh:    attachFresh,
 		ContextName:    flagContext,
+		ManagedSession: managedSession,
 	}
 	if flagTab >= 0 {
 		if connectURL == "" {

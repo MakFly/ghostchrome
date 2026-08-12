@@ -237,8 +237,15 @@ persistent Chrome on first use, bound to a disk profile of the same name (cookie
 Per-call latency drops to ~50 ms. No ws:// URL to manage. Manage sessions with
 `ghostchrome sessions list | stop <name> | kill-all`.
 
+Emulation is sticky per session. `ghostchrome viewport 390 844` or
+`ghostchrome emulate --device iphone-14` keeps applying to every following command (CDP drops the
+override when the process exits, so ghostchrome replays it on attach), which is what makes a
+responsive audit across several commands trustworthy. Clear it with `ghostchrome emulate --reset`.
+
 > Prefer to manage Chrome yourself? `ghostchrome serve --port 9222` prints a ws:// URL and any
-> command can attach with `--connect=auto` (discovers a serve on 127.0.0.1:9222-9229).
+> command can attach with `--connect=auto` (discovers a serve on 127.0.0.1:9222-9229). A Chrome you
+> attached to yourself is never re-emulated on attach: keep such a flow in one process
+> (`ghostchrome batch`).
 
 ### Debug a page
 

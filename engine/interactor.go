@@ -688,13 +688,18 @@ func CloseTab(browser *rod.Browser, index int) (proto.TargetTargetID, error) {
 // Viewport & dialogs
 // ---------------------------------------------------------------------------
 
+// MobileViewportThreshold is the width below which SetViewport switches Chrome
+// to mobile emulation. Callers persisting the resulting profile must use the
+// same threshold or the replayed viewport would differ from the applied one.
+const MobileViewportThreshold = 768
+
 // SetViewport overrides the page viewport dimensions.
 func SetViewport(page *rod.Page, width, height int) error {
 	return proto.EmulationSetDeviceMetricsOverride{
 		Width:             width,
 		Height:            height,
 		DeviceScaleFactor: 1,
-		Mobile:            width < 768,
+		Mobile:            width < MobileViewportThreshold,
 	}.Call(page)
 }
 
