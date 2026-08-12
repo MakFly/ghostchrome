@@ -5,6 +5,35 @@ All notable changes to ghostchrome are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-08-12
+
+### Fixed
+- **Viewport and emulation no longer reset between commands** — CDP emulation
+  overrides live in the DevTools session, not in the page, so Chrome dropped
+  them as soon as a CLI process exited. Against the persistent daemon that made
+  `ghostchrome viewport 390 844` a no-op for every following command: the page
+  snapped back to the daemon window size (1280x800) and a "mobile" screenshot
+  was really a desktop one. Managed sessions (the implicit daemon and
+  `-s <name>`) now persist the requested profile (viewport, DPR, mobile, touch,
+  UA, color-scheme, timezone) in their session state and replay it on attach.
+  A Chrome you attached to yourself with `--connect` / `--connect=auto` is left
+  untouched, as the runtime policy requires.
+- **Non-touch device presets** — `emulate --device desktop` (and every other
+  preset with `touch: false`) failed with `Touch points must be between 1 and
+  16`: `maxTouchPoints` was sent while disabling touch emulation, which Chrome
+  rejects. The field is now only sent when enabling.
+- **Stale `SingletonLock` no longer bricks a session** — a Chrome that was
+  killed rather than closed (`sessions stop`, crash, reboot) left its lock in
+  the profile, and every later spawn aborted with "Failed to create
+  SingletonLock: File exists". Session spawn now removes the lock when its
+  owning PID is gone; a live owner, or a lock written by another host, is never
+  touched.
+
+### Added
+- **`emulate --reset`** — drops every emulation override (viewport, touch, UA,
+  color-scheme, timezone) on the page and clears the session's persisted
+  profile, back to a plain un-emulated tab.
+
 ## [0.4.0] — 2026-07-20
 
 ### Added

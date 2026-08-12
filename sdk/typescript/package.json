@@ -1,6 +1,6 @@
 {
   "name": "@ghostchrome/sdk",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "TypeScript SDK for ghostchrome — typed JSONL agent client",
   "type": "module",
   "main": "./dist/index.js",
