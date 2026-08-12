@@ -46,7 +46,9 @@ func NewScreenRecorder(page *rod.Page, opts ScreenRecorderOpts) *ScreenRecorder 
 		opts.MaxHeight = 720
 	}
 	if opts.NthFrame <= 0 {
-		opts.NthFrame = 2
+		// A video runtime must retain every renderer frame. Sampling every
+		// second frame made short, cross-process recordings look frozen.
+		opts.NthFrame = 1
 	}
 	return &ScreenRecorder{
 		page:    page,
@@ -86,7 +88,13 @@ func (r *ScreenRecorder) Start() error {
 
 func (r *ScreenRecorder) captureLoop(ctx context.Context) {
 	defer r.wg.Done()
-	events := r.page.EachEvent(func(e *proto.PageScreencastFrame) bool {
+	page, cancel := r.page.WithCancel()
+	defer cancel()
+	go func() {
+		<-ctx.Done()
+		cancel()
+	}()
+	page.EachEvent(func(e *proto.PageScreencastFrame) bool {
 		_ = proto.PageScreencastFrameAck{SessionID: e.SessionID}.Call(r.page)
 		idx := r.count.Add(1)
 		path := filepath.Join(r.outDir, fmt.Sprintf("frame-%06d.jpg", idx))
@@ -96,11 +104,7 @@ func (r *ScreenRecorder) captureLoop(ctx context.Context) {
 		}
 		_ = os.WriteFile(path, data, 0o600)
 		return ctx.Err() != nil
-	})
-	go func() {
-		<-ctx.Done()
-		events()
-	}()
+	})()
 }
 
 func (r *ScreenRecorder) Stop() int64 {

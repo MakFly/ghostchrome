@@ -68,6 +68,12 @@ Then in another terminal:
 			exitErr("launch chrome", err)
 		}
 		defer cleanup()
+		continuousObserver, observerErr := engine.StartPersistentSessionObserver(wsURL)
+		if observerErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: continuous observer unavailable: %v\n", observerErr)
+		} else {
+			defer continuousObserver.Stop()
+		}
 
 		// Apply stealth to a warm-up page
 		if flagStealth {

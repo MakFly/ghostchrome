@@ -3,130 +3,43 @@ package cmd
 import (
 	"archive/zip"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
-	"github.com/dev-toolings/ghostchrome/engine"
-	"github.com/go-rod/rod/lib/proto"
 	"github.com/spf13/cobra"
-	"github.com/ysmood/gson"
 )
 
 var flagTracingOutput string
 
 var tracingStartCmd = &cobra.Command{
 	Use:   "tracing-start",
-	Short: "Start browser tracing",
-	Long: `Start Chrome DevTools Protocol browser tracing for the active session.
-This is a Playwright CLI-compatible command name. tracing-stop writes a
-ghostchrome CDP trace bundle by default, not a Playwright Trace Viewer-compatible
-trace yet.`,
+	Short: "Start browser tracing (explicitly unsupported across CLI processes)",
+	Long: `Tracing is an explicit compatibility boundary. CDP tracing is scoped to
+the DevTools client that starts it, while ghostchrome commands use separate
+short-lived clients. A truthful implementation therefore requires daemon-owned
+capture, and the resulting CDP stream would still not be Playwright Trace Viewer
+compatible.`,
 	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		b, _ := openPage()
-		defer b.Close()
-		if !b.Connected() {
-			exitErr("tracing-start", fmt.Errorf("requires -s/--session, --connect, or an attached default session"))
-		}
-
-		if state := b.BrowserTraceState(); state.Active {
-			exitErr("tracing-start", fmt.Errorf("browser tracing already active since %s", state.StartedAt))
-		}
-		if err := (proto.TracingStart{
-			Categories:   "devtools.timeline,v8,blink,netlog,disabled-by-default-devtools.screenshot",
-			TransferMode: proto.TracingStartTransferModeReportEvents,
-		}).Call(b.RodBrowser()); err != nil {
-			exitErr("tracing-start", err)
-		}
-		started := time.Now().UTC().Format(time.RFC3339)
-		if err := b.SetBrowserTraceState(engine.BrowserTraceState{Active: true, StartedAt: started, Output: defaultTraceOutput(flagTracingOutput)}); err != nil {
-			exitErr("tracing-start", err)
-		}
-		output(map[string]any{"active": true, "started_at": started}, "tracing started")
+		unsupportedPlaywrightCommand("tracing-start", args,
+			"cross-process tracing requires a daemon-owned recorder and ghostchrome does not emit the Playwright Trace Viewer schema",
+			"Use Chrome DevTools tracing for CDP diagnostics or Playwright CLI when a Trace Viewer artifact is required.")
 	},
 }
 
 var tracingStopCmd = &cobra.Command{
 	Use:   "tracing-stop",
-	Short: "Stop browser tracing and save a trace file",
-	Long: `Stop Chrome DevTools Protocol browser tracing and save the collected
-events. The default output is .playwright-cli/trace.zip, matching the
-Playwright CLI path shape. The zip is a ghostchrome CDP trace bundle and is
-marked as not Playwright Trace Viewer-compatible until ghostchrome emits the
-real Playwright trace schema.`,
+	Short: "Stop browser tracing (explicitly unsupported across CLI processes)",
+	Long: `Tracing is intentionally unavailable until the persistent daemon owns
+the complete capture lifecycle and ghostchrome can emit an honest artifact.
+Merely naming a CDP JSON archive trace.zip does not make it compatible with the
+Playwright Trace Viewer.`,
 	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		b, _ := openPage()
-		defer b.Close()
-		if !b.Connected() {
-			exitErr("tracing-stop", fmt.Errorf("requires -s/--session, --connect, or an attached default session"))
-		}
-
-		state := b.BrowserTraceState()
-		if !state.Active {
-			exitErr("tracing-stop", fmt.Errorf("browser tracing is not active"))
-		}
-		outputPath := defaultTraceOutput(flagTracingOutput)
-		if outputPath == "" {
-			outputPath = defaultTraceOutput(state.Output)
-		}
-
-		var events []map[string]any
-		complete := make(chan proto.TracingTracingComplete, 1)
-		wait := b.RodBrowser().EachEvent(
-			func(e *proto.TracingDataCollected) {
-				events = append(events, decodeTraceEvents(e.Value)...)
-			},
-			func(e *proto.TracingTracingComplete) bool {
-				complete <- *e
-				return true
-			},
-		)
-
-		if err := (proto.TracingEnd{}).Call(b.RodBrowser()); err != nil {
-			exitErr("tracing-stop", err)
-		}
-		done := make(chan struct{})
-		go func() {
-			wait()
-			close(done)
-		}()
-
-		var traceComplete proto.TracingTracingComplete
-		select {
-		case traceComplete = <-complete:
-		case <-time.After(15 * time.Second):
-			exitErr("tracing-stop", fmt.Errorf("timed out waiting for Tracing.tracingComplete"))
-		}
-		<-done
-
-		format, err := writeTraceOutput(outputPath, events, state.StartedAt, traceComplete.DataLossOccurred)
-		if err != nil {
-			exitErr("tracing-stop", err)
-		}
-		if err := b.SetBrowserTraceState(engine.BrowserTraceState{}); err != nil {
-			exitErr("tracing-stop", err)
-		}
-		type tracingStopResult struct {
-			Output                string `json:"output"`
-			Format                string `json:"format"`
-			Events                int    `json:"events"`
-			DataLossOccurred      bool   `json:"data_loss_occurred"`
-			PlaywrightCompatible  bool   `json:"playwright_compatible"`
-			TraceViewerCompatible bool   `json:"trace_viewer_compatible"`
-		}
-		result := tracingStopResult{
-			Output:                outputPath,
-			Format:                format,
-			Events:                len(events),
-			DataLossOccurred:      traceComplete.DataLossOccurred,
-			PlaywrightCompatible:  false,
-			TraceViewerCompatible: false,
-		}
-		output(result, fmt.Sprintf("trace saved to %s (%d events)", outputPath, len(events)))
+		unsupportedPlaywrightCommand("tracing-stop", args,
+			"no daemon-owned trace is active and a CDP JSON archive is not Playwright Trace Viewer-compatible",
+			"Use Chrome DevTools tracing for CDP diagnostics or Playwright CLI when a Trace Viewer artifact is required.")
 	},
 }
 
@@ -135,18 +48,6 @@ func defaultTraceOutput(path string) string {
 		return path
 	}
 	return playwrightArtifactPath("trace.zip")
-}
-
-func decodeTraceEvents(raw []map[string]gson.JSON) []map[string]any {
-	out := make([]map[string]any, 0, len(raw))
-	for _, event := range raw {
-		decoded := make(map[string]any, len(event))
-		for key, value := range event {
-			decoded[key] = value.Val()
-		}
-		out = append(out, decoded)
-	}
-	return out
 }
 
 func writeTraceJSON(path string, events []map[string]any, startedAt string, dataLoss bool) error {

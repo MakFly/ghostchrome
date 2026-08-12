@@ -32,8 +32,18 @@ type ExtractedNode struct {
 	Type          string                 `json:"type,omitempty"`
 	Checked       *bool                  `json:"checked,omitempty"`
 	Disabled      bool                   `json:"disabled,omitempty"`
+	Box           *ElementBox            `json:"box,omitempty"`
 	BackendNodeID proto.DOMBackendNodeID `json:"-"`
 	Children      []ExtractedNode        `json:"children,omitempty"`
+}
+
+// ElementBox is a viewport-relative element rectangle in CSS pixels.
+// It is populated only when snapshot --boxes is explicitly requested.
+type ElementBox struct {
+	X      int `json:"x"`
+	Y      int `json:"y"`
+	Width  int `json:"width"`
+	Height int `json:"height"`
 }
 
 // ExtractionResult holds the extraction output.
@@ -515,6 +525,9 @@ func formatPlaywrightNode(buf *strings.Builder, node ExtractedNode, depth int) {
 	}
 	if node.Disabled {
 		attrs = append(attrs, "disabled")
+	}
+	if node.Box != nil {
+		attrs = append(attrs, fmt.Sprintf("box=%d,%d,%d,%d", node.Box.X, node.Box.Y, node.Box.Width, node.Box.Height))
 	}
 	if len(attrs) > 0 {
 		fmt.Fprintf(buf, " [%s]", strings.Join(attrs, " "))

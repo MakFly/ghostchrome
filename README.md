@@ -515,7 +515,20 @@ browser loop where the behavior maps cleanly to existing CDP/Rod primitives:
 `open`, `snapshot`, `fill`, `resize`, `go-back`, `go-forward`, `state-save`,
 `state-load`, `attach --cdp=<channel|url>`, `cookie-*`, `localstorage-*`,
 `sessionstorage-*`, `dialog-*`, `tab-*`, session management aliases, and raw
-mouse/key aliases.
+mouse/key aliases. The current `@playwright/cli` 0.1.18 baseline resolves all
+86 public command names. Recent compatibility work includes real `drop`,
+snapshot `find`/`--boxes`, strict CSS/ref/locator targets, native-DPR
+`screenshot --hires`, `open --mobile/--device`, persistent network/console
+history, visual `highlight`, and `show --annotate` artifacts.
+`video-start`/`video-stop` also record across separate CLI invocations through a
+daemon-attached runtime; the honest artifact is a JPEG frame sequence plus a
+manifest, not a WebM file.
+
+Output can be shaped with `--json`/`--raw`, bounded with
+`--output-max-size` (or `PLAYWRIGHT_MCP_OUTPUT_MAX_SIZE`), and redacted from a
+dotenv secrets file before it reaches stdout or an overflow artifact. Structural
+Playwright-runtime features such as Firefox/WebKit, `run-code`, debugger stepping,
+and Trace Viewer-compatible archives remain explicit `unsupported` boundaries.
 
 The tracked source-of-truth matrix is `docs/playwright-cli-parity.md` (local).
 It separates compatible commands from partial matches and explicit gaps so the

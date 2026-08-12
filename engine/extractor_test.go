@@ -154,6 +154,19 @@ func TestFormatPlaywrightSnapshot(t *testing.T) {
 	}
 }
 
+func TestFormatPlaywrightSnapshotIncludesBoxes(t *testing.T) {
+	result := &ExtractionResult{Nodes: []ExtractedNode{{
+		Ref:  "@3",
+		Role: "button",
+		Name: "Save",
+		Box:  &ElementBox{X: 10, Y: 20, Width: 80, Height: 30},
+	}}}
+	got := FormatPlaywrightSnapshot(result)
+	if !strings.Contains(got, `[ref=e3 box=10,20,80,30]`) {
+		t.Fatalf("snapshot with box = %q", got)
+	}
+}
+
 func TestPlaywrightRefConversion(t *testing.T) {
 	if got := PlaywrightRef("@34"); got != "e34" {
 		t.Fatalf("PlaywrightRef(@34) = %q", got)

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -163,6 +164,25 @@ func TestWaitForLocatorTimeout(t *testing.T) {
 	}
 	if elapsed < 300*time.Millisecond {
 		t.Fatalf("expected to wait at least 300ms, waited %s", elapsed)
+	}
+}
+
+func TestWaitForLocatorRejectsAmbiguousVisibleMatchesWithoutWaiting(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires Chrome")
+	}
+	_, page := newIsolatedPage(t)
+	if _, err := Navigate(page, dataURL(`<!doctype html><button>Delete</button><button>Delete all</button>`), "load"); err != nil {
+		t.Fatalf("navigate: %v", err)
+	}
+
+	started := time.Now()
+	_, err := WaitForLocator(page, Locator{Role: "button", Name: "Delete"}, StateVisible, 3*time.Second)
+	if err == nil || !strings.Contains(err.Error(), "matched 2 visible elements") {
+		t.Fatalf("ambiguous locator error = %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("ambiguous locator waited %s instead of failing immediately", elapsed)
 	}
 }
 

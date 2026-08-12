@@ -437,18 +437,53 @@ var responseBodyCompatCmd = &cobra.Command{
 
 var highlightCompatCmd = &cobra.Command{
 	Use:   "highlight [target]",
-	Short: "Highlight a target element (unsupported in ghostchrome)",
-	Args:  cobra.MaximumNArgs(1),
+	Short: "Draw a persistent overlay around a target element",
+	Long: `Draw a pointer-transparent highlight overlay around a target.
+
+TARGET accepts @ref/eN, a unique CSS selector, or a supported Playwright
+locator. The overlay is kept in the current page document, so it remains
+visible across later CLI commands attached to the same session and page.
+
+Use --hide TARGET to remove one overlay, or --hide without a target to remove
+all ghostchrome overlays from the current page. --style accepts CSS declarations
+applied to the overlay, for example 'border-color: #22c55e; border-width: 5px'.`,
+	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		if len(args) == 0 && !flagHighlightHide {
+			exitErr("highlight", fmt.Errorf("provide a target or use --hide to remove all highlights"))
+		}
+
+		b, page := openPage()
+		defer b.Close()
+		target := ""
+		if len(args) == 1 {
+			target = args[0]
+		}
+		var snapshot *engine.PageSnapshot
+		if target != "" && isSnapshotRef(target) {
+			snapshot = ensureSnapshot(b, page, "", "none", engine.LevelSkeleton)
+		}
+
 		if flagHighlightHide {
-			unsupportedPlaywrightCommand("highlight", args, "Ghostchrome does not provide persistent action highlighting", "Use playwright-cli or Playwright MCP trace tooling for overlay highlighting.")
+			if err := engine.HideHighlights(page, target, snapshot); err != nil {
+				exitIfStaleRef(err, "highlight")
+				exitErr("highlight", err)
+			}
+			output(map[string]any{"action": "hide", "target": target}, "highlight hidden")
 			return
 		}
-		unsupportedPlaywrightCommand("highlight", args, "Ghostchrome does not provide a persisted visual target overlay API", "Use playwright-cli or Playwright MCP trace tooling for action highlighting.")
+		if err := engine.HighlightTarget(page, target, flagHighlightStyle, snapshot); err != nil {
+			exitIfStaleRef(err, "highlight")
+			exitErr("highlight", err)
+		}
+		output(map[string]any{"action": "highlight", "target": target, "style": flagHighlightStyle}, "highlighted "+target)
 	},
 }
 
-var flagHighlightHide bool
+var (
+	flagHighlightHide  bool
+	flagHighlightStyle string
+)
 
 func resolveConsoleArgs(args []string, flagLevel string) (level string, targetURL string, err error) {
 	level = flagLevel
@@ -615,7 +650,8 @@ func init() {
 	commandGroups["response-headers"] = "observe"
 	commandGroups["response-body"] = "observe"
 	commandGroups["highlight"] = "observe"
-	highlightCompatCmd.Flags().BoolVar(&flagHighlightHide, "hide", false, "Hide all highlights")
+	highlightCompatCmd.Flags().BoolVar(&flagHighlightHide, "hide", false, "Hide this target's highlight, or all highlights without a target")
+	highlightCompatCmd.Flags().StringVar(&flagHighlightStyle, "style", "", "CSS declarations for the highlight overlay")
 }
 
 func resolveRequestFilename(cmd string, index int) string {

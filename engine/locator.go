@@ -1,12 +1,16 @@
 package engine
 
 import (
+	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/proto"
 )
+
+var playwrightLocatorPattern = regexp.MustCompile(`^(?:page\.)?getBy(Role|Text|Label)\(\s*("(?:\\.|[^"\\])*")\s*(?:,\s*\{\s*name\s*:\s*("(?:\\.|[^"\\])*")\s*\})?\s*\)$`)
 
 // xpathLiteral safely escapes a string for use as an XPath string literal.
 // It handles strings containing both single and double quotes by using the
@@ -68,50 +72,175 @@ func (l Locator) IsEmpty() bool {
 	return l.Role == "" && l.Name == "" && l.Label == "" && l.Text == ""
 }
 
-// ResolveByLocator returns the first element matching the locator. Matching
+// ResolveByLocator returns the single visible element matching the locator. Matching
 // strategy:
 //   - If Text is set: XPath text contains (case-insensitive). Matches <button>,
 //     <a>, <label>, generic text containers.
-//   - Else: extract the a11y tree at skeleton level, filter by
-//     (role, name|label) and return the first hit.
+//   - Else: extract the a11y tree at skeleton level and filter by
+//     (role, name|label).
 //
-// Snapshot is updated as a side-effect only for the Text branch when a new
-// Extract is triggered.
+// Zero or multiple visible matches are errors. This strictness is shared by
+// action --by-* flags and generated Playwright locator strings so an ambiguous
+// agent instruction can never silently act on the first element in tree order.
 func ResolveByLocator(page *rod.Page, loc Locator) (*rod.Element, error) {
 	if loc.IsEmpty() {
 		return nil, fmt.Errorf("locator: at least one of --by-role, --by-text, --by-name, --by-label required")
 	}
+	return resolveStrictByLocator(page, loc)
+}
 
+// ResolveTarget resolves one interaction target. Targets may be snapshot refs
+// (@N or playwright-cli eN), a strict CSS selector, or the small Playwright
+// locator subset emitted by generate-locator: getByRole, getByText, and
+// getByLabel (with an optional { name: "..." } for getByRole).
+//
+// CSS selectors must match exactly one element. This deliberately avoids the
+// accidental-first-match behavior that is especially unsafe for agent input.
+func ResolveTarget(page *rod.Page, target string, snapshot *PageSnapshot) (*rod.Element, error) {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return nil, fmt.Errorf("target is required")
+	}
+	if strings.HasPrefix(InternalRef(target), "@") {
+		return ResolveRef(page, target, snapshot)
+	}
+	if locator, isLocator, err := parsePlaywrightLocator(target); isLocator {
+		if err != nil {
+			return nil, err
+		}
+		return resolveStrictByLocator(page, locator)
+	}
+
+	elements, err := page.Elements(target)
+	if err != nil {
+		return nil, fmt.Errorf("CSS selector %q: %w", target, err)
+	}
+	if len(elements) != 1 {
+		return nil, fmt.Errorf("CSS selector %q matched %d elements; target must be unique", target, len(elements))
+	}
+	return elements[0], nil
+}
+
+// resolveStrictByLocator matches the strict target semantics used by CSS
+// selectors: exactly one visible element must be eligible for interaction.
+func resolveStrictByLocator(page *rod.Page, loc Locator) (*rod.Element, error) {
 	if loc.Text != "" {
-		return resolveByText(page, loc.Text)
+		return resolveByTextStrict(page, loc.Text)
 	}
 
 	role := normaliseRole(loc.Role)
 	name := pickName(loc)
-
 	result, err := proto.AccessibilityGetFullAXTree{}.Call(page)
 	if err != nil {
 		return nil, fmt.Errorf("a11y tree: %w", err)
 	}
 
+	seen := make(map[proto.DOMBackendNodeID]struct{})
+	matches := make([]*rod.Element, 0, 1)
 	for _, n := range result.Nodes {
-		if !roleMatches(n, role) {
+		if !roleMatches(n, role) || !nameMatches(n, name) || n.BackendDOMNodeID == 0 {
 			continue
 		}
-		if !nameMatches(n, name) {
+		if loc.Label != "" && loc.Role == "" && !labelTargetRole(n) {
 			continue
 		}
-		if n.BackendDOMNodeID == 0 {
+		if _, ok := seen[n.BackendDOMNodeID]; ok {
 			continue
 		}
 		el, err := page.ElementFromNode(&proto.DOMNode{BackendNodeID: n.BackendDOMNodeID})
 		if err != nil {
 			continue
 		}
-		return el, nil
+		visible, err := el.Visible()
+		if err != nil || !visible {
+			continue
+		}
+		seen[n.BackendDOMNodeID] = struct{}{}
+		matches = append(matches, el)
+	}
+	return requireUniqueLocatorMatch(matches, fmt.Sprintf("role=%q name=%q", role, name))
+}
+
+func labelTargetRole(n *proto.AccessibilityAXNode) bool {
+	switch strings.ToLower(axValueStr(n.Role)) {
+	case "textbox", "combobox", "checkbox", "radio", "switch", "slider", "spinbutton", "listbox", "button":
+		return true
+	default:
+		return false
+	}
+}
+
+func resolveByTextStrict(page *rod.Page, text string) (*rod.Element, error) {
+	literal := xpathLiteral(strings.ToLower(text))
+	xpath := fmt.Sprintf(
+		`//*[self::button or self::a or self::label or self::span or self::div or self::li or self::p or self::h1 or self::h2 or self::h3 or self::h4 or self::h5 or self::h6][contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZÀÂÄÉÈÊËÏÎÔÙÛÜÇ', 'abcdefghijklmnopqrstuvwxyzàâäéèêëïîôùûüç'), %s)]`,
+		literal,
+	)
+	els, err := page.ElementsX(xpath)
+	if err != nil {
+		return nil, fmt.Errorf("text search: %w", err)
+	}
+	matches := make([]*rod.Element, 0, len(els))
+	for _, el := range els {
+		visible, err := el.Visible()
+		if err == nil && visible {
+			matches = append(matches, el)
+		}
+	}
+	return requireUniqueLocatorMatch(matches, fmt.Sprintf("text=%q", text))
+}
+
+func requireUniqueLocatorMatch(matches []*rod.Element, description string) (*rod.Element, error) {
+	if len(matches) != 1 {
+		return nil, &LocatorMatchCountError{Description: description, Count: len(matches)}
+	}
+	return matches[0], nil
+}
+
+// LocatorMatchCountError identifies a strict semantic-locator cardinality
+// failure. Waiters retry zero matches, but reject ambiguity immediately.
+type LocatorMatchCountError struct {
+	Description string
+	Count       int
+}
+
+func (e *LocatorMatchCountError) Error() string {
+	return fmt.Sprintf("playwright locator %s matched %d visible elements; target must be unique", e.Description, e.Count)
+}
+
+func parsePlaywrightLocator(target string) (Locator, bool, error) {
+	matches := playwrightLocatorPattern.FindStringSubmatch(strings.TrimSpace(target))
+	if matches == nil {
+		return Locator{}, false, nil
 	}
 
-	return nil, fmt.Errorf("locator: no element matches role=%q name=%q", role, name)
+	var value string
+	if err := json.Unmarshal([]byte(matches[2]), &value); err != nil {
+		return Locator{}, true, fmt.Errorf("playwright locator %q: invalid string: %w", target, err)
+	}
+
+	switch matches[1] {
+	case "Text":
+		if matches[3] != "" {
+			return Locator{}, true, fmt.Errorf("playwright locator %q: getByText does not accept options", target)
+		}
+		return Locator{Text: value}, true, nil
+	case "Label":
+		if matches[3] != "" {
+			return Locator{}, true, fmt.Errorf("playwright locator %q: getByLabel does not accept options", target)
+		}
+		return Locator{Label: value}, true, nil
+	case "Role":
+		loc := Locator{Role: value}
+		if matches[3] != "" {
+			if err := json.Unmarshal([]byte(matches[3]), &loc.Name); err != nil {
+				return Locator{}, true, fmt.Errorf("playwright locator %q: invalid name: %w", target, err)
+			}
+		}
+		return loc, true, nil
+	default:
+		return Locator{}, true, fmt.Errorf("unsupported Playwright locator %q", target)
+	}
 }
 
 func pickName(loc Locator) string {
@@ -166,29 +295,4 @@ func normaliseRole(r string) string {
 		return "image"
 	}
 	return strings.ToLower(r)
-}
-
-// resolveByText uses an XPath text() match to locate the first visible node
-// whose text content contains the target (case-insensitive, trim-aware).
-func resolveByText(page *rod.Page, text string) (*rod.Element, error) {
-	// Use xpathLiteral to safely escape the search text
-	literal := xpathLiteral(strings.ToLower(text))
-	xpath := fmt.Sprintf(
-		`//*[self::button or self::a or self::label or self::span or self::div or self::li or self::p or self::h1 or self::h2 or self::h3 or self::h4 or self::h5 or self::h6][contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZÀÂÄÉÈÊËÏÎÔÙÛÜÇ', 'abcdefghijklmnopqrstuvwxyzàâäéèêëïîôùûüç'), %s)]`,
-		literal,
-	)
-	els, err := page.ElementsX(xpath)
-	if err != nil {
-		return nil, fmt.Errorf("text search: %w", err)
-	}
-	for _, el := range els {
-		visible, _ := el.Visible()
-		if visible {
-			return el, nil
-		}
-	}
-	if len(els) > 0 {
-		return els[0], nil
-	}
-	return nil, fmt.Errorf("locator: no element contains text %q", text)
 }

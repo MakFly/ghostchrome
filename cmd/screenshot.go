@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/dev-toolings/ghostchrome/engine"
@@ -23,6 +22,7 @@ var (
 	flagScreenshotUpdate    bool
 	flagAnnotate            bool
 	flagScale               float64
+	flagHires               bool
 )
 
 var screenshotCmd = &cobra.Command{
@@ -39,9 +39,12 @@ Examples:
   ghostchrome screenshot https://example.com --output page.png --quality 90`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		if flagHires && cmd.Flags().Changed("scale") && flagScale != 1 {
+			exitErr("screenshot", fmt.Errorf("--hires uses native device pixels and cannot be combined with --scale=%g", flagScale))
+		}
 		targetURL := ""
 		if len(args) > 0 {
-			if strings.HasPrefix(args[0], "@") {
+			if isSnapshotRef(args[0]) || !looksLikeURL(args[0]) {
 				if flagElement != "" && flagElement != args[0] {
 					exitErr("screenshot", fmt.Errorf("element specified twice: %s and %s", flagElement, args[0]))
 				}
@@ -55,7 +58,7 @@ Examples:
 		defer b.Close()
 
 		var snapshot *engine.PageSnapshot
-		if flagElement != "" || targetURL != "" || flagAnnotate {
+		if isSnapshotRef(flagElement) || targetURL != "" || flagAnnotate {
 			snapshot = ensureSnapshot(b, page, targetURL, "load", engine.LevelSkeleton)
 		}
 
@@ -210,5 +213,6 @@ func init() {
 	screenshotCmd.Flags().BoolVar(&flagScreenshotUpdate, "update", false, "Overwrite the baseline with the new screenshot (no diff)")
 	screenshotCmd.Flags().BoolVar(&flagAnnotate, "annotate", false, "Overlay numbered borders on interactive elements (forces PNG output)")
 	screenshotCmd.Flags().Float64Var(&flagScale, "scale", 1.0, "Device scale factor for full-page captures (0.5 = half resolution, smaller file)")
+	screenshotCmd.Flags().BoolVar(&flagHires, "hires", false, "Capture using native device pixels (the default; Playwright CLI-compatible alias)")
 	rootCmd.AddCommand(screenshotCmd)
 }

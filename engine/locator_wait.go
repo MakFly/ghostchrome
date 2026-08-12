@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/go-rod/rod"
@@ -75,6 +76,8 @@ func WaitForLocator(page *rod.Page, loc Locator, state ElementState, timeout tim
 			if stateErr := checkState(el, state); stateErr == nil {
 				return el, nil
 			}
+		} else if isAmbiguousLocatorError(resolveErr) {
+			return nil, resolveErr
 		} else if state == StateHidden {
 			// Element not found in the a11y tree at all → it is effectively hidden.
 			return nil, nil
@@ -86,6 +89,61 @@ func WaitForLocator(page *rod.Page, loc Locator, state ElementState, timeout tim
 		case <-time.After(interval):
 		}
 
+		interval *= 2
+		if interval > maxInterval {
+			interval = maxInterval
+		}
+	}
+}
+
+func isAmbiguousLocatorError(err error) bool {
+	var countErr *LocatorMatchCountError
+	return errors.As(err, &countErr) && countErr.Count > 1
+}
+
+// WaitForTarget waits for a ref, strict CSS selector, or supported Playwright
+// locator string. Refs retain their persisted snapshot mapping; CSS selectors
+// and locator strings are resolved afresh while polling.
+func WaitForTarget(page *rod.Page, target string, snapshot *PageSnapshot, state ElementState, timeout time.Duration) (*rod.Element, error) {
+	if strings.HasPrefix(InternalRef(strings.TrimSpace(target)), "@") {
+		return WaitForRef(page, target, snapshot, state, timeout)
+	}
+	if locator, isLocator, err := parsePlaywrightLocator(target); isLocator {
+		if err != nil {
+			return nil, err
+		}
+		return WaitForLocator(page, locator, state, timeout)
+	}
+	if timeout <= 0 {
+		el, err := ResolveTarget(page, target, snapshot)
+		if err != nil {
+			if state == StateHidden {
+				return nil, nil
+			}
+			return nil, err
+		}
+		return el, checkState(el, state)
+	}
+
+	ctx, cancel := context.WithTimeout(page.GetContext(), timeout)
+	defer cancel()
+	interval := 100 * time.Millisecond
+	const maxInterval = 500 * time.Millisecond
+	for {
+		el, err := ResolveTarget(page, target, snapshot)
+		if err == nil {
+			if stateErr := checkState(el, state); stateErr == nil {
+				return el, nil
+			}
+		} else if state == StateHidden {
+			return nil, nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("wait for target %q (state=%s) timed out after %s", target, state, timeout)
+		case <-time.After(interval):
+		}
 		interval *= 2
 		if interval > maxInterval {
 			interval = maxInterval

@@ -47,10 +47,11 @@ type playwrightCLIConfig struct {
 			ServiceWorkers string                       `json:"serviceWorkers"`
 		} `json:"contextOptions"`
 	} `json:"browser"`
-	OutputDir  string                  `json:"outputDir"`
-	OutputMode string                  `json:"outputMode"`
-	Console    *struct{ Level string } `json:"console"`
-	Network    *struct {
+	OutputDir     string                  `json:"outputDir"`
+	OutputMode    string                  `json:"outputMode"`
+	OutputMaxSize int                     `json:"outputMaxSize"`
+	Console       *struct{ Level string } `json:"console"`
+	Network       *struct {
 		AllowedOrigins []string `json:"allowedOrigins"`
 		BlockedOrigins []string `json:"blockedOrigins"`
 	} `json:"network"`
@@ -227,6 +228,13 @@ func applyPlaywrightEnvConfig(cmd *cobra.Command, unsupported *[]string) {
 	if env := strings.TrimSpace(os.Getenv("PLAYWRIGHT_MCP_OUTPUT_DIR")); env != "" {
 		flagConfigOutputDir = env
 	}
+	if env := strings.TrimSpace(os.Getenv("PLAYWRIGHT_MCP_OUTPUT_MAX_SIZE")); env != "" && !flagChanged(cmd, "output-max-size") {
+		if size, err := strconv.Atoi(env); err == nil && size >= 0 {
+			flagOutputMaxSize = size
+		} else {
+			*unsupported = append(*unsupported, "PLAYWRIGHT_MCP_OUTPUT_MAX_SIZE")
+		}
+	}
 	if env := strings.TrimSpace(os.Getenv("PLAYWRIGHT_MCP_CONSOLE_LEVEL")); env != "" && !flagChanged(cmd, "level") {
 		if level, ok := normalizeConsoleConfigLevel(env); ok {
 			flagConsoleLevel = level
@@ -265,6 +273,11 @@ func applyConfigValues(cmd *cobra.Command, cfg *playwrightCLIConfig, configDir s
 	applyAutoVideoConfig(cfg, unsupported)
 	if cfg.OutputDir != "" {
 		flagConfigOutputDir = resolveConfigPath(configDir, cfg.OutputDir)
+	}
+	if cfg.OutputMaxSize > 0 && !flagChanged(cmd, "output-max-size") {
+		flagOutputMaxSize = cfg.OutputMaxSize
+	} else if cfg.OutputMaxSize < 0 {
+		*unsupported = append(*unsupported, "outputMaxSize")
 	}
 	if cfg.Console != nil && cfg.Console.Level != "" && !flagChanged(cmd, "level") {
 		if level, ok := normalizeConsoleConfigLevel(cfg.Console.Level); ok {
@@ -588,9 +601,6 @@ func appendUnsupportedTopLevel(cfg *playwrightCLIConfig, unsupported *[]string) 
 	if cfg.ImageResponses != "" {
 		*unsupported = append(*unsupported, "imageResponses")
 	}
-	if len(cfg.Secrets) > 0 {
-		*unsupported = append(*unsupported, "secrets")
-	}
 	if cfg.TestIDAttribute != "" {
 		*unsupported = append(*unsupported, "testIdAttribute")
 	}
@@ -742,6 +752,7 @@ var configPrintCmd = &cobra.Command{
 			OutputFormat      string         `json:"output_format"`
 			UnsupportedFields []string       `json:"unsupported_fields,omitempty"`
 			OutputDir         string         `json:"output_dir,omitempty"`
+			OutputMaxSize     int            `json:"output_max_size,omitempty"`
 			ConsoleLevel      string         `json:"console_level,omitempty"`
 		}
 		out := result{
@@ -765,6 +776,7 @@ var configPrintCmd = &cobra.Command{
 			RenderProfile:   flagProfile,
 			OutputFormat:    flagFormat,
 			OutputDir:       flagConfigOutputDir,
+			OutputMaxSize:   flagOutputMaxSize,
 			ConsoleLevel:    flagConsoleLevel,
 		}
 		if loadedPlaywrightConfig != nil {

@@ -71,21 +71,18 @@ Examples:
 				exitErr("type", err)
 			}
 		} else {
-			snapshot := ensureSnapshot(b, page, targetURL, "load", engine.LevelSkeleton)
+			var snapshot *engine.PageSnapshot
+			if targetURL != "" || isSnapshotRef(ref) {
+				snapshot = ensureSnapshot(b, page, targetURL, "load", engine.LevelSkeleton)
+			}
 			switch {
 			case typeLocator.Any():
 				typedEl, rerr = engine.WaitForLocator(page, typeLocator.ToLocator(), waitState, waitTimeout)
 				if rerr != nil {
 					exitErr("type", rerr)
 				}
-			case waitTimeout > 0:
-				typedEl, rerr = engine.WaitForRef(page, ref, snapshot, waitState, waitTimeout)
-				if rerr != nil {
-					exitIfStaleRef(rerr, "type")
-					exitErr("type", rerr)
-				}
 			default:
-				typedEl, rerr = engine.ResolveRef(page, ref, snapshot)
+				typedEl, rerr = engine.WaitForTarget(page, ref, snapshot, waitState, waitTimeout)
 				if rerr != nil {
 					exitIfStaleRef(rerr, "type")
 					exitErr("type", rerr)

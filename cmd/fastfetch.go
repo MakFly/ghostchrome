@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -117,8 +118,8 @@ func runFastfetch(_ *cobra.Command, args []string) {
 		}
 	}
 
-	w, closeFn := openFastfetchWriter()
-	defer closeFn()
+	var payload bytes.Buffer
+	w := &payload
 
 	switch {
 	case fastfetchRaw:
@@ -181,6 +182,9 @@ func runFastfetch(_ *cobra.Command, args []string) {
 		if err := enc.Encode(env); err != nil {
 			exitErr("fastfetch encode", err)
 		}
+	}
+	if err := writeFastfetchOutput(payload.Bytes()); err != nil {
+		exitErr("fastfetch write", err)
 	}
 
 	// Always print a one-line stderr summary when not raw/next-data so
@@ -262,28 +266,29 @@ func fastfetchViaBrowser(target string) (*engine.FastResult, error) {
 	return res, nil
 }
 
-// openFastfetchWriter returns the writer for command output and a closer
-// that callers must defer. When --output is set we route through the same
-// validateOutputPath sanitizer used by other commands.
-func openFastfetchWriter() (writeCloser, func()) {
+// writeFastfetchOutput applies the same secret and output-size controls as the
+// common command renderer. Fastfetch already holds its response in memory, so
+// buffering here adds no unbounded allocation while closing the raw-HTML
+// bypass around global output safety.
+func writeFastfetchOutput(data []byte) error {
+	data = redactOutput(data, flagOutputSecrets)
 	if fastfetchOutput == "" {
-		return stdoutWriteCloser{}, func() {}
+		oldRaw := flagRaw
+		flagRaw = flagRaw || fastfetchRaw || fastfetchNextDataOnly
+		limited, err := limitOutput(data)
+		flagRaw = oldRaw
+		if err != nil {
+			return err
+		}
+		_, err = os.Stdout.Write(limited)
+		return err
 	}
 	safe, err := validateOutputPath(fastfetchOutput)
 	if err != nil {
-		exitErr("output", err)
+		return err
 	}
-	f, err := os.Create(safe)
-	if err != nil {
-		exitErr("output", err)
+	if err := os.WriteFile(safe, data, 0o600); err != nil {
+		return err
 	}
-	return f, func() { _ = f.Close() }
+	return os.Chmod(safe, 0o600)
 }
-
-type writeCloser interface {
-	Write(p []byte) (int, error)
-}
-
-type stdoutWriteCloser struct{}
-
-func (stdoutWriteCloser) Write(p []byte) (int, error) { return os.Stdout.Write(p) }

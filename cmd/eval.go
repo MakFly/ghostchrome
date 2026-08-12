@@ -4,7 +4,6 @@ import (
 	"errors"
 	"io"
 	"os"
-	"strings"
 
 	"github.com/dev-toolings/ghostchrome/engine"
 	"github.com/spf13/cobra"
@@ -56,7 +55,7 @@ Examples:
 		}
 		targetURL := ""
 		if len(args) > urlArgIdx {
-			if strings.HasPrefix(args[urlArgIdx], "@") {
+			if isSnapshotRef(args[urlArgIdx]) || !looksLikeURL(args[urlArgIdx]) {
 				if flagOnRef != "" && flagOnRef != args[urlArgIdx] {
 					exitErr("eval", errors.New("element ref specified twice"))
 				}
@@ -70,7 +69,7 @@ Examples:
 		defer b.Close()
 
 		var snapshot *engine.PageSnapshot
-		if flagOnRef != "" || targetURL != "" {
+		if isSnapshotRef(flagOnRef) || targetURL != "" {
 			snapshot = ensureSnapshot(b, page, targetURL, "load", engine.LevelSkeleton)
 		}
 

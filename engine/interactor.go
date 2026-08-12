@@ -18,7 +18,7 @@ import (
 var ErrStaleRef = errors.New("stale ref: snapshot is missing or no longer matches the page")
 
 func parseRef(ref string) (string, error) {
-	trimmed := strings.TrimPrefix(ref, "@")
+	trimmed := strings.TrimPrefix(InternalRef(ref), "@")
 	idx, err := strconv.Atoi(trimmed)
 	if err != nil || idx < 1 {
 		return "", fmt.Errorf("invalid ref %q: must be @N where N >= 1", ref)
@@ -352,7 +352,7 @@ func takeScreenshotImpl(page *rod.Page, fullPage bool, elementRef string, format
 	}
 
 	if elementRef != "" {
-		el, err := ResolveRef(page, elementRef, snapshot)
+		el, err := ResolveTarget(page, elementRef, snapshot)
 		if err != nil {
 			return nil, err
 		}
@@ -442,7 +442,7 @@ func elementScreenshotFmt(el *rod.Element, fmt_ proto.PageCaptureScreenshotForma
 // If elementRef is non-empty, the JS runs with `this` bound to that element.
 func EvalJS(page *rod.Page, expr string, elementRef string, snapshot *PageSnapshot) (string, error) {
 	if elementRef != "" {
-		el, err := ResolveRef(page, elementRef, snapshot)
+		el, err := ResolveTarget(page, elementRef, snapshot)
 		if err != nil {
 			return "", err
 		}

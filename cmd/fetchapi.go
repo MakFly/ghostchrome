@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -167,13 +168,14 @@ func readFetchapiBody() []byte {
 }
 
 func emitFetchapiResponse(res *engine.APIResponse) {
-	w, closeFn := openFetchapiWriter()
-	defer closeFn()
+	var payload bytes.Buffer
+	w := &payload
+	exitCode := 0
 
 	if fetchapiBodyOnly {
 		if res.Status >= 400 {
 			fmt.Fprintf(os.Stderr, "[fetchapi] non-2xx status=%d\n", res.Status)
-			defer os.Exit(1)
+			exitCode = 1
 		}
 		if res.IsJSON && fetchapiPretty {
 			var v interface{}
@@ -182,43 +184,57 @@ func emitFetchapiResponse(res *engine.APIResponse) {
 				enc.SetEscapeHTML(false)
 				enc.SetIndent("", "  ")
 				_ = enc.Encode(v)
-				return
+			} else {
+				_, _ = w.Write(res.JSON)
+				fmt.Fprintln(w)
 			}
-		}
-		if res.IsJSON {
+		} else if res.IsJSON {
 			_, _ = w.Write(res.JSON)
 			fmt.Fprintln(w)
-			return
+		} else {
+			_, _ = w.Write(res.Body)
 		}
-		_, _ = w.Write(res.Body)
-		return
+	} else {
+		enc := json.NewEncoder(w)
+		enc.SetEscapeHTML(false)
+		if fetchapiPretty {
+			enc.SetIndent("", "  ")
+		}
+		if err := enc.Encode(res); err != nil {
+			exitErr("fetchapi encode", err)
+		}
+		fmt.Fprintf(os.Stderr, "[fetchapi] %s status=%d is_json=%v size=%dB elapsed=%dms\n",
+			res.URL, res.Status, res.IsJSON, res.ContentLength, res.ElapsedMs)
 	}
-
-	enc := json.NewEncoder(w)
-	enc.SetEscapeHTML(false)
-	if fetchapiPretty {
-		enc.SetIndent("", "  ")
+	if err := writeFetchapiOutput(payload.Bytes()); err != nil {
+		exitErr("fetchapi write", err)
 	}
-	if err := enc.Encode(res); err != nil {
-		exitErr("fetchapi encode", err)
+	if exitCode != 0 {
+		exitNow(exitCode)
 	}
-	fmt.Fprintf(os.Stderr, "[fetchapi] %s status=%d is_json=%v size=%dB elapsed=%dms\n",
-		res.URL, res.Status, res.IsJSON, res.ContentLength, res.ElapsedMs)
 }
 
-func openFetchapiWriter() (writeCloser, func()) {
+func writeFetchapiOutput(data []byte) error {
+	data = redactOutput(data, flagOutputSecrets)
 	if fetchapiOutput == "" {
-		return stdoutWriteCloser{}, func() {}
+		oldRaw := flagRaw
+		flagRaw = flagRaw || fetchapiBodyOnly
+		limited, err := limitOutput(data)
+		flagRaw = oldRaw
+		if err != nil {
+			return err
+		}
+		_, err = os.Stdout.Write(limited)
+		return err
 	}
 	safe, err := validateOutputPath(fetchapiOutput)
 	if err != nil {
-		exitErr("output", err)
+		return err
 	}
-	f, err := os.Create(safe)
-	if err != nil {
-		exitErr("output", err)
+	if err := os.WriteFile(safe, data, 0o600); err != nil {
+		return err
 	}
-	return f, func() { _ = f.Close() }
+	return os.Chmod(safe, 0o600)
 }
 
 // (parseFastfetchHeaders is defined in cmd/fastfetch.go; we reuse it here.)

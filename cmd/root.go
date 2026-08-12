@@ -23,6 +23,11 @@ var (
 	flagInvisible            bool
 	flagTimeout              int
 	flagFormat               string
+	flagJSON                 bool
+	flagRaw                  bool
+	flagOutputMaxSize        int
+	flagSecretsFile          string
+	flagOutputSecrets        []string
 	flagProfile              string
 	flagUserProfile          string
 	flagUserDataDir          string
@@ -158,6 +163,15 @@ Run 'ghostchrome linkedin --help' to see LinkedIn recipes.`,
 			}
 		}
 		if err := applyPlaywrightConfig(cmd); err != nil {
+			return err
+		}
+		if flagJSON {
+			flagFormat = "json"
+		}
+		if flagOutputMaxSize < 0 {
+			return fmt.Errorf("invalid --output-max-size %d: use zero or a positive byte count", flagOutputMaxSize)
+		}
+		if err := loadConfiguredOutputSecrets(); err != nil {
 			return err
 		}
 		if flagHeaded {
@@ -307,6 +321,10 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&flagInvisible, "invisible", false, "Run Chrome headful but positioned off-screen (best for anti-bot: real GPU/fingerprint, no visible window). Implies --headless=false.")
 	rootCmd.PersistentFlags().IntVar(&flagTimeout, "timeout", 30, "Timeout in seconds for operations")
 	rootCmd.PersistentFlags().StringVar(&flagFormat, "format", "text", "Output format: json or text")
+	rootCmd.PersistentFlags().BoolVar(&flagJSON, "json", false, "Wrap command output as JSON (Playwright CLI-compatible alias)")
+	rootCmd.PersistentFlags().BoolVar(&flagRaw, "raw", false, "Output only the result value without page status or generated sections")
+	rootCmd.PersistentFlags().IntVar(&flagOutputMaxSize, "output-max-size", 0, "Maximum stdout payload in bytes; larger output is written to an artifact (0 = unlimited)")
+	rootCmd.PersistentFlags().StringVar(&flagSecretsFile, "secrets-file", "", "Dotenv file whose values are redacted from stdout and output artifacts")
 	rootCmd.PersistentFlags().StringVar(&flagProfile, "profile", "auto", "Output profile: auto (detect agent env), human, or agent (compact)")
 	rootCmd.PersistentFlags().BoolVar(&flagStealth, "stealth", false, "Enable stealth mode (hide headless fingerprints)")
 	rootCmd.PersistentFlags().BoolVar(&flagEvadeRuntime, "evade-runtime", false, "Avoid CDP Runtime.enable (rebrowser-style anti-bot evasion; disables JS console-error capture). Also via GHOSTCHROME_EVADE_RUNTIME=1")

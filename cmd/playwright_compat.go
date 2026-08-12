@@ -16,6 +16,8 @@ var (
 	flagOpenBrowser    string
 	flagOpenPersistent bool
 	flagOpenProfileDir string
+	flagOpenMobile     bool
+	flagOpenDevice     string
 )
 
 var openCmd = &cobra.Command{
@@ -39,6 +41,13 @@ entrypoint for ghostchrome's existing browser/session model.`,
 
 		b, page := openPage()
 		defer b.Close()
+		if flagConfigDevice != "" {
+			if device, ok := engine.DeviceByName(flagConfigDevice); ok {
+				if err := b.SetEmulationState(engine.EmulationFromDevice(device)); err != nil {
+					exitErr("open --device", err)
+				}
+			}
+		}
 
 		info := navigateIfRequested(page, targetURL, "load")
 		if info == nil {
@@ -65,6 +74,12 @@ entrypoint for ghostchrome's existing browser/session model.`,
 func applyOpenCompatFlags(cmd *cobra.Command) (func(), error) {
 	oldUserProfile := flagUserProfile
 	oldUserDataDir := flagUserDataDir
+	oldConfigDevice := flagConfigDevice
+	restore := func() {
+		flagUserProfile = oldUserProfile
+		flagUserDataDir = oldUserDataDir
+		flagConfigDevice = oldConfigDevice
+	}
 
 	browser := flagOpenBrowser
 	if !flagChanged(cmd, "browser") && loadedPlaywrightConfig != nil && loadedPlaywrightConfig.Config.Browser != nil {
@@ -78,26 +93,44 @@ func applyOpenCompatFlags(cmd *cobra.Command) (func(), error) {
 	switch strings.ToLower(browser) {
 	case "", "chrome", "chromium":
 	case "firefox", "webkit", "msedge":
-		return func() {}, fmt.Errorf("--browser=%s is not supported by ghostchrome's CDP/Rod launcher yet", browser)
+		return restore, fmt.Errorf("--browser=%s is not supported by ghostchrome's CDP/Rod launcher yet", browser)
 	default:
-		return func() {}, fmt.Errorf("unknown --browser %q: use chrome, chromium, firefox, webkit, or msedge", browser)
+		return restore, fmt.Errorf("unknown --browser %q: use chrome, chromium, firefox, webkit, or msedge", browser)
 	}
 
 	if flagOpenProfileDir != "" {
 		dir, err := filepath.Abs(flagOpenProfileDir)
 		if err != nil {
-			return func() {}, err
+			return restore, err
 		}
 		flagUserDataDir = dir
 		flagUserProfile = ""
 	} else if flagOpenPersistent && flagUserProfile == "" && flagUserDataDir == "" {
 		flagUserProfile = "default"
 	}
+	if flagOpenMobile && flagOpenDevice != "" {
+		restore()
+		return restore, fmt.Errorf("use either --mobile or --device, not both")
+	}
+	if flagOpenMobile {
+		flagConfigDevice = "pixel-7"
+	}
+	if flagOpenDevice != "" {
+		deviceName := normalizeOpenDeviceName(flagOpenDevice)
+		if _, ok := engine.DeviceByName(deviceName); !ok {
+			restore()
+			return restore, fmt.Errorf("unknown --device %q (use `ghostchrome emulate --list`)", flagOpenDevice)
+		}
+		flagConfigDevice = deviceName
+	}
 
-	return func() {
-		flagUserProfile = oldUserProfile
-		flagUserDataDir = oldUserDataDir
-	}, nil
+	return restore, nil
+}
+
+func normalizeOpenDeviceName(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	name = strings.NewReplacer(" ", "-", "_", "-").Replace(name)
+	return name
 }
 
 var stateSaveCmd = &cobra.Command{
@@ -348,6 +381,8 @@ func init() {
 	openCmd.Flags().StringVar(&flagOpenBrowser, "browser", "chrome", "Browser to launch; ghostchrome currently supports chrome/chromium only")
 	openCmd.Flags().BoolVar(&flagOpenPersistent, "persistent", false, "Use a persistent browser profile (defaults to ghostchrome profile \"default\")")
 	openCmd.Flags().StringVar(&flagOpenProfileDir, "profile", "", "Custom browser profile directory (Playwright CLI-compatible)")
+	openCmd.Flags().BoolVar(&flagOpenMobile, "mobile", false, "Emulate a generic mobile device (Pixel 7)")
+	openCmd.Flags().StringVar(&flagOpenDevice, "device", "", "Emulate a ghostchrome device preset, e.g. iphone-14")
 	stateSaveCmd.Flags().StringVar(&flagStorageOutput, "output", "", "Output file path")
 	stateSaveCmd.Flags().BoolVar(&flagStorageEncrypt, "encrypt", false, "Encrypt the output with AES-256-GCM (requires GHOSTCHROME_VAULT_KEY env var)")
 	closeCompatCmd.Flags().BoolVar(&flagSessionsPurge, "purge", false, "Also delete the session's on-disk profile")

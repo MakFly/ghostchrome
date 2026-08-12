@@ -35,6 +35,7 @@ func TestApplyPlaywrightConfigMappedFields(t *testing.T) {
   },
   "console": { "level": "warning" },
   "outputDir": "./artifacts",
+	"outputMaxSize": 12345,
   "timeouts": { "navigation": 12500 }
 }`
 	if err := os.WriteFile(configPath, []byte(body), 0o600); err != nil {
@@ -75,6 +76,9 @@ func TestApplyPlaywrightConfigMappedFields(t *testing.T) {
 	if flagConfigOutputDir != filepath.Join(dir, "artifacts") {
 		t.Fatalf("flagConfigOutputDir = %q", flagConfigOutputDir)
 	}
+	if flagOutputMaxSize != 12345 {
+		t.Fatalf("flagOutputMaxSize = %d", flagOutputMaxSize)
+	}
 	if flagConsoleLevel != "warning" {
 		t.Fatalf("flagConsoleLevel = %q", flagConsoleLevel)
 	}
@@ -113,6 +117,7 @@ func TestApplyPlaywrightConfigEnvMappedFields(t *testing.T) {
 	t.Setenv("PLAYWRIGHT_MCP_PROXY_BYPASS", "localhost")
 	t.Setenv("PLAYWRIGHT_MCP_IGNORE_HTTPS_ERRORS", "true")
 	t.Setenv("PLAYWRIGHT_MCP_OUTPUT_DIR", "/tmp/pw-output")
+	t.Setenv("PLAYWRIGHT_MCP_OUTPUT_MAX_SIZE", "54321")
 	t.Setenv("PLAYWRIGHT_MCP_CONSOLE_LEVEL", "debug")
 
 	if err := applyPlaywrightConfig(&cobra.Command{Use: "test"}); err != nil {
@@ -156,6 +161,9 @@ func TestApplyPlaywrightConfigEnvMappedFields(t *testing.T) {
 	}
 	if flagConfigOutputDir != "/tmp/pw-output" {
 		t.Fatalf("flagConfigOutputDir = %q", flagConfigOutputDir)
+	}
+	if flagOutputMaxSize != 54321 {
+		t.Fatalf("flagOutputMaxSize = %d", flagOutputMaxSize)
 	}
 	if flagConsoleLevel != "debug" {
 		t.Fatalf("flagConsoleLevel = %q", flagConsoleLevel)
@@ -633,6 +641,7 @@ func snapshotConfigGlobals() func() {
 	oldConfigExecutablePath := flagConfigExecutablePath
 	oldConfigLaunchArgs := flagConfigLaunchArgs
 	oldConfigOutputDir := flagConfigOutputDir
+	oldOutputMaxSize := flagOutputMaxSize
 	oldConfigDevice := flagConfigDevice
 	oldConfigIgnoreHTTPSErr := flagConfigIgnoreHTTPSErr
 	oldConfigCDPHeaders := flagConfigCDPHeaders
@@ -666,6 +675,7 @@ func snapshotConfigGlobals() func() {
 		flagConfigExecutablePath = oldConfigExecutablePath
 		flagConfigLaunchArgs = oldConfigLaunchArgs
 		flagConfigOutputDir = oldConfigOutputDir
+		flagOutputMaxSize = oldOutputMaxSize
 		flagConfigDevice = oldConfigDevice
 		flagConfigIgnoreHTTPSErr = oldConfigIgnoreHTTPSErr
 		flagConfigCDPHeaders = oldConfigCDPHeaders

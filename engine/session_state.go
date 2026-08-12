@@ -95,17 +95,18 @@ type BrowserTraceState struct {
 	Output    string `json:"output,omitempty"`
 }
 
-// VideoState tracks Playwright CLI-compatible video command metadata. A true
-// WebM recorder is not implemented yet; commands use this to persist chapter
-// markers and requested output metadata.
+// VideoState tracks a durable CDP screencast recording. The artifact is a
+// sequence of JPEG frames, never a WebM file.
 type VideoState struct {
-	Active    bool           `json:"active,omitempty"`
-	StartedAt string         `json:"started_at,omitempty"`
-	Filename  string         `json:"filename,omitempty"`
-	Size      string         `json:"size,omitempty"`
-	Auto      bool           `json:"auto,omitempty"`
-	Source    string         `json:"source,omitempty"`
-	Chapters  []VideoChapter `json:"chapters,omitempty"`
+	Active        bool           `json:"active,omitempty"`
+	StartedAt     string         `json:"started_at,omitempty"`
+	Filename      string         `json:"filename,omitempty"`
+	FramesDir     string         `json:"frames_dir,omitempty"`
+	RuntimeStatus string         `json:"runtime_status,omitempty"`
+	Size          string         `json:"size,omitempty"`
+	Auto          bool           `json:"auto,omitempty"`
+	Source        string         `json:"source,omitempty"`
+	Chapters      []VideoChapter `json:"chapters,omitempty"`
 }
 
 // VideoChapter is one requested video chapter marker.

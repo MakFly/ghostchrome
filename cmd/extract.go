@@ -18,6 +18,7 @@ var (
 	flagSnapshotFile    string
 	flagSnapshotDepth   int
 	flagSnapshotRaw     bool
+	flagSnapshotBoxes   bool
 )
 
 var extractCmd = &cobra.Command{
@@ -111,6 +112,9 @@ Extraction levels:
 			fresh = nil
 		}
 		result = engine.LimitExtractionDepth(result, flagSnapshotDepth)
+		if isSnapshot && flagSnapshotBoxes {
+			engine.AddExtractionBoxes(page, result)
+		}
 
 		profile := renderProfile()
 		profile.ContentBoundary = flagContentBoundary
@@ -246,6 +250,7 @@ func init() {
 	extractCmd.Flags().StringVar(&flagSnapshotFile, "filename", "", "Write snapshot output to this file")
 	extractCmd.Flags().IntVar(&flagSnapshotDepth, "depth", -1, "Limit snapshot tree depth (-1 = unlimited)")
 	extractCmd.Flags().BoolVar(&flagSnapshotRaw, "raw", false, "Return only snapshot tree output")
+	extractCmd.Flags().BoolVar(&flagSnapshotBoxes, "boxes", false, "Include viewport-relative element boxes in CSS pixels")
 	extractCmd.Flags().BoolVar(&flagContentBoundary, "content-boundary", false, "Wrap page-derived text with sentinel markers (⟦page⟧…⟦/page⟧) for prompt-injection defense")
 	rootCmd.AddCommand(extractCmd)
 }

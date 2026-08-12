@@ -57,7 +57,10 @@ Examples:
 		b, page := openPage()
 		defer b.Close()
 
-		snapshot := ensureSnapshot(b, page, targetURL, "load", engine.LevelSkeleton)
+		var snapshot *engine.PageSnapshot
+		if targetURL != "" || isSnapshotRef(ref) {
+			snapshot = ensureSnapshot(b, page, targetURL, "load", engine.LevelSkeleton)
+		}
 
 		waitState, waitTimeout := resolveWaitFlags(cmd, clickWaitFor, clickWaitTimeoutMs)
 
@@ -70,24 +73,13 @@ Examples:
 				exitErr("click", err)
 			}
 		} else {
-			if waitTimeout > 0 {
-				el, err := engine.WaitForRef(page, ref, snapshot, waitState, waitTimeout)
-				if err != nil {
-					exitIfStaleRef(err, "click")
-					exitErr("click", err)
-				}
-				if err := engine.ClickElementWithButton(page, el, button); err != nil {
-					exitErr("click", err)
-				}
-			} else {
-				el, err := engine.ResolveRef(page, ref, snapshot)
-				if err != nil {
-					exitIfStaleRef(err, "click")
-					exitErr("click", err)
-				}
-				if err := engine.ClickElementWithButton(page, el, button); err != nil {
-					exitErr("click", err)
-				}
+			el, err := engine.WaitForTarget(page, ref, snapshot, waitState, waitTimeout)
+			if err != nil {
+				exitIfStaleRef(err, "click")
+				exitErr("click", err)
+			}
+			if err := engine.ClickElementWithButton(page, el, button); err != nil {
+				exitErr("click", err)
 			}
 		}
 

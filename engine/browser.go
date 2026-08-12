@@ -323,18 +323,19 @@ func needsNoSandbox() bool {
 
 // Browser wraps a Rod browser with connect/launch logic.
 type Browser struct {
-	browser      *rod.Browser
-	page         *rod.Page
-	timeout      time.Duration
-	connected    bool // true if connected to external Chrome (don't close it)
-	attachFresh  bool // true when ConnectURL points at a foreign Chrome we must not disturb
-	connectURL   string
-	statePath    string
-	state        *sessionState
-	targetTab    *int
-	applyProfile bool
-	managed      bool   // true when ConnectURL points at a ghostchrome-managed session
-	contextName  string // non-empty when operating inside a named BrowserContext
+	browser           *rod.Browser
+	page              *rod.Page
+	timeout           time.Duration
+	connected         bool // true if connected to external Chrome (don't close it)
+	attachFresh       bool // true when ConnectURL points at a foreign Chrome we must not disturb
+	connectURL        string
+	statePath         string
+	state             *sessionState
+	targetTab         *int
+	applyProfile      bool
+	managed           bool   // true when ConnectURL points at a ghostchrome-managed session
+	contextName       string // non-empty when operating inside a named BrowserContext
+	continuousLogPath string
 
 	// providerCleanup releases provider-owned Chrome resources (set only
 	// when the browser was provisioned via BrowserOpts.ProviderFunc).
@@ -500,18 +501,24 @@ func NewBrowserWith(opts BrowserOpts) (*Browser, error) {
 	// foreign user tab by default.
 	applyProfile := opts.ApplyProfile || connectURL == ""
 
+	continuousLogPath := ""
+	if connectURL != "" && opts.ManagedSession {
+		continuousLogPath, _ = continuousObserverLogPath(connectURL)
+	}
+
 	return &Browser{
-		browser:      b,
-		timeout:      timeout,
-		connected:    connectURL != "",
-		attachFresh:  connectURL != "" && opts.AttachFresh,
-		connectURL:   connectURL,
-		statePath:    statePath,
-		state:        state,
-		targetTab:    opts.TargetTabIndex,
-		applyProfile: applyProfile,
-		managed:      connectURL != "" && opts.ManagedSession,
-		contextName:  opts.ContextName,
+		browser:           b,
+		timeout:           timeout,
+		connected:         connectURL != "",
+		attachFresh:       connectURL != "" && opts.AttachFresh,
+		connectURL:        connectURL,
+		statePath:         statePath,
+		state:             state,
+		targetTab:         opts.TargetTabIndex,
+		applyProfile:      applyProfile,
+		managed:           connectURL != "" && opts.ManagedSession,
+		contextName:       opts.ContextName,
+		continuousLogPath: continuousLogPath,
 
 		providerCleanup: providerCleanup,
 		ownedLauncher:   ownedLauncher,
@@ -822,6 +829,16 @@ func (b *Browser) Connected() bool {
 	return b.connected
 }
 
+// ConnectURL returns the resolved CDP endpoint used by this browser. Managed
+// sessions and --connect=auto resolve their endpoint before Browser creation,
+// so detached helpers must use this value instead of the original CLI flag.
+func (b *Browser) ConnectURL() string {
+	if b == nil {
+		return ""
+	}
+	return b.connectURL
+}
+
 // RodBrowser returns the underlying rod.Browser for advanced operations.
 func (b *Browser) RodBrowser() *rod.Browser {
 	return b.browser
@@ -973,12 +990,24 @@ func (b *Browser) AppendConsoleLog(events []ObserverEvent) error {
 	if !b.connected || b.state == nil || len(events) == 0 {
 		return nil
 	}
+	if b.hasContinuousObserverLog() {
+		return nil
+	}
 	b.state.PlaywrightLog.Console = appendBoundedConsole(b.state.PlaywrightLog.Console, events, maxPlaywrightLogEntries)
 	return saveSessionState(b.statePath, b.state)
 }
 
 // ConsoleLog returns a copy of the persistent console log.
 func (b *Browser) ConsoleLog() []ObserverEvent {
+	if events, ok := b.continuousEvents(); ok {
+		out := make([]ObserverEvent, 0, len(events))
+		for _, event := range events {
+			if event.Kind == KindConsole || event.Kind == KindError {
+				out = append(out, event)
+			}
+		}
+		return out
+	}
 	if !b.connected || b.state == nil || len(b.state.PlaywrightLog.Console) == 0 {
 		return nil
 	}
@@ -993,12 +1022,20 @@ func (b *Browser) ClearConsoleLog() error {
 		return nil
 	}
 	b.state.PlaywrightLog.Console = nil
+	if b.continuousLogPath != "" {
+		if err := appendContinuousClear(b.continuousLogPath, KindConsole); err != nil {
+			return err
+		}
+	}
 	return saveSessionState(b.statePath, b.state)
 }
 
 // AppendNetworkLog appends network entries to the persistent session log.
 func (b *Browser) AppendNetworkLog(entries []*CapturedEntry) error {
 	if !b.connected || b.state == nil || len(entries) == 0 {
+		return nil
+	}
+	if b.hasContinuousObserverLog() {
 		return nil
 	}
 	for _, entry := range entries {
@@ -1013,6 +1050,30 @@ func (b *Browser) AppendNetworkLog(entries []*CapturedEntry) error {
 
 // NetworkLog returns a copy of the persistent network log.
 func (b *Browser) NetworkLog() []*CapturedEntry {
+	if events, ok := b.continuousEvents(); ok {
+		out := make([]*CapturedEntry, 0, len(events))
+		for _, event := range events {
+			if event.Kind != KindNet {
+				continue
+			}
+			out = append(out, &CapturedEntry{
+				RequestID:    event.RequestID,
+				Method:       event.Method,
+				URL:          event.URL,
+				ResourceType: event.Type,
+				Status:       event.Status,
+				MimeType:     event.MimeType,
+				ReqHeaders:   event.ReqHeaders,
+				ResHeaders:   event.ResHeaders,
+				PostData:     event.PostData,
+				Body:         event.Body,
+				BodyBase64:   event.BodyBase64,
+				BodyError:    event.BodyError,
+				StartedAt:    time.UnixMilli(event.TS).UTC().Format(time.RFC3339Nano),
+			})
+		}
+		return out
+	}
 	if !b.connected || b.state == nil || len(b.state.PlaywrightLog.Network) == 0 {
 		return nil
 	}
@@ -1030,7 +1091,31 @@ func (b *Browser) ClearNetworkLog() error {
 		return nil
 	}
 	b.state.PlaywrightLog.Network = nil
+	if b.continuousLogPath != "" {
+		if err := appendContinuousClear(b.continuousLogPath, KindNet); err != nil {
+			return err
+		}
+	}
 	return saveSessionState(b.statePath, b.state)
+}
+
+func (b *Browser) hasContinuousObserverLog() bool {
+	if b == nil || b.continuousLogPath == "" {
+		return false
+	}
+	_, err := os.Stat(b.continuousLogPath)
+	return err == nil
+}
+
+func (b *Browser) continuousEvents() ([]ObserverEvent, bool) {
+	if !b.hasContinuousObserverLog() {
+		return nil, false
+	}
+	events, err := readContinuousEvents(b.continuousLogPath)
+	if err != nil {
+		return nil, false
+	}
+	return events, true
 }
 
 // BrowserTraceState returns the persisted CDP tracing state for this session.
@@ -1063,8 +1148,13 @@ func (b *Browser) SetVideoState(state VideoState) error {
 	if !b.connected || b.state == nil {
 		return nil
 	}
+	previous := b.state.Video
 	b.state.Video = state
-	return saveSessionState(b.statePath, b.state)
+	if err := saveSessionState(b.statePath, b.state); err != nil {
+		b.state.Video = previous
+		return err
+	}
+	return nil
 }
 
 func appendBoundedConsole(existing, incoming []ObserverEvent, max int) []ObserverEvent {
@@ -1087,7 +1177,7 @@ func trimNetworkLog(entries []CapturedEntry, max int) []CapturedEntry {
 // Close cleans up the browser resources.
 // External Chrome keeps running; the CLI process owns the websocket lifetime.
 func (b *Browser) StartBackgroundObserver(page *rod.Page) {
-	if b.bgObserver != nil || !b.connected {
+	if b.bgObserver != nil || !b.connected || b.hasContinuousObserverLog() {
 		return
 	}
 	obs := NewObserver(page, ObserverOpts{BufferSize: 512})

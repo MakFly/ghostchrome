@@ -5,24 +5,36 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ghostchrome dashboard</title>
 <style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:system-ui,sans-serif;background:#0f0f0f;color:#e0e0e0;display:flex;height:100vh}
-#viewport{flex:1;display:flex;align-items:center;justify-content:center;background:#000;position:relative}
-#viewport img{max-width:100%;max-height:100%;object-fit:contain}
-#sidebar{width:320px;background:#1a1a1a;border-left:1px solid #333;display:flex;flex-direction:column}
-#header{padding:12px 16px;border-bottom:1px solid #333;font-size:14px;font-weight:600;color:#8b5cf6}
-#events{flex:1;overflow-y:auto;padding:8px 12px;font-size:12px;font-family:'SF Mono',monospace}
-.event{padding:4px 0;border-bottom:1px solid #222;white-space:pre-wrap;word-break:break-all}
-.event time{color:#666;margin-right:8px}
-#status{padding:8px 16px;border-top:1px solid #333;font-size:11px;color:#666}
-.connected{color:#22c55e!important}
-.disconnected{color:#ef4444!important}
+:root{color-scheme:dark}*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;background:#121314;color:#e7e5e4;display:flex;height:100vh}
+#viewport{flex:1;display:flex;align-items:center;justify-content:center;background:#0a0a0b;position:relative;min-width:0;padding:16px}
+#stage{position:relative;display:inline-block;line-height:0;max-width:100%;max-height:100%}
+#frame{display:block;max-width:100%;max-height:calc(100vh - 32px);object-fit:contain}
+#draw-layer{position:absolute;inset:0;cursor:crosshair;touch-action:none}
+.region{position:absolute;border:2px solid #fb923c;background:rgba(251,146,60,.12);pointer-events:none}
+#sidebar{width:320px;background:#1c1c1b;border-left:1px solid #3a3a37;display:flex;flex-direction:column}
+#header{padding:14px 16px;border-bottom:1px solid #3a3a37;font-size:14px;font-weight:700;color:#fdba74;letter-spacing:.01em}
+#annotator{display:none;padding:12px 16px;border-bottom:1px solid #3a3a37;gap:8px;flex-direction:column}
+#annotator.active{display:flex}#annotator label{font-size:11px;color:#a8a29e;font-weight:650;text-transform:uppercase;letter-spacing:.06em}
+#note{width:100%;min-height:54px;resize:vertical;border:1px solid #57534e;border-radius:5px;background:#292524;color:#f5f5f4;padding:8px;font:12px/1.35 inherit}
+#note:focus{outline:2px solid #fb923c;outline-offset:1px;border-color:#fb923c}.hint{font-size:11px;color:#a8a29e;line-height:1.4}
+#annotation-status{font-size:11px;min-height:16px;color:#fed7aa}.annotation{font-size:12px;padding:6px 0;border-bottom:1px solid #292927;color:#fed7aa}
+#events{flex:1;overflow-y:auto;padding:8px 12px;font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.event{padding:4px 0;border-bottom:1px solid #292927;white-space:pre-wrap;word-break:break-all}.event time{color:#78716c;margin-right:8px}
+#status{padding:8px 16px;border-top:1px solid #3a3a37;font-size:11px;color:#a8a29e}.connected{color:#86efac!important}.disconnected{color:#fca5a5!important}
 </style>
 </head>
 <body>
-<div id="viewport"><img id="frame" alt="viewport"></div>
+<div id="viewport"><div id="stage"><img id="frame" alt="viewport"><div id="draw-layer" aria-label="annotation canvas"></div></div></div>
 <div id="sidebar">
   <div id="header">ghostchrome live</div>
+  <div id="annotator">
+    <label for="note">Annotation note</label>
+    <textarea id="note" placeholder="What should the agent notice?"></textarea>
+    <p class="hint">Drag on the viewport to save a screenshot, rectangle, and note.</p>
+    <div id="annotation-status"></div>
+    <div id="annotations"></div>
+  </div>
   <div id="events"></div>
   <div id="status" class="disconnected">disconnected</div>
 </div>
@@ -30,6 +42,15 @@ body{font-family:system-ui,sans-serif;background:#0f0f0f;color:#e0e0e0;display:f
 const frame=document.getElementById('frame');
 const events=document.getElementById('events');
 const status=document.getElementById('status');
+const layer=document.getElementById('draw-layer');
+const note=document.getElementById('note');
+const annotator=document.getElementById('annotator');
+const annotationStatus=document.getElementById('annotation-status');
+const annotations=document.getElementById('annotations');
+const annotationEnabled=new URLSearchParams(location.search).has('annotate');
+let drawing;
+let displayedFrameID=0;
+if(annotationEnabled)annotator.classList.add('active');else layer.remove();
 let ws;
 function connect(){
   const proto=location.protocol==='https:'?'wss:':'ws:';
@@ -40,6 +61,8 @@ function connect(){
   ws.onmessage=(e)=>{
     const msg=JSON.parse(e.data);
     if(msg.type==='frame'){
+      const nextID=msg.frame_id;frame.dataset.pendingFrame=String(nextID);
+      frame.onload=()=>{if(frame.dataset.pendingFrame===String(nextID))displayedFrameID=nextID};
       frame.src='data:image/jpeg;base64,'+msg.data;
     }else if(msg.type==='event'){
       const div=document.createElement('div');
@@ -54,6 +77,40 @@ function connect(){
   };
 }
 connect();
+function viewportPoint(event,naturalWidth=frame.naturalWidth,naturalHeight=frame.naturalHeight){
+  const rect=layer.getBoundingClientRect();
+  return {x:(event.clientX-rect.left)/rect.width*naturalWidth,y:(event.clientY-rect.top)/rect.height*naturalHeight};
+}
+function renderRegion(region){
+  const node=document.createElement('div');node.className='region';
+  node.style.left=(region.x/frame.naturalWidth*100)+'%';node.style.top=(region.y/frame.naturalHeight*100)+'%';
+  node.style.width=(region.width/frame.naturalWidth*100)+'%';node.style.height=(region.height/frame.naturalHeight*100)+'%';
+  layer.appendChild(node);return node;
+}
+if(annotationEnabled){
+  layer.addEventListener('pointerdown',event=>{
+    if(!frame.naturalWidth)return;
+    drawing={frameID:displayedFrameID,naturalWidth:frame.naturalWidth,naturalHeight:frame.naturalHeight};
+    if(!drawing.frameID){drawing=undefined;return;}
+    drawing.start=viewportPoint(event,drawing.naturalWidth,drawing.naturalHeight);drawing.node=renderRegion({x:drawing.start.x,y:drawing.start.y,width:0,height:0});
+    layer.setPointerCapture(event.pointerId);
+  });
+  layer.addEventListener('pointermove',event=>{
+    if(!drawing||!drawing.start)return;const point=viewportPoint(event,drawing.naturalWidth,drawing.naturalHeight);const region={x:Math.min(drawing.start.x,point.x),y:Math.min(drawing.start.y,point.y),width:Math.abs(point.x-drawing.start.x),height:Math.abs(point.y-drawing.start.y)};
+    drawing.region=region;drawing.node.style.left=(region.x/frame.naturalWidth*100)+'%';drawing.node.style.top=(region.y/frame.naturalHeight*100)+'%';drawing.node.style.width=(region.width/frame.naturalWidth*100)+'%';drawing.node.style.height=(region.height/frame.naturalHeight*100)+'%';
+  });
+  layer.addEventListener('pointerup',async event=>{
+    if(!drawing)return;layer.releasePointerCapture(event.pointerId);const current=drawing;drawing=null;
+    if(!current.region||current.region.width<2||current.region.height<2){current.node.remove();return;}
+    annotationStatus.textContent='Saving annotation…';
+    try{
+      const response=await fetch('/annotations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({note:note.value.trim(),frame_id:current.frameID,region:current.region})});
+      if(!response.ok)throw new Error(await response.text());const saved=await response.json();
+      annotationStatus.textContent='Saved annotation '+saved.id;note.value='';
+      const item=document.createElement('div');item.className='annotation';item.textContent='#'+saved.id+' '+(saved.note||'No note');annotations.prepend(item);
+    }catch(error){current.node.remove();annotationStatus.textContent='Could not save: '+error.message;}
+  });
+}
 </script>
 </body>
 </html>

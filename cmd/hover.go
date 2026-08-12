@@ -37,7 +37,10 @@ Examples:
 		b, page := openPage()
 		defer b.Close()
 
-		snapshot := ensureSnapshot(b, page, targetURL, "load", engine.LevelSkeleton)
+		var snapshot *engine.PageSnapshot
+		if targetURL != "" || isSnapshotRef(ref) {
+			snapshot = ensureSnapshot(b, page, targetURL, "load", engine.LevelSkeleton)
+		}
 
 		waitState, waitTimeout := resolveWaitFlags(cmd, hoverWaitFor, hoverWaitTimeoutMs)
 
@@ -50,20 +53,13 @@ Examples:
 				exitErr("hover", err)
 			}
 		} else {
-			if waitTimeout > 0 {
-				el, err := engine.WaitForRef(page, ref, snapshot, waitState, waitTimeout)
-				if err != nil {
-					exitIfStaleRef(err, "hover")
-					exitErr("hover", err)
-				}
-				if err := engine.HoverElement(page, el); err != nil {
-					exitErr("hover", err)
-				}
-			} else {
-				if err := engine.HoverRef(page, ref, snapshot); err != nil {
-					exitIfStaleRef(err, "hover")
-					exitErr("hover", err)
-				}
+			el, err := engine.WaitForTarget(page, ref, snapshot, waitState, waitTimeout)
+			if err != nil {
+				exitIfStaleRef(err, "hover")
+				exitErr("hover", err)
+			}
+			if err := engine.HoverElement(page, el); err != nil {
+				exitErr("hover", err)
 			}
 		}
 
