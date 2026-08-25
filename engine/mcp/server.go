@@ -166,7 +166,10 @@ var ExtraToolRegistrars []func(srv *mcpsrv.MCPServer)
 // Build returns an MCP server with every ghostchrome tool registered.
 // Caller is expected to call mcpsrv.ServeStdio on it.
 func (s *Server) Build(name, version string) *mcpsrv.MCPServer {
-	srv := mcpsrv.NewMCPServer(name, version, mcpsrv.WithToolCapabilities(true))
+	srv := mcpsrv.NewMCPServer(name, version,
+		mcpsrv.WithToolCapabilities(true),
+		mcpsrv.WithToolHandlerMiddleware(s.traceMiddleware()),
+	)
 	registerTools(srv, s)
 	for _, reg := range ExtraToolRegistrars {
 		reg(srv)

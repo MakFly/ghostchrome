@@ -17,6 +17,7 @@ type TraceEntry struct {
 	Op         string         `json:"op"`
 	Args       map[string]any `json:"args,omitempty"`
 	OK         bool           `json:"ok"`
+	Outcome    string         `json:"outcome,omitempty"`
 	DurationMs int64          `json:"duration_ms"`
 	Summary    string         `json:"summary,omitempty"`
 	Error      string         `json:"error,omitempty"`

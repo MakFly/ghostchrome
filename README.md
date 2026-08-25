@@ -1,13 +1,11 @@
 # ghostchrome
 
-**Ultra-light browser automation CLI for LLM agents.** Single Go binary, native Chrome DevTools Protocol, 5× fewer tokens than Playwright CLI, faster on 19/20 operations, no Node runtime. A modern Playwright alternative built for AI agents that drive a browser in a loop.
+**Ultra-light browser automation CLI for LLM agents.** Single Go binary, native Chrome DevTools Protocol, compact direct output, persistent sessions, and no Node runtime. A modern Playwright alternative built for AI agents that drive a browser in a loop.
 
 [![Go](https://img.shields.io/github/go-mod/go-version/dev-toolings/ghostchrome?logo=go)](go.mod)
 [![Release](https://img.shields.io/github/v/release/dev-toolings/ghostchrome?label=release&logo=github)](https://github.com/dev-toolings/ghostchrome/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![tokens vs playwright-mcp](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fdev-toolings%2Fghostchrome%2Fmain%2Fbenchmark%2Fbadges-warm%2Ftokens.json)](benchmark/results-warm.md)
-[![latency vs playwright-mcp](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fdev-toolings%2Fghostchrome%2Fmain%2Fbenchmark%2Fbadges-warm%2Flatency.json)](benchmark/results-warm.md)
-[![binary size](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fdev-toolings%2Fghostchrome%2Fmain%2Fbenchmark%2Fbadges%2Fsize.json)](#install)
+[![Benchmark: reproduced Aug 2026](https://img.shields.io/badge/benchmark-reproduced_Aug_2026-5b8def)](benchmark/results-real-2026-08-25.md)
 
 ```console
 $ ghostchrome preview http://localhost:3000
@@ -44,7 +42,13 @@ One command. ~50 ms warm. ~2,000 tokens. Refs (`@1`, `@2`) you can click and typ
 
 ## Why ghostchrome
 
-LLM-driven browser automation has a token problem. Playwright-MCP returns a full accessibility tree on every snapshot — typically **14,000-50,000 tokens** for a real-world page — which burns the agent's context window and slows every iteration. ghostchrome was built to fix that one thing: return the smallest possible payload that an LLM still needs to act, in a single static Go binary that boots in milliseconds.
+LLM-driven browser automation has a context-budget problem: browser schemas,
+snapshots, and repeated command output compete with the code and reasoning an
+agent actually needs. ghostchrome keeps the CLI path direct and compact, with a
+filtered accessibility tree and a single static Go binary. The MCP surface is
+deliberately small too, although its current structured snapshot is richer—and
+larger—than Playwright MCP's file-backed YAML snapshot. The benchmark below
+reports both results instead of collapsing unlike surfaces into one headline.
 
 **Designed for AI agents** that drive a browser via Claude Code, the Anthropic Agent SDK, Aider, Cursor, OpenAI's Agents SDK, or any custom loop. Use it as a **Playwright alternative for headless Chrome web scraping**, as a **CDP CLI** for ops automation, or as the browsing tool behind a custom agent. No JSON-RPC overhead, no Node runtime, no `npm install`. Just `ghostchrome <command> <url>` and read the output.
 
@@ -60,61 +64,54 @@ What you get:
 
 ## Benchmark
 
-Reproducible head-to-head against [@playwright/mcp](https://github.com/microsoft/playwright-mcp) and [Playwright CLI](https://playwright.dev/agent-cli/) on 5 local HTML fixtures + real public sites. Run it yourself:
+The current reproducible comparison uses `@playwright/cli@0.1.18`,
+`@playwright/mcp@0.0.79`, and the current ghostchrome checkout. Every pairing
+runs the same Chromium 128 executable against five deterministic local pages.
+Results are medians over seven warm-session trials after a discarded warm-up,
+and every output is checked for expected page content.
 
-```bash
-./benchmark/run-bench.sh                 # cold-spawn mode (default)
-BENCH_MODE=warm ./benchmark/run-bench.sh # long-lived session (real agent loop)
-./benchmark/run-bench-playwright-cli.sh   # Playwright CLI: cold mode
-BENCH_MODE=warm ./benchmark/run-bench-playwright-cli.sh # Playwright CLI warm mode
-```
+Current Playwright CLI and MCP responses link to a YAML snapshot file. The
+effective payload below includes that file because an agent must read it to use
+the page state. No redundant `browser_snapshot` call is counted after
+`browser_navigate`.
 
-### Warm session — the real LLM-agent loop
+### Page inspection
 
-Both tools keep one process alive across navigate+snapshot calls. This is what your agent actually does.
+| Surface | Metric | ghostchrome | Playwright | Result |
+|---|---|---:|---:|---|
+| CLI | Effective output, five-page total | 21,782 B | 41,034 B | ghostchrome **1.88× smaller** |
+| CLI | Median-time sum | 298 ms | 3,377 ms | ghostchrome **11.3× faster** |
+| MCP | Effective output, five-page total | 84,171 B | 41,015 B | ghostchrome **2.05× larger** |
+| MCP | Median-time sum | 242 ms | 317 ms | ghostchrome **1.31× faster** |
+| MCP | Serialized tool schemas | 9,000 B / 16 tools | 18,502 B / 24 tools | ghostchrome **2.06× smaller** |
 
-| Site | ghostchrome tokens | pw-mcp tokens | ghostchrome ms | pw-mcp ms |
-|---|---:|---:|---:|---:|
-| dashboard (CRUD table) | 549 | 2,746 | 50 | 64 |
-| product page | 390 | 1,456 | 45 | 55 |
-| news feed | 851 | 2,242 | 40 | 51 |
-| search results | 1,224 | 2,421 | 60 | 73 |
-| Hacker News (live) | 3,416 | 14,564 | 660 | 1,023 |
-| **Overall** | **6,832** | **24,961** | **1,020 ms** | **1,660 ms** |
+All four inspection pairings found the expected content in **35/35** measured
+runs. The estimated token totals (`ceil(bytes / 4)`) are 5,446 vs 10,259 for
+CLI and 21,043 vs 10,254 for MCP.
 
-→ **3.65× fewer tokens, 1.63× faster** per snapshot. Full table: [`benchmark/results-warm.md`](benchmark/results-warm.md).
+### Verified interaction
 
-### Cold spawn — every invocation starts fresh
+The interaction task navigates to a product, locates the `Quantity` combobox
+from the snapshot, selects `3`, evaluates `#qty.value`, and requires the result
+to equal `3`.
 
-Apples-to-apples wall time of `process start → Chrome attach → navigate → snapshot → exit` for both tools. Chrome startup dominates and ghostchrome is ~10% slower here — which is why you should use warm session (above) for any agent workload.
+| Surface | Tool | Success | Agent calls/reads | Effective output | Duration |
+|---|---|---:|---:|---:|---:|
+| CLI | ghostchrome | 7/7 | 3 | 3,468 B | 443 ms |
+| CLI | Playwright | 7/7 | 4 | 6,515 B | 2,459 ms |
+| MCP | ghostchrome | 7/7 | 3 | 11,770 B | 408 ms |
+| MCP | Playwright | 7/7 | 4 | 6,542 B | 634 ms |
 
-→ **3.5× fewer tokens, 0.91× as fast** overall (cold). Full table: [`benchmark/results.md`](benchmark/results.md).
+The honest takeaway: **ghostchrome CLI is both smaller and faster in this
+agent loop**. ghostchrome MCP is faster and has much smaller tool schemas, but
+its current snapshot payload is larger because it serializes both `dom.nodes`
+and a separate `dom.refs` map. That duplication is now a measured optimization
+target, not a hidden caveat.
 
-### ghostchrome vs playwright-cli (warm daemon)
-
-Both tools with their daemon running, same pages. See the full 20-operation table in [Comparison](#comparison).
-
-| Site | ghostchrome bytes | pw-cli bytes | ghostchrome ms | pw-cli ms |
-|---|---:|---:|---:|---:|
-| example.com (snapshot) | 202 | 411 | 19 | 61 |
-| Hacker News (snapshot) | 13,845 | 57,553 | 110 | 133 |
-| Wikipedia (snapshot) | 2,056 | 10,611 | 46 | 104 |
-| GitHub repo (snapshot) | 15,211 | 108,828 | 273 | 198 |
-
-→ **5.3× fewer tokens overall, faster on 19/20 operations.**
-
-### Binary & footprint
-
-| | ghostchrome | playwright-cli |
-|---|---|---|
-| Runtime | Static Go binary | Node.js |
-| Install size | ~19 MB | ~330 MB (Node + Playwright + FFmpeg) |
-| Cold daemon start | 315 ms | 600 ms |
-| Daemon required | transparent (auto) | explicit (`open` first) |
-| Dependencies | Chrome on the system *or* auto-downloaded by Rod | npm + `playwright install` |
-| Protocol | CLI stdin/stdout, optional MCP server | CLI stdin/stdout |
-
-Token estimates assume `ceil(bytes/4)`, the standard rule-of-thumb for BPE tokenizers. Numbers are medians on Linux x86_64, June 2026.
+Full protocol, per-site medians, limitations, and reproduction details:
+[`benchmark/results-real-2026-08-25.md`](benchmark/results-real-2026-08-25.md).
+The raw-sample helpers are [`benchmark/cli-measure.mjs`](benchmark/cli-measure.mjs)
+and [`benchmark/mcp-measure.mjs`](benchmark/mcp-measure.mjs).
 
 ---
 
@@ -275,36 +272,23 @@ Architecture, CLI reference, MCP server, anti-bot, and fast-path docs live in `d
 
 ## Comparison
 
-### ghostchrome vs playwright-cli — head-to-head (20 operations)
+### Current measured comparison
 
-Both tools running in daemon mode (persistent background Chrome, warm session).
-Measured on real public sites, Linux x86_64, June 2026.
+The August 2026 benchmark separates CLI and MCP instead of publishing one
+cross-surface score:
 
-| # | Operation | playwright-cli | ghostchrome | Winner |
-|---|---|---:|---:|---|
-| 1 | goto example.com | 95 ms | 35 ms | **ghostchrome** |
-| 2 | goto Hacker News | 704 ms | 655 ms | **ghostchrome** |
-| 3 | goto Wikipedia | 654 ms | 505 ms | **ghostchrome** |
-| 4 | goto GitHub | 1,995 ms | 1,512 ms | **ghostchrome** |
-| 5 | goto httpbin | 414 ms | 361 ms | **ghostchrome** |
-| 6 | snapshot example.com | 61 ms | 19 ms | **ghostchrome** |
-| 7 | snapshot Hacker News | 133 ms | 110 ms | **ghostchrome** |
-| 8 | snapshot Wikipedia | 104 ms | 46 ms | **ghostchrome** |
-| 9 | snapshot GitHub | 198 ms | 273 ms | playwright-cli |
-| 10 | snapshot httpbin | 59 ms | 20 ms | **ghostchrome** |
-| 11 | click | 2,863 ms | 1,168 ms | **ghostchrome** |
-| 12 | type | 88 ms | 25 ms | **ghostchrome** |
-| 13 | go-back | 145 ms | 38 ms | **ghostchrome** |
-| 14 | reload | 272 ms | 176 ms | **ghostchrome** |
-| 15 | resize | 81 ms | 27 ms | **ghostchrome** |
-| 16 | eval | 574 ms | 24 ms | **ghostchrome** |
-| 17 | press Tab | 68 ms | 23 ms | **ghostchrome** |
-| 18 | press Escape | 66 ms | 20 ms | **ghostchrome** |
-| 19 | screenshot | 166 ms | 142 ms | **ghostchrome** |
-| 20 | sessions list | 63 ms | 14 ms | **ghostchrome** |
+- **CLI inspection:** ghostchrome uses 1.88× fewer effective bytes and is 11.3×
+  faster across the deterministic five-page set.
+- **CLI interaction:** ghostchrome completes the verified select-and-evaluate
+  task 5.55× faster with 1.88× fewer effective bytes.
+- **MCP inspection:** ghostchrome is 1.31× faster and exposes 2.06× fewer tool
+  schema bytes, but its snapshot payload is 2.05× larger.
+- **MCP interaction:** ghostchrome is 1.55× faster, while Playwright uses 1.80×
+  fewer effective payload bytes.
 
-**Score: ghostchrome 19 / 20, playwright-cli 1 / 20.**
-The single playwright-cli win is snapshot on a very large page (GitHub repo, ~108K nodes) where the first CDP accessibility-tree extraction is expensive. Subsequent snapshots of the same page hit the ghostchrome cache and are instant.
+These are measured outcomes, not a universal operation score. Network-heavy
+sites, different extraction levels, browser engines, model behavior, and cold
+startup can change the result. See the [full benchmark report](benchmark/results-real-2026-08-25.md).
 
 ### Feature comparison
 
@@ -315,8 +299,8 @@ The single playwright-cli win is snapshot on a very large page (GitHub repo, ~10
 | Install | `curl \| sh` or `bun i -g` | `npm i -g @playwright/cli` | npm + browser DL | npm + browser DL | `go install` |
 | Install size | ~19 MB | ~330 MB | ~330 MB | ~280 MB | ~20 MB |
 | Daemon | transparent (auto) | requires `open` first | n/a | n/a | n/a |
-| Snapshot tokens | ~500–3,500 | ~2,700–57,000 | n/a (raw HTML) | n/a | n/a |
-| Token ratio | **1×** | **5.3× larger** | — | — | — |
+| CLI inspection payload | **1×** | **1.88× larger** (measured) | n/a | n/a | n/a |
+| MCP inspection payload | **2.05× larger** (current structured JSON) | **1×** (file-backed YAML) | n/a | n/a | n/a |
 | Multi-browser | Chrome only | Chrome / FF / WebKit | Chrome / FF / WebKit | Chrome / FF | Chrome only |
 | Refs for click/type | `@1`, `@2` | `e1`, `e2` | CSS / XPath | CSS / XPath | CSS / XPath |
 | Stealth | built-in patches | none | external plugin | external plugin | manual |
@@ -325,7 +309,10 @@ The single playwright-cli win is snapshot on a very large page (GitHub repo, ~10
 
 ### When to pick what
 
-- **ghostchrome** — you're piloting a browser from an LLM agent and tokens, latency, and footprint matter. Single binary, zero-config daemon, 5× fewer tokens per snapshot.
+- **ghostchrome** — you're piloting Chrome from an LLM agent and want a single
+  binary, a zero-config daemon, compact CLI output, and low warm-call latency.
+  For MCP, choose it for the smaller tool surface and speed—not because the
+  current structured snapshot is smaller.
 - **playwright-cli** — you need WebKit / Firefox, Playwright Trace Viewer, or `run-code` (arbitrary Playwright API execution).
 - **Playwright (raw)** — you're writing E2E test suites, not driving an agent.
 
@@ -394,6 +381,31 @@ Deliberately small — 16 tools, no fat. Each one is on the hot path of a browse
 | `back` / `forward` | Browser history |
 
 Niche workflows (cookies, storage, viewport, network sniff/replay, tracing) live in the CLI only. Reach them via `eval` or shell out when needed.
+
+### MCP incident traces
+
+For a reproducible MCP session, set `GHOSTCHROME_MCP_TRACE` to a file path:
+
+```bash
+GHOSTCHROME_MCP_TRACE=/tmp/ghostchrome-mcp.jsonl ghostchrome mcp --stealth
+ghostchrome trace-replay --file /tmp/ghostchrome-mcp.jsonl --format json
+```
+
+Ghostchrome appends one JSONL record per completed `tools/call`, including the
+operation, duration and success/error outcome. Arguments are recorded with a
+conservative privacy policy: typed text, form values, JavaScript expressions,
+upload paths, credentials/session/authentication fields and sensitive URL query
+parameters are redacted. Trace files are kept owner-readable only (`0600`),
+including pre-existing files. Trace failures are reported on stderr and never
+change the JSON-RPC response on stdout. The same file is truncated (never
+rotated or archived) before the next append when its current window reaches 24
+hours or that entry would take it beyond 1 MiB; the entry that triggers the
+reset is retained.
+If a previous process left a malformed, partial, or unterminated JSONL line,
+the next append replaces that broken window with the triggering entry so the
+file is parseable again. A single encoded entry that would exceed 1 MiB is reduced to its safe
+metadata (`op`, timing and outcome; no arguments, summary or error text) before
+being written, so the hard cap still holds.
 
 ### Typed SDKs — Python & TypeScript
 
@@ -550,7 +562,7 @@ Versioning follows SemVer; see [`.claude/rules/versioning.md`](.claude/rules/ver
 
 ## Contributing
 
-PRs welcome. The codebase is small and laid out in [`engine/`](engine/) (CDP logic) and [`cmd/`](cmd/) (one Cobra command per file). Run tests with `go test ./...`. Bench changes should include a re-run of `./benchmark/run-bench.sh` so reviewers can verify the numbers don't regress.
+PRs welcome. The codebase is small and laid out in [`engine/`](engine/) (CDP logic) and [`cmd/`](cmd/) (one Cobra command per file). Run tests with `go test ./...`. Benchmark changes should include auditable raw samples from [`benchmark/cli-measure.mjs`](benchmark/cli-measure.mjs) and [`benchmark/mcp-measure.mjs`](benchmark/mcp-measure.mjs), with the browser and opponent package versions pinned.
 
 When the agent surface changes, **re-measure the live binary** with [`scripts/measure-agent-ops.sh`](scripts/measure-agent-ops.sh) and update the in-repo SDKs at [`sdk/typescript/`](sdk/typescript) and [`sdk/python/`](sdk/python) so their result types match what the binary emits — never guess. See [`CLAUDE.md`](CLAUDE.md).
 
