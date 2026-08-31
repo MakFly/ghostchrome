@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dev-toolings/ghostchrome/engine"
 	enginemcp "github.com/dev-toolings/ghostchrome/engine/mcp"
 	mcpsrv "github.com/mark3labs/mcp-go/server"
 	"github.com/spf13/cobra"
@@ -76,6 +77,20 @@ The server speaks MCP 2025-11-25 and exposes 16 tools:
   back / forward browser history`,
 	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
+		if flagSession == "" {
+			skipImplicitDaemon = true
+		} else if flagConnect == "" {
+			ws, err := engine.AcquireSession(flagSession, engine.SessionSpawnOpts{
+				Headless: flagHeadless,
+				Stealth:  flagStealth,
+				Proxy:    flagProxy,
+			})
+			if err != nil {
+				exitErr("session", err)
+			}
+			flagConnect = ws
+			engine.TouchSessionLease(flagSession)
+		}
 		opts := enginemcp.Options{
 			Connect:        flagConnect,
 			Headless:       flagHeadless,
@@ -86,6 +101,8 @@ The server speaks MCP 2025-11-25 and exposes 16 tools:
 			Proxy:          flagProxy,
 			TimeoutSec:     flagTimeout,
 			BlockTrackers:  flagMCPBlockTrackers,
+			Policy:         engine.ActivePolicy,
+			SessionName:    flagSession,
 			// Same GHOSTCHROME_IDLE_TIMEOUT knob as `serve`, but here it reaps
 			// only the held browser (the stdio server stays up and relaunches
 			// Chrome on demand) instead of exiting the process — and it is ON by

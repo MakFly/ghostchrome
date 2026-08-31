@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/dev-toolings/ghostchrome/engine"
@@ -50,6 +51,7 @@ Examples:
 		defer b.Close()
 
 		snapshot := ensureSnapshot(b, page, "", "none", engine.LevelSkeleton)
+		defer func() { _ = b.InvalidateCachedExtract(page) }()
 
 		type fieldResult struct {
 			Ref   string `json:"ref"`
@@ -58,14 +60,38 @@ Examples:
 			Error string `json:"error,omitempty"`
 		}
 		var results []fieldResult
-		for ref, value := range form {
-			kind, errMsg := applyFormField(page, ref, value, snapshot)
+		refs := make([]string, 0, len(form))
+		for ref := range form {
+			refs = append(refs, ref)
+		}
+		sort.Slice(refs, func(i, j int) bool {
+			ni, iok := engine.SnapshotRefNum(refs[i])
+			nj, jok := engine.SnapshotRefNum(refs[j])
+			if iok && jok {
+				return ni < nj
+			}
+			if iok != jok {
+				return iok
+			}
+			return refs[i] < refs[j]
+		})
+		for _, ref := range refs {
+			kind, errMsg := applyFormField(page, ref, form[ref], snapshot)
 			results = append(results, fieldResult{
 				Ref:   ref,
 				Kind:  kind,
 				OK:    errMsg == "",
 				Error: errMsg,
 			})
+			if errMsg == "" {
+				_ = b.InvalidateCachedExtract(page)
+				if result, err := engine.Extract(page, engine.LevelSkeleton, "", false); err == nil {
+					_ = b.SaveSnapshot(page, result)
+					if next, serr := engine.BuildSnapshot(page, result); serr == nil {
+						snapshot = next
+					}
+				}
+			}
 		}
 
 		ok, failed := 0, 0

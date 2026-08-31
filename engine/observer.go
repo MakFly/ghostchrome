@@ -45,6 +45,7 @@ type ObserverEvent struct {
 	Source     string            `json:"source,omitempty"`
 	Event      string            `json:"event,omitempty"`
 	Frame      string            `json:"frame,omitempty"`
+	Loader     string            `json:"loader,omitempty"`
 	ReqHeaders map[string]string `json:"request_headers,omitempty"`
 	ResHeaders map[string]string `json:"response_headers,omitempty"`
 	PostData   string            `json:"post_data,omitempty"`
@@ -70,6 +71,7 @@ type ObserverOpts struct {
 	MaxEvents  int           // 0 = unlimited
 	Duration   time.Duration // 0 = unlimited
 	BufferSize int           // channel buffer; default 256
+	History    int           // Drain ring size; 0 = default 1000
 }
 
 // ObserverStats holds counters for each kind.
@@ -111,7 +113,7 @@ type Observer struct {
 
 	mu      sync.Mutex
 	pending map[proto.NetworkRequestID]*pendingNet
-	allEvts []ObserverEvent // ring for Drain
+	allEvts []ObserverEvent // bounded ring for Drain
 	stats   ObserverStats
 	closing bool
 
@@ -123,6 +125,9 @@ type Observer struct {
 func NewObserver(page *rod.Page, opts ObserverOpts) *Observer {
 	if opts.BufferSize <= 0 {
 		opts.BufferSize = 256
+	}
+	if opts.History <= 0 {
+		opts.History = 1000
 	}
 	return &Observer{
 		page:    page,
@@ -140,6 +145,7 @@ func (o *Observer) Start(ctx context.Context) error {
 	if err := (proto.NetworkEnable{}).Call(o.page); err != nil {
 		return fmt.Errorf("network enable: %w", err)
 	}
+	_ = proto.PageSetLifecycleEventsEnabled{Enabled: true}.Call(o.page)
 	// Log domain carries browser-side messages that Runtime.consoleAPICalled
 	// does NOT surface: CORS errors, mixed content, CSP violations, deprecated
 	// API warnings, network failures (ERR_*), cookie SameSite warnings, etc.
@@ -273,6 +279,9 @@ func (o *Observer) emit(evt ObserverEvent) bool {
 	}
 	// Record in history
 	o.allEvts = append(o.allEvts, evt)
+	if limit := o.historyLimit(); limit > 0 && len(o.allEvts) > limit {
+		o.allEvts = append([]ObserverEvent(nil), o.allEvts[len(o.allEvts)-limit:]...)
+	}
 	// Update stats
 	switch evt.Kind {
 	case KindNet:
@@ -305,6 +314,13 @@ func (o *Observer) acceptKind(k ObserverKind) bool {
 		}
 	}
 	return false
+}
+
+func (o *Observer) historyLimit() int {
+	if o.opts.History > 0 {
+		return o.opts.History
+	}
+	return 1000
 }
 
 func (o *Observer) acceptNetType(t string) bool {
@@ -702,6 +718,7 @@ func (o *Observer) listenPage(ctx context.Context) {
 	defer o.wg.Done()
 	scoped, cancel := o.page.WithCancel()
 	defer cancel()
+	_ = proto.PageSetLifecycleEventsEnabled{Enabled: true}.Call(scoped)
 
 	lifecycleAllowed := map[proto.PageLifecycleEventName]bool{
 		"load":             true,
@@ -711,12 +728,17 @@ func (o *Observer) listenPage(ctx context.Context) {
 
 	stop := scoped.EachEvent(
 		func(e *proto.PageFrameNavigated) {
+			loader := ""
+			if e.Frame != nil {
+				loader = string(e.Frame.LoaderID)
+			}
 			o.emit(ObserverEvent{
-				TS:    time.Now().UnixMilli(),
-				Kind:  KindPage,
-				Event: "frameNavigated",
-				URL:   e.Frame.URL,
-				Frame: string(e.Frame.ID),
+				TS:     time.Now().UnixMilli(),
+				Kind:   KindPage,
+				Event:  "frameNavigated",
+				URL:    e.Frame.URL,
+				Frame:  string(e.Frame.ID),
+				Loader: loader,
 			})
 		},
 		func(e *proto.PageLifecycleEvent) {
@@ -724,10 +746,11 @@ func (o *Observer) listenPage(ctx context.Context) {
 				return
 			}
 			o.emit(ObserverEvent{
-				TS:    time.Now().UnixMilli(),
-				Kind:  KindPage,
-				Event: string(e.Name),
-				Frame: string(e.FrameID),
+				TS:     time.Now().UnixMilli(),
+				Kind:   KindPage,
+				Event:  string(e.Name),
+				Frame:  string(e.FrameID),
+				Loader: string(e.LoaderID),
 			})
 		},
 		func(e *proto.PageLoadEventFired) {
@@ -735,6 +758,18 @@ func (o *Observer) listenPage(ctx context.Context) {
 				TS:    time.Now().UnixMilli(),
 				Kind:  KindPage,
 				Event: "loadEventFired",
+			})
+		},
+		func(e *proto.PageNavigatedWithinDocument) {
+			if e == nil {
+				return
+			}
+			o.emit(ObserverEvent{
+				TS:    time.Now().UnixMilli(),
+				Kind:  KindPage,
+				Event: "navigatedWithinDocument",
+				URL:   e.URL,
+				Frame: string(e.FrameID),
 			})
 		},
 	)

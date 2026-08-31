@@ -56,6 +56,8 @@ var jsonlOps = map[string]bool{
 	"errors":     true,
 	"url":        true,
 	"close":      true,
+	"tabs":       true,
+	"dialog":     true,
 }
 
 // mcpOps is the set of tool names registered in engine/mcp/tools.go registerTools.
@@ -76,6 +78,7 @@ var mcpOps = map[string]bool{
 	"fill_form":  true,
 	"tabs":       true,
 	"upload":     true,
+	"dialog":     true,
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────

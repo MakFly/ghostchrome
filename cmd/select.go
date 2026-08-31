@@ -17,7 +17,7 @@ var selectCmd = &cobra.Command{
 	Long: `Select one or more options in a <select> element identified by its @ref.
 If a URL is provided, navigates first then selects.
 Use --values "a,b,c" for multi-select.
-After selecting, extracts a skeleton of the resulting page.
+After selecting, prints a compact a11y-ref diff (override with --snapshot=full|none).
 
 Examples:
   ghostchrome select @5 "option1" https://example.com
@@ -55,22 +55,7 @@ Examples:
 			exitErr("select", err)
 		}
 
-		result := snapshotPage(b, page, engine.LevelSkeleton)
-
-		type selectResult struct {
-			Action string                   `json:"action"`
-			Ref    string                   `json:"ref"`
-			Values []string                 `json:"values"`
-			Result *engine.ExtractionResult `json:"result"`
-		}
-
-		text := formatCurrentPlaywrightPageStateOutput("select", page, result)
-		output(&selectResult{
-			Action: "select",
-			Ref:    ref,
-			Values: values,
-			Result: result,
-		}, text)
+		emitMutationOutput("select", ref, b, page, nil)
 	},
 }
 
@@ -78,5 +63,6 @@ func init() {
 	selectCmd.Flags().StringVar(&flagSelectValues, "values", "", "Comma-separated values for multi-select")
 	selectCmd.Flags().StringVar(&selectWaitFor, "wait-for", "", "Wait for element state before selecting: attached|visible|hidden|enabled|stable|none (default: visible)")
 	selectCmd.Flags().IntVar(&selectWaitTimeoutMs, "wait-timeout-ms", 0, "Max milliseconds to wait for the element state (0 = no wait; default: 5000)")
+	registerSnapshotModeFlag(selectCmd)
 	rootCmd.AddCommand(selectCmd)
 }

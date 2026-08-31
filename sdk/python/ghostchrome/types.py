@@ -63,6 +63,9 @@ class Response:
     observation: Optional[Observation] = None
     error: Optional[str] = None
     events: list[dict[str, Any]] = field(default_factory=list)
+    protocol: Optional[int] = None
+    error_code: Optional[str] = None
+    retryable: Optional[bool] = None
 
 
 # ---------------------------------------------------------------------------
@@ -109,6 +112,9 @@ def parse_response(line: str) -> Response:
         observation=_parse_observation(raw.get("observation")),
         error=raw.get("error"),
         events=raw.get("events", []),
+        protocol=raw.get("protocol"),
+        error_code=raw.get("error_code"),
+        retryable=raw.get("retryable"),
     )
 
 
@@ -211,9 +217,94 @@ class ScreenshotResult:
 
 @dataclass
 class InitResult:
-    """Result of the ``init`` op (result is omitted by the agent; fields are always None)."""
+    """Result of the ``init`` op."""
     session_id: Optional[str] = None
     browser_version: Optional[str] = None
+    protocol: Optional[int] = None
+    version: Optional[str] = None
+
+
+@dataclass
+class DiffNode:
+    """A node included in a snapshot diff."""
+    ref: str = ""
+    role: str = ""
+    name: str = ""
+    href: str = ""
+    value: str = ""
+
+
+@dataclass
+class DiffEntry:
+    """A node changed between two snapshots."""
+    before: DiffNode
+    after: DiffNode
+
+
+@dataclass
+class DiffStats:
+    """Counts of snapshot changes."""
+    added: int = 0
+    removed: int = 0
+    changed: int = 0
+    kept: int = 0
+
+
+@dataclass
+class SnapshotDiff:
+    """Changes returned by interaction operations."""
+    unchanged: bool = False
+    added: list[DiffNode] = field(default_factory=list)
+    removed: list[str] = field(default_factory=list)
+    changed: dict[str, DiffEntry] = field(default_factory=dict)
+    stats: DiffStats = field(default_factory=DiffStats)
+
+
+def _parse_diff_node(raw: dict[str, Any] | None) -> DiffNode:
+    raw = raw or {}
+    return DiffNode(
+        ref=raw.get("ref", ""), role=raw.get("role", ""), name=raw.get("name", ""),
+        href=raw.get("href", ""), value=raw.get("value", ""),
+    )
+
+
+def _parse_mutation_result(raw: dict[str, Any] | None) -> SnapshotDiff | ExtractResult:
+    """Parse click/type/select results: a SnapshotDiff, or an ExtractResult when snapshot=full."""
+    if not raw:
+        return SnapshotDiff(unchanged=True)
+    if "nodes" in raw and "refs" in raw:
+        raw_stats = raw.get("stats") or {}
+        stats = ExtractStats(
+            total_nodes=raw_stats.get("total_nodes", 0),
+            filtered_nodes=raw_stats.get("filtered_nodes", 0),
+            interactive_count=raw_stats.get("interactive_count", 0),
+        )
+        return ExtractResult(nodes=raw.get("nodes", []), refs=raw.get("refs", {}), stats=stats)
+    return _parse_snapshot_diff(raw)
+
+
+def _parse_snapshot_diff(raw: dict[str, Any] | None) -> SnapshotDiff:
+    """Parse an interaction snapshot diff; omitted/empty results mean unchanged."""
+    if not raw:
+        return SnapshotDiff(unchanged=True)
+    stats = raw.get("stats") or {}
+    changed = {
+        ref: DiffEntry(
+            before=_parse_diff_node(entry.get("before")),
+            after=_parse_diff_node(entry.get("after")),
+        )
+        for ref, entry in (raw.get("changed") or {}).items()
+    }
+    return SnapshotDiff(
+        unchanged=raw.get("unchanged", False),
+        added=[_parse_diff_node(node) for node in raw.get("added", [])],
+        removed=list(raw.get("removed", [])),
+        changed=changed,
+        stats=DiffStats(
+            added=stats.get("added", 0), removed=stats.get("removed", 0),
+            changed=stats.get("changed", 0), kept=stats.get("kept", 0),
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -232,3 +323,26 @@ class GhostchromeError(RuntimeError):
         super().__init__(f"{op}: {message}")
         self.op = op
         self.message = message
+
+
+@dataclass
+class TabInfo:
+    index: int = 0
+    url: str = ""
+    title: str = ""
+    target_id: str = ""
+    active: bool = False
+
+
+@dataclass
+class TabsActionResult:
+    action: str = ""
+    index: Optional[int] = None
+    url: str = ""
+    title: str = ""
+
+
+@dataclass
+class DialogResult:
+    action: str = ""
+    text: str = ""

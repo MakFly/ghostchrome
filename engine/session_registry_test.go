@@ -5,9 +5,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCmdlineIsSessionServe(t *testing.T) {
@@ -127,6 +130,46 @@ func TestSessionAliveRejectsMismatchedWebSocketEndpoint(t *testing.T) {
 	}
 }
 
+func TestSessionAliveWSOnlyDoesNotRequirePort(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/json/version" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/browser/attached",
+		})
+	}))
+	defer srv.Close()
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := "ws://" + u.Host + "/devtools/browser/attached"
+	got, alive := sessionAlive(SessionEntry{Name: "ext", Port: 0, WSURL: ws})
+	if !alive {
+		t.Fatal("expected attached session to be alive via /json/version")
+	}
+	if got != ws {
+		t.Fatalf("unexpected websocket %q", got)
+	}
+}
+
+func TestSaveSessionRegistryAtomic(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sessions.json")
+	reg := &sessionRegistry{Sessions: map[string]SessionEntry{"work": {Name: "work", Port: 1}}}
+	if err := saveSessionRegistry(path, reg); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "work") {
+		t.Fatalf("saved registry missing session: %s", data)
+	}
+}
+
 func parseTestPort(t *testing.T, rawURL string) int {
 	t.Helper()
 	u, err := url.Parse(rawURL)
@@ -139,4 +182,16 @@ func parseTestPort(t *testing.T, rawURL string) int {
 		t.Fatal(err)
 	}
 	return port
+}
+
+func TestSessionLeaseFresh(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if SessionLeaseFresh("work", time.Hour) {
+		t.Fatal("missing lease should be stale")
+	}
+	TouchSessionLease("work")
+	if !SessionLeaseFresh("work", time.Hour) {
+		t.Fatal("fresh lease should be live")
+	}
 }

@@ -40,10 +40,20 @@ type Observation struct {
 // before may be nil (first op, no prior snapshot). after may be nil if the op
 // failed before extraction. events is the slice from Observer.Drain().
 func BuildObservation(page *rod.Page, before, after *PageSnapshot, events []ObserverEvent) Observation {
+	return BuildObservationOpts(page, before, after, events, false)
+}
+
+// BuildObservationOpts is BuildObservation with an explicit captcha-scan flag.
+// scanCaptcha=false skips page.HTML() so warm clicks do not pay a full document dump.
+func BuildObservationOpts(page *rod.Page, before, after *PageSnapshot, events []ObserverEvent, scanCaptcha bool) Observation {
 	obs := Observation{}
 
-	// Current URL.
-	if info, err := page.Info(); err == nil && info != nil {
+	// Prefer the snapshot URL so a warm click does not pay Page.getFrameTree.
+	if after != nil && after.URL != "" {
+		obs.URL = after.URL
+	} else if before != nil && before.URL != "" {
+		obs.URL = before.URL
+	} else if info, err := page.Info(); err == nil && info != nil {
 		obs.URL = info.URL
 	}
 
@@ -66,7 +76,9 @@ func BuildObservation(page *rod.Page, before, after *PageSnapshot, events []Obse
 	}
 
 	// Captcha detection (cheap — single Info()+HTML() check).
-	obs.CaptchaHint = detectCaptchaHint(page)
+	if scanCaptcha {
+		obs.CaptchaHint = detectCaptchaHint(page)
+	}
 
 	return obs
 }

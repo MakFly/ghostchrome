@@ -23,13 +23,7 @@ func runCheck(action string, checked bool) func(*cobra.Command, []string) {
 			exitErr(action, err)
 		}
 
-		result := snapshotPage(b, page, engine.LevelSkeleton)
-		text := formatCurrentPlaywrightPageStateOutput(action, page, result)
-		output(&actionResult{
-			Action: action,
-			Ref:    ref,
-			Result: result,
-		}, text)
+		emitMutationOutput(action, ref, b, page, nil)
 	}
 }
 
@@ -58,6 +52,8 @@ Examples:
 }
 
 func init() {
+	registerSnapshotModeFlag(checkCmd)
 	rootCmd.AddCommand(checkCmd)
+	registerSnapshotModeFlag(uncheckCmd)
 	rootCmd.AddCommand(uncheckCmd)
 }

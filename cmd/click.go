@@ -21,7 +21,7 @@ var clickCmd = &cobra.Command{
 
 If a second argument is provided, it is interpreted as a mouse button when it is
 left|right|middle. Otherwise it is treated as a URL and navigated first.
-After clicking, extracts a skeleton of the resulting page.
+After clicking, prints a compact a11y-ref diff (override with --snapshot=full|none).
 
 Examples:
   ghostchrome click @3 --connect ws://...
@@ -73,25 +73,19 @@ Examples:
 				exitErr("click", err)
 			}
 		} else {
-			el, err := engine.WaitForTarget(page, ref, snapshot, waitState, waitTimeout)
-			if err != nil {
-				exitIfStaleRef(err, "click")
-				exitErr("click", err)
+			if waitTimeout > 0 {
+				if _, err := engine.WaitForTarget(page, ref, snapshot, waitState, waitTimeout); err != nil {
+					exitIfStaleRef(err, "click")
+					exitErr("click", err)
+				}
 			}
-			if err := engine.ClickElementWithButton(page, el, button); err != nil {
+			if err := engine.ClickRefWithButton(page, ref, snapshot, button); err != nil {
+				exitIfStaleRef(err, "click")
 				exitErr("click", err)
 			}
 		}
 
-		result := snapshotPage(b, page, engine.LevelSkeleton)
-
-		text := formatCurrentPlaywrightPageStateOutput("click", page, result)
-		output(&actionResult{
-			Action:  "click",
-			Ref:     ref,
-			Locator: clickLocator.Describe(),
-			Result:  result,
-		}, text)
+		emitMutationOutput("click", ref, b, page, nil)
 	},
 }
 
@@ -130,5 +124,6 @@ func init() {
 	clickLocator.RegisterOn(clickCmd)
 	clickCmd.Flags().StringVar(&clickWaitFor, "wait-for", "", "Wait for element state before clicking: attached|visible|hidden|enabled|stable|none (default: visible)")
 	clickCmd.Flags().IntVar(&clickWaitTimeoutMs, "wait-timeout-ms", 0, "Max milliseconds to wait for the element state (0 = no wait; default: 5000)")
+	registerSnapshotModeFlag(clickCmd)
 	rootCmd.AddCommand(clickCmd)
 }

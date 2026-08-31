@@ -9,13 +9,12 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/dev-toolings/ghostchrome/engine"
 	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/proto"
 	"github.com/spf13/cobra"
 )
 
@@ -34,6 +33,9 @@ type agentResponse struct {
 	Error       string                 `json:"error,omitempty"`
 	Events      []engine.ObserverEvent `json:"events,omitempty"`
 	Observation *engine.Observation    `json:"observation,omitempty"`
+	Protocol    int                    `json:"protocol,omitempty"`
+	ErrorCode   string                 `json:"error_code,omitempty"`
+	Retryable   bool                   `json:"retryable,omitempty"`
 }
 
 // agentSession holds long-lived state across requests.
@@ -41,6 +43,7 @@ type agentSession struct {
 	browser         *engine.Browser
 	page            *rod.Page
 	snapshot        *engine.PageSnapshot // last in-memory snapshot (auto-launch mode)
+	rt              *engine.Runtime
 	enc             *json.Encoder
 	observer        *engine.Observer      // non-nil when --observe is active
 	obsFile         *os.File              // non-nil when --observe-out is set
@@ -61,6 +64,7 @@ type agentSession struct {
 	// preemptively, so only the "extract" immediately following a recovered
 	// "navigate" opts into SSR — not every extract until the next navigate.
 	challengeRecovered bool
+	dialogPolicy       *engine.DialogAutoPolicy
 }
 
 var agentCmd = &cobra.Command{
@@ -88,12 +92,15 @@ Supported ops:
   scroll_to   {y?, bottom?}
   eval        {expr, ref?}
   screenshot  {full_page?, ref?, quality?}   returns base64 PNG/JPEG
-  wait        {selector?, ms?}
+  wait        {selector?, ref?, ms?}
+  tabs        {action?, index?, url?}        list|switch|close|new
+  dialog      {action?, text?}               accept|dismiss (auto-handles JS dialogs)
   errors                                     console + network errors
   url
   close
 
-Stale refs auto-trigger one re-extraction + retry transparently.
+JSONL embeds Chrome by default. Use -s <name> to share a named daemon.
+Stale refs fail closed; re-extract then retry. Semantic retry remaps SPA rerenders.
 
 With --stealth: after "navigate" detects+clears a DataDome/Cloudflare
 challenge, the very next "extract" auto-includes SSR payloads
@@ -109,6 +116,9 @@ func init() {
 }
 
 func runAgentLoop() {
+	if flagSession == "" {
+		skipImplicitDaemon = true
+	}
 	sess := &agentSession{
 		enc:           json.NewEncoder(os.Stdout),
 		recoveryHooks: engine.DefaultRecoveryHooks(),
@@ -135,6 +145,9 @@ func runAgentLoop() {
 		snapshotBefore := sess.currentSnapshotIfAvailable()
 
 		result, err := sess.dispatch(req)
+		if flagSession != "" {
+			engine.TouchSessionLease(flagSession)
+		}
 
 		// Attach observer events captured during this op.
 		var obsEvents []engine.ObserverEvent
@@ -153,13 +166,15 @@ func runAgentLoop() {
 		var obs *engine.Observation
 		if sess.page != nil {
 			snapshotAfter := sess.currentSnapshotIfAvailable()
-			built := engine.BuildObservation(sess.page, snapshotBefore, snapshotAfter, obsEvents)
+			scanCaptcha := flagObserve || req.Op == "navigate" || req.Op == "reload"
+			built := engine.BuildObservationOpts(sess.page, snapshotBefore, snapshotAfter, obsEvents, scanCaptcha)
 			obs = &built
 			sess.lastObservation = obs
 		}
 
 		if err != nil {
-			resp := agentResponse{ID: req.ID, OK: false, Error: err.Error(), Observation: obs}
+			code, retry := engine.ClassifyError(err)
+			resp := agentResponse{ID: req.ID, OK: false, Error: err.Error(), ErrorCode: code, Retryable: retry, Observation: obs}
 			if len(obsEvents) > 0 {
 				resp.Events = obsEvents
 			}
@@ -181,12 +196,24 @@ func runAgentLoop() {
 }
 
 func (s *agentSession) write(resp agentResponse) {
+	resp.Protocol = engine.ProtocolVersion
 	if err := s.enc.Encode(resp); err != nil {
 		fmt.Fprintf(os.Stderr, "agent: write response %s: %v\n", resp.ID, err)
 	}
 }
 
 func (s *agentSession) shutdown() {
+	if s.rt != nil {
+		s.rt.Close()
+		s.rt = nil
+		s.browser = nil
+		s.observer = nil
+		if s.obsFile != nil {
+			_ = s.obsFile.Close()
+			s.obsFile = nil
+		}
+		return
+	}
 	if s.observer != nil {
 		_ = s.observer.Stop()
 	}
@@ -219,24 +246,34 @@ func (s *agentSession) ensurePage() (*engine.Browser, *rod.Page, error) {
 	}
 	s.browser = b
 	s.page = page
+	s.rt = engine.NewRuntime(b)
+	s.dialogPolicy = &engine.DialogAutoPolicy{Accept: true}
+	engine.StartDialogAutoHandler(page, s.dialogPolicy)
+	if flagSession != "" {
+		engine.TouchSessionLease(flagSession)
+	}
+	if !flagStealth {
+		if hub := s.rt.AttachEvents(page); hub != nil {
+			s.observer = hub.Observer()
+		}
+	}
 
 	// Start observer sidecar if --observe is active.
 	if flagObserve {
 		if flagStealth {
 			fmt.Fprintln(os.Stderr, "ghostchrome: --observe enables the Runtime CDP domain, weakening --stealth")
 		}
-		obsOpts := engine.ObserverOpts{}
-		obs := engine.NewObserver(page, obsOpts)
-		if err := obs.Start(context.Background()); err != nil {
-			fmt.Fprintf(os.Stderr, "agent: observer start failed: %v\n", err)
-		} else {
-			s.observer = obs
-			// Drain the channel asynchronously so it never blocks.
-			go func() {
-				for range obs.Events() {
-					// Events are consumed by Drain() per-op; just keep channel drained.
-				}
-			}()
+		if s.observer == nil {
+			obs := engine.NewObserver(page, engine.ObserverOpts{})
+			if err := obs.Start(context.Background()); err != nil {
+				fmt.Fprintf(os.Stderr, "agent: observer start failed: %v\n", err)
+			} else {
+				s.observer = obs
+				go func() {
+					for range obs.Events() {
+					}
+				}()
+			}
 		}
 		// Open file if --observe-out is set.
 		if flagObserveOut != "" {
@@ -266,7 +303,10 @@ func (s *agentSession) dispatch(req agentRequest) (interface{}, error) {
 	switch req.Op {
 	case "init":
 		_, _, err := s.ensurePage()
-		return nil, err
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"protocol": engine.ProtocolVersion, "version": rootCmd.Version}, nil
 	case "navigate":
 		return s.opNavigate(req.Args)
 	case "back":
@@ -317,6 +357,10 @@ func (s *agentSession) dispatch(req agentRequest) (interface{}, error) {
 			return map[string]string{"url": "", "title": ""}, nil
 		}
 		return map[string]string{"url": info.URL, "title": info.Title}, nil
+	case "dialog":
+		return s.opDialog(req.Args)
+	case "tabs":
+		return s.opTabs(req.Args)
 	case "close":
 		return nil, nil
 	default:
@@ -374,6 +418,9 @@ func (s *agentSession) opNavigate(raw json.RawMessage) (interface{}, error) {
 	if flagStealth {
 		s.challengeRecovered = engine.WaitForBotChallenge(page, 45*time.Second)
 	}
+	if s.browser != nil {
+		_ = s.browser.InvalidateCachedExtract(page)
+	}
 	return info, nil
 }
 
@@ -382,20 +429,17 @@ func (s *agentSession) opHistory(delta int) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	if delta < 0 {
-		err = page.NavigateBack()
-	} else {
-		err = page.NavigateForward()
-	}
-	if err != nil {
+	if err := engine.HistoryStep(page, delta, "load"); err != nil {
 		return nil, err
 	}
-	_ = engine.WaitForPage(page, "load")
 	info, _ := page.Info()
 	out := map[string]string{}
 	if info != nil {
 		out["url"] = info.URL
 		out["title"] = info.Title
+	}
+	if s.browser != nil {
+		_ = s.browser.InvalidateCachedExtract(page)
 	}
 	return out, nil
 }
@@ -436,7 +480,8 @@ func (s *agentSession) opExtract(raw json.RawMessage) (interface{}, error) {
 
 func (s *agentSession) opRef(raw json.RawMessage, op string) (interface{}, error) {
 	var a struct {
-		Ref string `json:"ref"`
+		Ref    string `json:"ref"`
+		Button string `json:"button"`
 	}
 	if err := unmarshalArgs(raw, &a); err != nil {
 		return nil, err
@@ -444,21 +489,54 @@ func (s *agentSession) opRef(raw json.RawMessage, op string) (interface{}, error
 	if a.Ref == "" {
 		return nil, fmt.Errorf("%s: ref required", op)
 	}
+	button := proto.InputMouseButtonLeft
+	if op == "click" || op == "dblclick" {
+		parsed, err := engine.ParseMouseButton(a.Button)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", op, err)
+		}
+		button = parsed
+	}
 	b, page, err := s.ensurePage()
 	if err != nil {
 		return nil, err
 	}
-	return nil, s.withRefRetry(b, page, func(snap *engine.PageSnapshot) error {
+	prev := s.currentSnapshot(b, page)
+	var popupMark uint64
+	if op == "click" {
+		popupMark = engine.PopupMark(page)
+	}
+	err = s.withRefRetry(b, page, func(snap *engine.PageSnapshot) error {
 		switch op {
 		case "click":
-			return engine.ClickRef(page, a.Ref, snap)
+			ps := s.rt.PageSession(page)
+			if ps != nil {
+				return ps.Click(a.Ref, snap, button)
+			}
+			return engine.ClickRefWithButton(page, a.Ref, snap, button)
 		case "dblclick":
-			return engine.DblClickRef(page, a.Ref, snap)
+			if ps := s.rt.PageSession(page); ps != nil {
+				return ps.DblClick(a.Ref, snap, button)
+			}
+			return engine.DblClickRefWithButton(page, a.Ref, snap, button)
 		case "hover":
+			if ps := s.rt.PageSession(page); ps != nil {
+				return ps.Hover(a.Ref, snap)
+			}
 			return engine.HoverRef(page, a.Ref, snap)
 		}
 		return fmt.Errorf("opRef: unsupported op %q", op)
 	})
+	if err != nil {
+		return nil, err
+	}
+	if op == "click" {
+		if popup := engine.AdoptClickPopup(page, popupMark, prev, a.Ref); popup != nil {
+			_ = s.adoptPage(b, popup)
+			page = popup
+		}
+	}
+	return s.mutationResult(b, page, prev, snapshotModeFromArgs(raw)), nil
 }
 
 // opCheck ticks (checked=true) or unticks (checked=false) a checkbox/radio.
@@ -480,9 +558,17 @@ func (s *agentSession) opCheck(raw json.RawMessage, checked bool) (interface{}, 
 	if err != nil {
 		return nil, err
 	}
-	return nil, s.withRefRetry(b, page, func(snap *engine.PageSnapshot) error {
+	prev := s.currentSnapshot(b, page)
+	err = s.withRefRetry(b, page, func(snap *engine.PageSnapshot) error {
+		if ps := s.rt.PageSession(page); ps != nil {
+			return ps.Check(a.Ref, checked, snap)
+		}
 		return engine.SetCheckedRef(page, a.Ref, checked, snap)
 	})
+	if err != nil {
+		return nil, err
+	}
+	return s.mutationResult(b, page, prev, snapshotModeFromArgs(raw)), nil
 }
 
 // opReload refreshes the current page.
@@ -491,15 +577,17 @@ func (s *agentSession) opReload() (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := page.Reload(); err != nil {
+	if err := engine.ReloadPage(page, "load"); err != nil {
 		return nil, err
 	}
-	_ = engine.WaitForPage(page, "load")
 	info, _ := page.Info()
 	out := map[string]string{}
 	if info != nil {
 		out["url"] = info.URL
 		out["title"] = info.Title
+	}
+	if s.browser != nil {
+		_ = s.browser.InvalidateCachedExtract(page)
 	}
 	return out, nil
 }
@@ -520,8 +608,13 @@ func (s *agentSession) opType(raw json.RawMessage) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
+	prev := s.currentSnapshot(b, page)
 	if err := s.withRefRetry(b, page, func(snap *engine.PageSnapshot) error {
-		if err := engine.TypeRef(page, a.Ref, a.Text, snap); err != nil {
+		if ps := s.rt.PageSession(page); ps != nil {
+			if err := ps.Type(a.Ref, a.Text, snap); err != nil {
+				return err
+			}
+		} else if err := engine.TypeRef(page, a.Ref, a.Text, snap); err != nil {
 			return err
 		}
 		if a.Submit {
@@ -535,7 +628,7 @@ func (s *agentSession) opType(raw json.RawMessage) (interface{}, error) {
 	}); err != nil {
 		return nil, err
 	}
-	return nil, nil
+	return s.mutationResult(b, page, prev, snapshotModeFromArgs(raw)), nil
 }
 
 func (s *agentSession) opPress(raw json.RawMessage) (interface{}, error) {
@@ -553,9 +646,14 @@ func (s *agentSession) opPress(raw json.RawMessage) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	return nil, s.withRefRetry(b, page, func(snap *engine.PageSnapshot) error {
+	prev := s.currentSnapshot(b, page)
+	err = s.withRefRetry(b, page, func(snap *engine.PageSnapshot) error {
 		return engine.PressKey(page, a.Key, a.Ref, snap)
 	})
+	if err != nil {
+		return nil, err
+	}
+	return s.mutationResult(b, page, prev, snapshotModeFromArgs(raw)), nil
 }
 
 func (s *agentSession) opSelect(raw json.RawMessage) (interface{}, error) {
@@ -573,9 +671,17 @@ func (s *agentSession) opSelect(raw json.RawMessage) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	return nil, s.withRefRetry(b, page, func(snap *engine.PageSnapshot) error {
+	prev := s.currentSnapshot(b, page)
+	err = s.withRefRetry(b, page, func(snap *engine.PageSnapshot) error {
+		if ps := s.rt.PageSession(page); ps != nil {
+			return ps.Select(a.Ref, a.Values, snap)
+		}
 		return engine.SelectOption(page, a.Ref, a.Values, snap)
 	})
+	if err != nil {
+		return nil, err
+	}
+	return s.mutationResult(b, page, prev, snapshotModeFromArgs(raw)), nil
 }
 
 func (s *agentSession) opFill(raw json.RawMessage) (interface{}, error) {
@@ -592,44 +698,15 @@ func (s *agentSession) opFill(raw json.RawMessage) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Fill in extraction order (@1, @2, @10, …) — Go map iteration is
-	// random, and dependent fields (e.g. country → city) need a stable order.
-	refs := make([]string, 0, len(a.Fields))
-	for ref := range a.Fields {
-		refs = append(refs, ref)
+	snap := s.currentSnapshot(b, page)
+	filled, snap, err := engine.FillFields(b, page, a.Fields, snap)
+	if err != nil {
+		return nil, err
 	}
-	sortRefs(refs)
-	for _, ref := range refs {
-		val := a.Fields[ref]
-		err := s.withRefRetry(b, page, func(snap *engine.PageSnapshot) error {
-			return engine.TypeRef(page, ref, val, snap)
-		})
-		if err != nil {
-			return nil, fmt.Errorf("fill %s: %w", ref, err)
-		}
+	if snap != nil {
+		s.snapshot = snap
 	}
-	return map[string]int{"filled": len(a.Fields)}, nil
-}
-
-// sortRefs orders refs numerically when they follow the @N form, falling
-// back to lexicographic order for anything else.
-func sortRefs(refs []string) {
-	sort.Slice(refs, func(i, j int) bool {
-		ni, iok := refNum(refs[i])
-		nj, jok := refNum(refs[j])
-		if iok && jok {
-			return ni < nj
-		}
-		if iok != jok {
-			return iok
-		}
-		return refs[i] < refs[j]
-	})
-}
-
-func refNum(ref string) (int, bool) {
-	n, err := strconv.Atoi(strings.TrimPrefix(ref, "@"))
-	return n, err == nil
+	return map[string]int{"filled": filled}, nil
 }
 
 func (s *agentSession) opScrollBy(raw json.RawMessage) (interface{}, error) {
@@ -647,6 +724,9 @@ func (s *agentSession) opScrollBy(raw json.RawMessage) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
+	if s.browser != nil {
+		_ = s.browser.InvalidateCachedExtract(page)
+	}
 	return map[string]int{"y": y}, nil
 }
 
@@ -663,6 +743,9 @@ func (s *agentSession) opScrollTo(raw json.RawMessage) (interface{}, error) {
 	y, err := engine.ScrollToY(page, a.Y, a.Bottom)
 	if err != nil {
 		return nil, err
+	}
+	if s.browser != nil {
+		_ = s.browser.InvalidateCachedExtract(page)
 	}
 	return map[string]int{"y": y}, nil
 }
@@ -728,31 +811,35 @@ func (s *agentSession) opScreenshot(raw json.RawMessage) (interface{}, error) {
 func (s *agentSession) opWait(raw json.RawMessage) (interface{}, error) {
 	var a struct {
 		Selector string `json:"selector"`
+		Ref      string `json:"ref"`
+		Text     string `json:"text"`
+		URL      string `json:"url"`
+		Load     string `json:"load"`
+		State    string `json:"state"`
 		MS       int    `json:"ms"`
+		Timeout  int    `json:"timeout_ms"`
 	}
 	_ = unmarshalArgs(raw, &a)
-	_, page, err := s.ensurePage()
+	b, page, err := s.ensurePage()
 	if err != nil {
 		return nil, err
 	}
-	if a.Selector != "" {
-		timeout := time.Duration(flagTimeout) * time.Second
-		if timeout <= 0 {
-			timeout = 30 * time.Second
-		}
-		scoped := page.Timeout(timeout)
-		el, err := scoped.Element(a.Selector)
-		if err != nil {
-			return nil, fmt.Errorf("wait selector %q: %w", a.Selector, err)
-		}
-		if err := el.WaitVisible(); err != nil {
-			return nil, fmt.Errorf("wait visible %q: %w", a.Selector, err)
-		}
+	timeout := time.Duration(flagTimeout) * time.Second
+	if timeout <= 0 {
+		timeout = 30 * time.Second
 	}
-	if a.MS > 0 {
-		time.Sleep(time.Duration(a.MS) * time.Millisecond)
+	if a.Timeout > 0 {
+		timeout = time.Duration(a.Timeout) * time.Millisecond
 	}
-	return nil, nil
+	return engine.WaitForAgent(page, b, s.currentSnapshotIfAvailable(), engine.WaitSpec{
+		Selector: a.Selector,
+		Ref:      a.Ref,
+		Text:     a.Text,
+		URL:      a.URL,
+		Load:     a.Load,
+		State:    a.State,
+		MS:       a.MS,
+	}, timeout)
 }
 
 func (s *agentSession) opErrors() (interface{}, error) {
@@ -767,6 +854,200 @@ func (s *agentSession) opErrors() (interface{}, error) {
 	return entries, nil
 }
 
+func (s *agentSession) opDialog(raw json.RawMessage) (interface{}, error) {
+	var a struct {
+		Action string `json:"action"`
+		Text   string `json:"text"`
+	}
+	if err := unmarshalArgs(raw, &a); err != nil {
+		return nil, err
+	}
+	action := strings.ToLower(strings.TrimSpace(a.Action))
+	if action == "" {
+		action = "accept"
+	}
+	switch action {
+	case "accept":
+		if s.dialogPolicy == nil {
+			s.dialogPolicy = &engine.DialogAutoPolicy{Accept: true, Prompt: a.Text}
+		} else {
+			s.dialogPolicy.Set(true, a.Text)
+		}
+		return map[string]any{"action": "accept", "text": a.Text}, nil
+	case "dismiss":
+		if s.dialogPolicy == nil {
+			s.dialogPolicy = &engine.DialogAutoPolicy{Accept: false}
+		} else {
+			s.dialogPolicy.Set(false, a.Text)
+		}
+		return map[string]any{"action": "dismiss"}, nil
+	default:
+		return nil, fmt.Errorf("dialog: unknown action %q (accept|dismiss)", a.Action)
+	}
+}
+func (s *agentSession) opTabs(raw json.RawMessage) (interface{}, error) {
+	var a struct {
+		Action string `json:"action"`
+		Index  *int   `json:"index"`
+		URL    string `json:"url"`
+	}
+	if err := unmarshalArgs(raw, &a); err != nil {
+		return nil, err
+	}
+	action := strings.ToLower(strings.TrimSpace(a.Action))
+	if action == "" {
+		action = "list"
+	}
+	b, page, err := s.ensurePage()
+	if err != nil {
+		return nil, err
+	}
+	currentID := ""
+	if page != nil {
+		currentID = string(page.TargetID)
+	}
+	switch action {
+	case "list":
+		return engine.ListTabs(b.RodBrowser(), currentID)
+	case "switch":
+		if a.Index == nil {
+			return nil, fmt.Errorf("tabs: index required for switch")
+		}
+		newPage, err := engine.SwitchTab(b.RodBrowser(), *a.Index)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.adoptPage(b, newPage); err != nil {
+			return nil, err
+		}
+		info, _ := newPage.Info()
+		out := map[string]any{"action": "switch", "index": *a.Index}
+		if info != nil {
+			out["url"] = info.URL
+			out["title"] = info.Title
+		}
+		return out, nil
+	case "close":
+		if a.Index == nil {
+			return nil, fmt.Errorf("tabs: index required for close")
+		}
+		closedID, err := engine.CloseTab(b.RodBrowser(), *a.Index)
+		if err != nil {
+			return nil, err
+		}
+		_ = b.DeleteSnapshot(closedID)
+		if s.page != nil && s.page.TargetID == closedID {
+			pages, perr := b.RodBrowser().Pages()
+			if perr == nil && len(pages) > 0 {
+				_ = s.adoptPage(b, pages[0])
+			} else {
+				s.page = nil
+				s.snapshot = nil
+			}
+		}
+		return map[string]any{"action": "close", "index": *a.Index}, nil
+	case "new":
+		newPage, err := engine.NewTab(b.RodBrowser(), a.URL)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.adoptPage(b, newPage); err != nil {
+			return nil, err
+		}
+		info, _ := newPage.Info()
+		out := map[string]any{"action": "new"}
+		if info != nil {
+			out["url"] = info.URL
+			out["title"] = info.Title
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("tabs: unknown action %q (list|switch|close|new)", a.Action)
+	}
+}
+
+func (s *agentSession) adoptPage(b *engine.Browser, page *rod.Page) error {
+	if err := b.SetCurrentPage(page); err != nil {
+		return err
+	}
+	s.page = page
+	s.snapshot = b.Snapshot(page)
+	if s.dialogPolicy == nil {
+		s.dialogPolicy = &engine.DialogAutoPolicy{Accept: true}
+	}
+	engine.StartDialogAutoHandler(page, s.dialogPolicy)
+	if s.rt == nil {
+		s.rt = engine.NewRuntime(b)
+	}
+	if !flagStealth {
+		if hub := s.rt.AttachEvents(page); hub != nil {
+			s.observer = hub.Observer()
+		}
+	}
+	return nil
+}
+func snapshotModeFromArgs(raw json.RawMessage) engine.SnapshotMode {
+	var a struct {
+		Snapshot string `json:"snapshot"`
+	}
+	_ = unmarshalArgs(raw, &a)
+	mode, err := engine.ParseSnapshotMode(a.Snapshot)
+	if err != nil {
+		return engine.SnapshotModeDiff
+	}
+	return mode
+}
+
+func (s *agentSession) mutationDiff(b *engine.Browser, page *rod.Page, prev *engine.PageSnapshot) engine.SnapshotDiff {
+	out := s.mutationResult(b, page, prev, engine.SnapshotModeDiff)
+	if diff, ok := out.(engine.SnapshotDiff); ok {
+		return diff
+	}
+	return engine.SnapshotDiff{Unchanged: true}
+}
+
+// mutationResult honours none/diff/full. snapshot=full returns the skeleton
+// ExtractionResult (same shape as extract) so agents can keep refs without a
+// second extract call. none skips AX work after the mutation.
+func (s *agentSession) mutationResult(b *engine.Browser, page *rod.Page, prev *engine.PageSnapshot, mode engine.SnapshotMode) interface{} {
+	switch mode {
+	case engine.SnapshotModeNone:
+		if b != nil {
+			_ = b.InvalidateCachedExtract(page)
+		}
+		return engine.SnapshotDiff{Unchanged: true}
+	case engine.SnapshotModeFull:
+		if b != nil {
+			_ = b.InvalidateCachedExtract(page)
+		}
+		if err := engine.WaitForImminentDOM(page, 0); err != nil {
+			return engine.SnapshotDiff{Unchanged: true}
+		}
+		result, err := engine.Extract(page, engine.LevelSkeleton, "", false)
+		if err != nil {
+			return engine.SnapshotDiff{Unchanged: true}
+		}
+		if b != nil {
+			_ = b.SaveSnapshot(page, result)
+			if snap, serr := engine.BuildSnapshot(page, result); serr == nil {
+				s.snapshot = snap
+			}
+		}
+		return result
+	default:
+		diff, _, err := engine.CaptureMutation(b, page, prev)
+		if err != nil {
+			return engine.SnapshotDiff{Unchanged: true}
+		}
+		if b != nil {
+			if snap := b.Snapshot(page); snap != nil {
+				s.snapshot = snap
+			}
+		}
+		return diff
+	}
+}
+
 // withRecovery calls fn with the current snapshot; if it fails, it runs the
 // recovery hook chain. If a hook signals retry=true the op is retried once.
 //
@@ -777,6 +1058,9 @@ func (s *agentSession) withRecovery(b *engine.Browser, page *rod.Page, opName st
 	snap := s.currentSnapshot(b, page)
 	err := fn(snap)
 	if err == nil {
+		if b != nil && page != nil {
+			_ = b.InvalidateCachedExtract(page)
+		}
 		return nil
 	}
 	if len(s.recoveryHooks) == 0 {
@@ -791,7 +1075,13 @@ func (s *agentSession) withRecovery(b *engine.Browser, page *rod.Page, opName st
 		return err
 	}
 	// One retry after recovery.
-	return fn(s.currentSnapshot(b, page))
+	if err := fn(s.currentSnapshot(b, page)); err != nil {
+		return err
+	}
+	if b != nil && page != nil {
+		_ = b.InvalidateCachedExtract(page)
+	}
+	return nil
 }
 
 // withRefRetry is a legacy alias kept for call sites that pre-date withRecovery.
@@ -854,7 +1144,8 @@ func (s *agentSession) runOp(op string, rawArgs json.RawMessage) (interface{}, *
 	var obs *engine.Observation
 	if s.page != nil {
 		snapshotAfter := s.currentSnapshotIfAvailable()
-		built := engine.BuildObservation(s.page, snapshotBefore, snapshotAfter, events)
+		scanCaptcha := flagObserve || op == "navigate" || op == "reload"
+		built := engine.BuildObservationOpts(s.page, snapshotBefore, snapshotAfter, events, scanCaptcha)
 		obs = &built
 		s.lastObservation = obs
 	}

@@ -78,6 +78,7 @@ Examples:
 			exitIfStaleRef(err, "eval")
 			exitErr("eval", err)
 		}
+		_ = b.InvalidateCachedExtract(page)
 
 		type evalResult struct {
 			Expression string `json:"expression"`

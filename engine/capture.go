@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -61,6 +62,8 @@ type CaptureSession struct {
 	mimeRe     *regexp.Regexp
 	page       *rod.Page
 	stop       func()
+	done       chan struct{}
+	stopOnce   sync.Once
 	outFile    *os.File
 	outMu      sync.Mutex
 	writeErr   error
@@ -83,6 +86,7 @@ func StartCapture(page *rod.Page, spec CaptureSpec) (*CaptureSession, error) {
 		page:       page,
 		pending:    map[proto.NetworkRequestID]*CapturedEntry{},
 		reachedMax: make(chan struct{}),
+		done:       make(chan struct{}),
 	}
 	if spec.URLMatch != "" {
 		re, err := regexp.Compile(spec.URLMatch)
@@ -106,7 +110,8 @@ func StartCapture(page *rod.Page, spec CaptureSpec) (*CaptureSession, error) {
 		s.outFile = f
 	}
 
-	s.stop = page.EachEvent(
+	ctx, cancel := context.WithCancel(page.GetContext())
+	wait := page.Context(ctx).EachEvent(
 		func(e *proto.NetworkRequestWillBeSent) {
 			s.mu.Lock()
 			entry := s.pending[e.RequestID]
@@ -195,6 +200,12 @@ func StartCapture(page *rod.Page, spec CaptureSpec) (*CaptureSession, error) {
 		},
 	)
 
+	go func() {
+		wait()
+		close(s.done)
+	}()
+	s.stop = cancel
+
 	return s, nil
 }
 
@@ -272,12 +283,20 @@ func (s *CaptureSession) ReachedMax() <-chan struct{} { return s.reachedMax }
 
 // Stop detaches listeners, closes the output file, and returns any write errors.
 func (s *CaptureSession) Stop() ([]*CapturedEntry, error) {
-	if s.stop != nil {
-		s.stop()
-	}
-	if s.outFile != nil {
-		s.outFile.Close()
-	}
+	s.stopOnce.Do(func() {
+		if s.stop != nil {
+			s.stop()
+		}
+		if s.done != nil {
+			select {
+			case <-s.done:
+			case <-time.After(2 * time.Second):
+			}
+		}
+		if s.outFile != nil {
+			s.outFile.Close()
+		}
+	})
 	s.outMu.Lock()
 	writeErr := s.writeErr
 	s.outMu.Unlock()

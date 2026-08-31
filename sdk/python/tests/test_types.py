@@ -9,6 +9,8 @@ from ghostchrome.types import (
     Response,
     _parse_observation,
     parse_response,
+    _parse_snapshot_diff,
+    SnapshotDiff,
 )
 
 
@@ -115,6 +117,44 @@ class TestParseResponse(unittest.TestCase):
         resp = parse_response(line)
         self.assertEqual(len(resp.events), 1)
         self.assertEqual(resp.events[0]["type"], "dialog")
+
+    def test_agent_metadata_is_preserved(self):
+        resp = parse_response(json.dumps({
+            "id": "r7", "ok": True, "protocol": 1,
+            "error_code": "x", "retryable": False,
+        }))
+        self.assertEqual(resp.protocol, 1)
+        self.assertEqual(resp.error_code, "x")
+        self.assertFalse(resp.retryable)
+
+    def test_snapshot_diff(self):
+        diff = _parse_snapshot_diff({
+            "unchanged": False,
+            "added": [{"ref": "@3", "role": "button", "name": "Go"}],
+            "removed": ["@2"],
+            "changed": {"@1": {"before": {"name": "A"}, "after": {"name": "B"}}},
+            "stats": {"added": 1, "removed": 1, "changed": 1, "kept": 4},
+        })
+        self.assertIsInstance(diff, SnapshotDiff)
+        self.assertEqual(diff.added[0].ref, "@3")
+        self.assertEqual(diff.changed["@1"].after.name, "B")
+        self.assertEqual(diff.stats.kept, 4)
+
+    def test_mutation_result_full_extract(self):
+        from ghostchrome.types import ExtractResult, _parse_mutation_result
+        result = _parse_mutation_result({
+            "nodes": [{"ref": "@1", "role": "button", "name": "Go"}],
+            "refs": {"@1": {"role": "button", "name": "Go"}},
+            "stats": {"total_nodes": 1, "filtered_nodes": 1, "interactive_count": 1},
+        })
+        self.assertIsInstance(result, ExtractResult)
+        self.assertEqual(result.stats.interactive_count, 1)
+
+    def test_mutation_result_diff(self):
+        from ghostchrome.types import SnapshotDiff, _parse_mutation_result
+        result = _parse_mutation_result({"unchanged": True, "stats": {"kept": 2}})
+        self.assertIsInstance(result, SnapshotDiff)
+        self.assertTrue(result.unchanged)
 
 
 if __name__ == "__main__":

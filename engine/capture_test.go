@@ -27,3 +27,14 @@ func TestIsStaticNetworkEntry(t *testing.T) {
 		})
 	}
 }
+
+func TestCaptureSessionStopIdempotent(t *testing.T) {
+	s := &CaptureSession{done: make(chan struct{})}
+	close(s.done)
+	if _, err := s.Stop(); err != nil {
+		t.Fatalf("first stop: %v", err)
+	}
+	if _, err := s.Stop(); err != nil {
+		t.Fatalf("second stop: %v", err)
+	}
+}

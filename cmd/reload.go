@@ -20,19 +20,16 @@ Examples:
 		b, page := openPage()
 		defer b.Close()
 
-		if err := page.Reload(); err != nil {
+		if err := engine.ReloadPage(page, "load"); err != nil {
 			exitErr("reload", err)
 		}
-		// Best-effort: a page that never reaches "load" (heavy SPA) must not
-		// fail the command — we still report whatever info we can read.
-		_ = engine.WaitForPage(page, "load")
 
 		info, err := page.Info()
 		if err != nil {
 			exitErr("page info", err)
 		}
 
-		result := snapshotPage(b, page, engine.LevelSkeleton)
+		result := snapshotPageAfterMutation(b, page, engine.LevelSkeleton)
 
 		text := formatPlaywrightPageStateOutput(&engine.PageInfo{
 			URL:   info.URL,

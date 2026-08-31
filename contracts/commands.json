@@ -17,6 +17,12 @@
         "type": "string",
         "required": true,
         "description": "@ref of the checkbox/radio"
+      },
+      {
+        "name": "snapshot",
+        "type": "string",
+        "required": false,
+        "description": "none | diff | full (default: diff)"
       }
     ],
     "surfaces": [
@@ -32,6 +38,18 @@
         "type": "string",
         "required": true,
         "description": "@ref of the element, e.g. @5"
+      },
+      {
+        "name": "button",
+        "type": "string",
+        "required": false,
+        "description": "Mouse button: left, right, or middle (default: left)"
+      },
+      {
+        "name": "snapshot",
+        "type": "string",
+        "required": false,
+        "description": "none | diff | full (default: diff)"
       }
     ],
     "surfaces": [
@@ -57,10 +75,44 @@
         "type": "string",
         "required": true,
         "description": "@ref of the element, e.g. @5"
+      },
+      {
+        "name": "button",
+        "type": "string",
+        "required": false,
+        "description": "Mouse button: left, right, or middle (default: left)"
+      },
+      {
+        "name": "snapshot",
+        "type": "string",
+        "required": false,
+        "description": "none | diff | full (default: diff)"
       }
     ],
     "surfaces": [
       "jsonl"
+    ]
+  },
+  {
+    "name": "dialog",
+    "summary": "Set how JavaScript dialogs (alert/confirm/prompt) are auto-handled. Default accept.",
+    "args": [
+      {
+        "name": "action",
+        "type": "string",
+        "required": false,
+        "description": "accept (default) | dismiss"
+      },
+      {
+        "name": "text",
+        "type": "string",
+        "required": false,
+        "description": "Prompt response text when action=accept"
+      }
+    ],
+    "surfaces": [
+      "jsonl",
+      "mcp"
     ]
   },
   {
@@ -213,6 +265,12 @@
         "type": "string",
         "required": true,
         "description": "@ref of the element"
+      },
+      {
+        "name": "snapshot",
+        "type": "string",
+        "required": false,
+        "description": "none | diff | full (default: diff)"
       }
     ],
     "surfaces": [
@@ -267,6 +325,12 @@
         "type": "string",
         "required": false,
         "description": "Optional @ref to focus before pressing"
+      },
+      {
+        "name": "snapshot",
+        "type": "string",
+        "required": false,
+        "description": "none | diff | full (default: diff)"
       }
     ],
     "surfaces": [
@@ -370,6 +434,12 @@
         "type": "array",
         "required": true,
         "description": "Option values to select (JSONL/AI: string array; MCP: 'value' string or JSON-array string)"
+      },
+      {
+        "name": "snapshot",
+        "type": "string",
+        "required": false,
+        "description": "none | diff | full (default: diff)"
       }
     ],
     "surfaces": [
@@ -413,22 +483,29 @@
   },
   {
     "name": "tabs",
-    "summary": "List, switch, or close browser tabs. MCP surface only (JSONL/CLI use dedicated commands).",
+    "summary": "List, switch, close, or open browser tabs.",
     "args": [
       {
         "name": "action",
         "type": "string",
         "required": false,
-        "description": "list (default) | switch | close"
+        "description": "list (default) | switch | close | new"
       },
       {
         "name": "index",
         "type": "number",
         "required": false,
         "description": "Tab index for switch/close actions"
+      },
+      {
+        "name": "url",
+        "type": "string",
+        "required": false,
+        "description": "URL for action=new (blank tab when omitted)"
       }
     ],
     "surfaces": [
+      "jsonl",
       "mcp"
     ]
   },
@@ -453,6 +530,12 @@
         "type": "boolean",
         "required": false,
         "description": "If true, press Enter after typing (submit the form)"
+      },
+      {
+        "name": "snapshot",
+        "type": "string",
+        "required": false,
+        "description": "none | diff | full (default: diff)"
       }
     ],
     "surfaces": [
@@ -470,6 +553,12 @@
         "type": "string",
         "required": true,
         "description": "@ref of the checkbox"
+      },
+      {
+        "name": "snapshot",
+        "type": "string",
+        "required": false,
+        "description": "none | diff | full (default: diff)"
       }
     ],
     "surfaces": [
@@ -508,7 +597,7 @@
   },
   {
     "name": "wait",
-    "summary": "Wait for a CSS selector to appear or a fixed delay in ms.",
+    "summary": "Wait for a selector/@ref, visible text, URL substring, load state, or a fixed delay.",
     "args": [
       {
         "name": "selector",
@@ -517,10 +606,46 @@
         "description": "CSS selector to wait for"
       },
       {
+        "name": "ref",
+        "type": "string",
+        "required": false,
+        "description": "@ref from the last snapshot to wait for"
+      },
+      {
+        "name": "text",
+        "type": "string",
+        "required": false,
+        "description": "Visible text substring to wait for"
+      },
+      {
+        "name": "url",
+        "type": "string",
+        "required": false,
+        "description": "Wait until the current URL contains this substring"
+      },
+      {
+        "name": "load",
+        "type": "string",
+        "required": false,
+        "description": "Page load state: load | domcontentloaded | idle | stable | none"
+      },
+      {
+        "name": "state",
+        "type": "string",
+        "required": false,
+        "description": "Element state: attached | visible | hidden | enabled | stable (default: visible)"
+      },
+      {
         "name": "ms",
         "type": "integer",
         "required": false,
         "description": "Fixed delay in milliseconds"
+      },
+      {
+        "name": "timeout_ms",
+        "type": "integer",
+        "required": false,
+        "description": "Maximum wait time in milliseconds"
       }
     ],
     "surfaces": [
@@ -530,8 +655,14 @@
   },
   {
     "name": "wait_for",
-    "summary": "Wait for a selector, text, or timeout. MCP surface only (JSONL uses 'wait').",
+    "summary": "Wait for a @ref/selector/text/url/load condition. MCP surface only (JSONL uses 'wait').",
     "args": [
+      {
+        "name": "ref",
+        "type": "string",
+        "required": false,
+        "description": "@ref from the last snapshot to wait for"
+      },
       {
         "name": "selector",
         "type": "string",
@@ -543,6 +674,24 @@
         "type": "string",
         "required": false,
         "description": "Visible text substring to wait for"
+      },
+      {
+        "name": "url",
+        "type": "string",
+        "required": false,
+        "description": "Wait until the current URL contains this substring"
+      },
+      {
+        "name": "load",
+        "type": "string",
+        "required": false,
+        "description": "Page load state: load | domcontentloaded | idle | stable | none"
+      },
+      {
+        "name": "state",
+        "type": "string",
+        "required": false,
+        "description": "Element state: attached | visible | hidden | enabled | stable (default: visible)"
       },
       {
         "name": "timeout_ms",

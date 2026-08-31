@@ -14,7 +14,7 @@ var dblclickCmd = &cobra.Command{
 If a second argument is provided and matches left|right|middle, it is used as
 the mouse button. Otherwise it is treated as a URL to navigate before
 double-clicking.
-After double-clicking, extracts a skeleton of the resulting page.
+After double-clicking, prints a compact a11y-ref diff (override with --snapshot=full|none).
 
 Examples:
   ghostchrome dblclick @3 --connect ws://127.0.0.1:9222
@@ -46,16 +46,11 @@ Examples:
 			exitErr("dblclick", err)
 		}
 
-		result := snapshotPage(b, page, engine.LevelSkeleton)
-		text := formatCurrentPlaywrightPageStateOutput("dblclick", page, result)
-		output(&actionResult{
-			Action: "dblclick",
-			Ref:    ref,
-			Result: result,
-		}, text)
+		emitMutationOutput("dblclick", ref, b, page, nil)
 	},
 }
 
 func init() {
+	registerSnapshotModeFlag(dblclickCmd)
 	rootCmd.AddCommand(dblclickCmd)
 }

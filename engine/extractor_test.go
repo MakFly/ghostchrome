@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/go-rod/rod/lib/proto"
 )
 
 func TestFormatTextBasic(t *testing.T) {
@@ -313,6 +315,9 @@ func TestShouldInclude(t *testing.T) {
 		{"none", "", LevelFull, false},
 		{"group", "Named Group", LevelFull, true},
 		{"group", "", LevelFull, false},
+		{"switch", "Notifications", LevelSkeleton, true},
+		{"slider", "Volume", LevelSkeleton, true},
+		{"option", "France", LevelSkeleton, true},
 	}
 
 	for _, tt := range tests {
@@ -443,5 +448,25 @@ func TestContentBoundaryEmptyLabel(t *testing.T) {
 
 	if strings.Contains(out, ContentBoundaryOpen) {
 		t.Errorf("empty-label nodes must not produce boundary markers; got:\n%s", out)
+	}
+}
+
+func TestAxSubtreeIDsIncludesNestedDescendants(t *testing.T) {
+	root := proto.AccessibilityAXNodeID("root")
+	mid := proto.AccessibilityAXNodeID("mid")
+	leaf := proto.AccessibilityAXNodeID("leaf")
+	outside := proto.AccessibilityAXNodeID("outside")
+	nodeMap := map[proto.AccessibilityAXNodeID]*proto.AccessibilityAXNode{
+		root:    {NodeID: root, ChildIDs: []proto.AccessibilityAXNodeID{mid}, BackendDOMNodeID: 1},
+		mid:     {NodeID: mid, ChildIDs: []proto.AccessibilityAXNodeID{leaf}, BackendDOMNodeID: 2},
+		leaf:    {NodeID: leaf, BackendDOMNodeID: 3},
+		outside: {NodeID: outside, BackendDOMNodeID: 4},
+	}
+	got := axSubtreeIDs(nodeMap, root)
+	if !got[root] || !got[mid] || !got[leaf] {
+		t.Fatalf("expected nested descendants in scope, got %#v", got)
+	}
+	if got[outside] {
+		t.Fatal("did not expect unrelated node in selector scope")
 	}
 }

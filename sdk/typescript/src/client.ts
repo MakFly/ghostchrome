@@ -5,10 +5,8 @@
  * Generates unique op IDs, sends the request, and resolves with
  * the typed result + observation.
  *
- * For ops that emit no result (init, wait, close, click, hover, type,
- * press, select), the binary omits the `result` field entirely.
- * Those methods resolve with `{}` (EmptyResult) so callers always get
- * a defined value without crashing on destructuring.
+ * Interaction ops return a SnapshotDiff. wait and close may omit `result` and
+ * are normalized to an empty object.
  *
  * On ok=false the transport throws GhostchromeError carrying
  * { id, op, error } before this layer is reached.
@@ -35,6 +33,8 @@ import type {
   EvalArgs,
   ScreenshotArgs,
   WaitArgs,
+  TabsArgs,
+  DialogArgs,
   // results
   InitResult,
   NavigateResult,
@@ -51,6 +51,9 @@ import type {
   ErrorsResult,
   UrlResult,
   CloseResult,
+  TabsResult,
+  DialogResult,
+  MutationResult,
 } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -196,46 +199,46 @@ export class Ghostchrome {
   // -------------------------------------------------------------------------
 
   /** click — click an element by its @ref. */
-  async click(ref: string): Promise<OpOutcome<EmptyResult>> {
-    return this.emptyOp<ClickArgs>("click", { ref });
+  async click(ref: string, opts?: Pick<ClickArgs, "snapshot" | "button">): Promise<OpOutcome<MutationResult>> {
+    return this.op<ClickArgs, MutationResult>("click", { ref, ...opts });
   }
 
   /** dblclick — double-click an element by its @ref. */
-  async dblclick(ref: string): Promise<OpOutcome<EmptyResult>> {
-    return this.emptyOp<DblClickArgs>("dblclick", { ref });
+  async dblclick(ref: string, opts?: Pick<DblClickArgs, "snapshot" | "button">): Promise<OpOutcome<MutationResult>> {
+    return this.op<DblClickArgs, MutationResult>("dblclick", { ref, ...opts });
   }
 
   /** check — tick a checkbox/radio by @ref (idempotent). */
-  async check(ref: string): Promise<OpOutcome<EmptyResult>> {
-    return this.emptyOp<CheckArgs>("check", { ref });
+  async check(ref: string, opts?: Pick<CheckArgs, "snapshot">): Promise<OpOutcome<MutationResult>> {
+    return this.op<CheckArgs, MutationResult>("check", { ref, ...opts });
   }
 
   /** uncheck — untick a checkbox by @ref (idempotent). */
-  async uncheck(ref: string): Promise<OpOutcome<EmptyResult>> {
-    return this.emptyOp<CheckArgs>("uncheck", { ref });
+  async uncheck(ref: string, opts?: Pick<CheckArgs, "snapshot">): Promise<OpOutcome<MutationResult>> {
+    return this.op<CheckArgs, MutationResult>("uncheck", { ref, ...opts });
   }
 
   /** hover — hover over an element by @ref (reveals dropdowns, tooltips). */
-  async hover(ref: string): Promise<OpOutcome<EmptyResult>> {
-    return this.emptyOp<HoverArgs>("hover", { ref });
+  async hover(ref: string, opts?: Pick<HoverArgs, "snapshot">): Promise<OpOutcome<MutationResult>> {
+    return this.op<HoverArgs, MutationResult>("hover", { ref, ...opts });
   }
 
   /**
    * type — type text into an input/textarea by @ref.
    * The field is cleared before typing by default.
    */
-  async type(ref: string, text: string, opts?: Pick<TypeArgs, "clear" | "submit">): Promise<OpOutcome<EmptyResult>> {
-    return this.emptyOp<TypeArgs>("type", { ref, text, ...opts });
+  async type(ref: string, text: string, opts?: Pick<TypeArgs, "clear" | "submit" | "snapshot">): Promise<OpOutcome<MutationResult>> {
+    return this.op<TypeArgs, MutationResult>("type", { ref, text, ...opts });
   }
 
   /** press — press a keyboard key; optionally focus an element by @ref first. */
-  async press(key: string, opts?: Pick<PressArgs, "ref">): Promise<OpOutcome<EmptyResult>> {
-    return this.emptyOp<PressArgs>("press", { key, ...opts });
+  async press(key: string, opts?: Pick<PressArgs, "ref" | "snapshot">): Promise<OpOutcome<MutationResult>> {
+    return this.op<PressArgs, MutationResult>("press", { key, ...opts });
   }
 
   /** select — pick one or more options in a <select> element by @ref. */
-  async select(ref: string, values: string[]): Promise<OpOutcome<EmptyResult>> {
-    return this.emptyOp<SelectArgs>("select", { ref, values });
+  async select(ref: string, values: string[], opts?: Pick<SelectArgs, "snapshot">): Promise<OpOutcome<MutationResult>> {
+    return this.op<SelectArgs, MutationResult>("select", { ref, values, ...opts });
   }
 
   /**
@@ -313,6 +316,16 @@ export class Ghostchrome {
   /** url — return the current page URL and title. */
   async url(): Promise<OpOutcome<UrlResult>> {
     return this.op<Record<string, never>, UrlResult>("url");
+  }
+
+  /** tabs — list, switch, close, or open browser tabs. */
+  async tabs(opts?: TabsArgs): Promise<OpOutcome<TabsResult>> {
+    return this.op<TabsArgs, TabsResult>("tabs", opts);
+  }
+
+  /** dialog — set auto-accept/dismiss for JS alert/confirm/prompt. */
+  async dialog(opts?: DialogArgs): Promise<OpOutcome<DialogResult>> {
+    return this.op<DialogArgs, DialogResult>("dialog", opts);
   }
 
   // -------------------------------------------------------------------------

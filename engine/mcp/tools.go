@@ -41,21 +41,25 @@ func registerTools(srv *mcpsrv.MCPServer, s *Server) {
 	), s.handleNavigate)
 
 	srv.AddTool(mcpgo.NewTool("click",
-		mcpgo.WithDescription("Click an element by its ref (@1, @2, ...). Ref comes from the last snapshot. Auto-waits for the element to be attached + visible + stable + enabled."),
+		mcpgo.WithDescription("Click an element by its ref (@1, @2, ...). Ref comes from the last snapshot. Auto-waits for attached + visible + enabled + hit-target, then returns a compact a11y-ref diff (snapshot=diff, default), a skeleton extract (full), or nothing (none)."),
 		mcpgo.WithString("ref", mcpgo.Required(), mcpgo.Description("Element ref from the last snapshot (e.g. @3 or 3)")),
+		mcpgo.WithString("button", mcpgo.Description("Mouse button: left, right, or middle (default: left)"), mcpgo.Enum("left", "right", "middle"), mcpgo.DefaultString("left")),
+		mcpgo.WithString("snapshot", mcpgo.Description("none | diff | full (default: diff)"), mcpgo.Enum("none", "diff", "full"), mcpgo.DefaultString("diff")),
 	), s.handleClick)
 
 	srv.AddTool(mcpgo.NewTool("type",
-		mcpgo.WithDescription("Type text into an input/textarea by ref. Set `submit: true` to press Enter after typing (covers the common fill-and-submit pattern in one call)."),
+		mcpgo.WithDescription("Type text into an input/textarea by ref. Set submit=true to press Enter after typing. Returns a compact a11y-ref diff (snapshot=diff, default), a skeleton extract (full), or nothing (none)."),
 		mcpgo.WithString("ref", mcpgo.Required(), mcpgo.Description("Element ref from the last snapshot")),
 		mcpgo.WithString("text", mcpgo.Required(), mcpgo.Description("Text to type (the field is cleared first)")),
 		mcpgo.WithBoolean("submit", mcpgo.Description("If true, press Enter after typing"), mcpgo.DefaultBool(false)),
+		mcpgo.WithString("snapshot", mcpgo.Description("none | diff | full (default: diff)"), mcpgo.Enum("none", "diff", "full"), mcpgo.DefaultString("diff")),
 	), s.handleType)
 
 	srv.AddTool(mcpgo.NewTool("select",
-		mcpgo.WithDescription("Select one or more options in a <select> element by ref. Pass a single string or an array of strings."),
+		mcpgo.WithDescription("Select one or more options in a <select> element by ref. Returns a compact a11y-ref diff (snapshot=diff, default), a skeleton extract (full), or nothing (none)."),
 		mcpgo.WithString("ref", mcpgo.Required(), mcpgo.Description("Element ref of the <select>")),
 		mcpgo.WithString("value", mcpgo.Required(), mcpgo.Description("Option value or visible label to select. For multi-select, pass JSON array as string (e.g. \"[\\\"a\\\",\\\"b\\\"]\").")),
+		mcpgo.WithString("snapshot", mcpgo.Description("none | diff | full (default: diff)"), mcpgo.Enum("none", "diff", "full"), mcpgo.DefaultString("diff")),
 	), s.handleSelect)
 
 	srv.AddTool(mcpgo.NewTool("press",
@@ -65,9 +69,13 @@ func registerTools(srv *mcpsrv.MCPServer, s *Server) {
 	), s.handlePress)
 
 	srv.AddTool(mcpgo.NewTool("wait_for",
-		mcpgo.WithDescription("Wait for a condition: selector to appear, text to appear, or just a timeout. At least one of selector/text/timeout_ms must be given."),
+		mcpgo.WithDescription("Wait for a condition: @ref or CSS selector to become visible, text to appear, or just a timeout. At least one of ref/selector/text/timeout_ms must be given."),
+		mcpgo.WithString("ref", mcpgo.Description("Element ref from the last snapshot (e.g. @3)")),
 		mcpgo.WithString("selector", mcpgo.Description("CSS selector to wait for")),
 		mcpgo.WithString("text", mcpgo.Description("Visible text substring to wait for")),
+		mcpgo.WithString("url", mcpgo.Description("Wait until the current URL contains this substring")),
+		mcpgo.WithString("load", mcpgo.Description("Page load state: load, domcontentloaded, idle, stable, none"), mcpgo.Enum("load", "domcontentloaded", "idle", "stable", "none")),
+		mcpgo.WithString("state", mcpgo.Description("Element state when waiting on ref/selector: attached, visible, hidden, enabled, stable (default: visible)"), mcpgo.Enum("attached", "visible", "hidden", "enabled", "stable"), mcpgo.DefaultString("visible")),
 		mcpgo.WithNumber("timeout_ms", mcpgo.Description("Maximum wait time in milliseconds (default 5000, max 30000)"), mcpgo.DefaultNumber(5000)),
 	), s.handleWaitFor)
 
@@ -88,8 +96,9 @@ func registerTools(srv *mcpsrv.MCPServer, s *Server) {
 	), s.handleScreenshot)
 
 	srv.AddTool(mcpgo.NewTool("hover",
-		mcpgo.WithDescription("Hover over an element by ref. Triggers CSS :hover states and any hover-bound JS listeners."),
+		mcpgo.WithDescription("Hover over an element by ref. Returns a compact a11y-ref diff (snapshot=diff, default), a skeleton extract (full), or nothing (none)."),
 		mcpgo.WithString("ref", mcpgo.Required(), mcpgo.Description("Element ref from the last snapshot")),
+		mcpgo.WithString("snapshot", mcpgo.Description("none | diff | full (default: diff)"), mcpgo.Enum("none", "diff", "full"), mcpgo.DefaultString("diff")),
 	), s.handleHover)
 
 	srv.AddTool(mcpgo.NewTool("drag",
@@ -112,9 +121,16 @@ func registerTools(srv *mcpsrv.MCPServer, s *Server) {
 
 	srv.AddTool(mcpgo.NewTool("tabs",
 		mcpgo.WithDescription("List open browser tabs with their URLs, titles, and indices. Use the index with 'switch' action to change the active tab."),
-		mcpgo.WithString("action", mcpgo.Description("list (default), switch, close"), mcpgo.Enum("list", "switch", "close"), mcpgo.DefaultString("list")),
+		mcpgo.WithString("action", mcpgo.Description("list (default), switch, close, new"), mcpgo.Enum("list", "switch", "close", "new"), mcpgo.DefaultString("list")),
 		mcpgo.WithNumber("index", mcpgo.Description("Tab index for switch/close actions")),
+		mcpgo.WithString("url", mcpgo.Description("URL for action=new (blank tab when omitted)")),
 	), s.handleTabs)
+
+	srv.AddTool(mcpgo.NewTool("dialog",
+		mcpgo.WithDescription("Set how JavaScript dialogs (alert/confirm/prompt) are handled. Default is accept. Applies to subsequent dialogs."),
+		mcpgo.WithString("action", mcpgo.Description("accept (default) or dismiss"), mcpgo.Enum("accept", "dismiss"), mcpgo.DefaultString("accept")),
+		mcpgo.WithString("text", mcpgo.Description("Prompt response text when action=accept")),
+	), s.handleDialog)
 
 	srv.AddTool(mcpgo.NewTool("back",
 		mcpgo.WithDescription("Navigate back in browser history. Returns the new URL."),
@@ -221,6 +237,7 @@ func (s *Server) handleNavigate(ctx context.Context, req mcpgo.CallToolRequest) 
 				_ = engine.WaitForPage(page, "stable")
 			}
 		}
+		_ = b.InvalidateCachedExtract(page)
 		summary := fmt.Sprintf("[%d] %s — %s (%dms)", info.Status, info.Title, info.URL, info.TimeMs)
 		return jsonResult(info, summary)
 	})
@@ -231,12 +248,27 @@ func (s *Server) handleClick(ctx context.Context, req mcpgo.CallToolRequest) (*m
 	if ref == "" {
 		return errResult(fmt.Errorf("ref is required"))
 	}
+	button, berr := engine.ParseMouseButton(mcpgo.ParseString(req, "button", "left"))
+	if berr != nil {
+		return errResult(fmt.Errorf("click: %w", berr))
+	}
 	return s.withPage(func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
 		snap := s.snapshotForResolve(page)
-		if err := engine.ClickRef(page, ref, snap); err != nil {
+		popupMark := engine.PopupMark(page)
+		var err error
+		if s.rt != nil {
+			err = s.rt.PageSession(page).Click(ref, snap, button)
+		} else {
+			err = engine.ClickRefWithButton(page, ref, snap, button)
+		}
+		if err != nil {
 			return errResult(fmt.Errorf("click %s: %w", ref, err))
 		}
-		return mcpgo.NewToolResultText(fmt.Sprintf("clicked %s", ref)), nil
+		if popup := engine.AdoptClickPopup(page, popupMark, snap, ref); popup != nil {
+			s.adoptPage(b, popup)
+			page = popup
+		}
+		return s.mutationResult(b, page, fmt.Sprintf("clicked %s", ref), snapshotModeFromReq(req))
 	})
 }
 
@@ -249,7 +281,13 @@ func (s *Server) handleType(ctx context.Context, req mcpgo.CallToolRequest) (*mc
 	}
 	return s.withPage(func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
 		snap := s.snapshotForResolve(page)
-		if err := engine.TypeRef(page, ref, text, snap); err != nil {
+		var err error
+		if s.rt != nil {
+			err = s.rt.PageSession(page).Type(ref, text, snap)
+		} else {
+			err = engine.TypeRef(page, ref, text, snap)
+		}
+		if err != nil {
 			return errResult(fmt.Errorf("type %s: %w", ref, err))
 		}
 		summary := fmt.Sprintf("typed into %s (%d chars)", ref, len(text))
@@ -259,7 +297,7 @@ func (s *Server) handleType(ctx context.Context, req mcpgo.CallToolRequest) (*mc
 			}
 			summary += " + Enter"
 		}
-		return mcpgo.NewToolResultText(summary), nil
+		return s.mutationResult(b, page, summary, snapshotModeFromReq(req))
 	})
 }
 
@@ -279,10 +317,16 @@ func (s *Server) handleSelect(ctx context.Context, req mcpgo.CallToolRequest) (*
 	}
 	return s.withPage(func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
 		snap := s.snapshotForResolve(page)
-		if err := engine.SelectOption(page, ref, values, snap); err != nil {
+		var err error
+		if s.rt != nil {
+			err = s.rt.PageSession(page).Select(ref, values, snap)
+		} else {
+			err = engine.SelectOption(page, ref, values, snap)
+		}
+		if err != nil {
 			return errResult(fmt.Errorf("select %s: %w", ref, err))
 		}
-		return mcpgo.NewToolResultText(fmt.Sprintf("selected %v in %s", values, ref)), nil
+		return s.mutationResult(b, page, fmt.Sprintf("selected %v in %s", values, ref), snapshotModeFromReq(req))
 	})
 }
 
@@ -297,14 +341,16 @@ func (s *Server) handlePress(ctx context.Context, req mcpgo.CallToolRequest) (*m
 		if err := engine.PressKey(page, key, ref, snap); err != nil {
 			return errResult(fmt.Errorf("press %s: %w", key, err))
 		}
+		summary := fmt.Sprintf("pressed %s", key)
 		if ref != "" {
-			return mcpgo.NewToolResultText(fmt.Sprintf("pressed %s on %s", key, ref)), nil
+			summary = fmt.Sprintf("pressed %s on %s", key, ref)
 		}
-		return mcpgo.NewToolResultText(fmt.Sprintf("pressed %s", key)), nil
+		return s.mutationResult(b, page, summary)
 	})
 }
 
 func (s *Server) handleWaitFor(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	ref := normalizeRef(mcpgo.ParseString(req, "ref", ""))
 	selector := mcpgo.ParseString(req, "selector", "")
 	text := mcpgo.ParseString(req, "text", "")
 	timeoutMs := int(mcpgo.ParseFloat64(req, "timeout_ms", 5000))
@@ -314,8 +360,10 @@ func (s *Server) handleWaitFor(ctx context.Context, req mcpgo.CallToolRequest) (
 	if timeoutMs > 30000 {
 		timeoutMs = 30000
 	}
-	if selector == "" && text == "" {
-		// Plain timeout-only wait. Useful for "give the SPA a beat to settle".
+	urlNeedle := mcpgo.ParseString(req, "url", "")
+	load := mcpgo.ParseString(req, "load", "")
+	state := mcpgo.ParseString(req, "state", "")
+	if ref == "" && selector == "" && text == "" && urlNeedle == "" && load == "" {
 		select {
 		case <-time.After(time.Duration(timeoutMs) * time.Millisecond):
 		case <-ctx.Done():
@@ -325,30 +373,31 @@ func (s *Server) handleWaitFor(ctx context.Context, req mcpgo.CallToolRequest) (
 	}
 	return s.withPage(func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
 		start := time.Now()
-		if selector != "" {
-			if err := engine.WaitForSelector(page, selector, (timeoutMs+999)/1000); err != nil {
-				return errResult(fmt.Errorf("wait_for selector %q: %w", selector, err))
-			}
+		if _, err := engine.WaitForAgent(page, b, s.snapshotForResolve(page), engine.WaitSpec{
+			Selector: selector,
+			Ref:      ref,
+			Text:     text,
+			URL:      urlNeedle,
+			Load:     load,
+			State:    state,
+			Timeout:  time.Duration(timeoutMs) * time.Millisecond,
+		}, time.Duration(timeoutMs)*time.Millisecond); err != nil {
+			return errResult(err)
 		}
-		if text != "" {
-			// Poll page text every 100ms.
-			deadline := time.Now().Add(time.Duration(timeoutMs) * time.Millisecond)
-			for time.Now().Before(deadline) {
-				body, err := page.Element("body")
-				if err == nil && body != nil {
-					if pageText, err := body.Text(); err == nil && strings.Contains(pageText, text) {
-						return mcpgo.NewToolResultText(fmt.Sprintf("waited %dms for text %q", time.Since(start).Milliseconds(), text)), nil
-					}
-				}
-				select {
-				case <-time.After(100 * time.Millisecond):
-				case <-ctx.Done():
-					return errResult(ctx.Err())
-				}
-			}
-			return errResult(fmt.Errorf("wait_for text %q: timeout after %dms", text, timeoutMs))
+		label := ref
+		if label == "" {
+			label = selector
 		}
-		return mcpgo.NewToolResultText(fmt.Sprintf("waited %dms for selector %q", time.Since(start).Milliseconds(), selector)), nil
+		if label == "" {
+			label = text
+		}
+		if label == "" {
+			label = urlNeedle
+		}
+		if label == "" {
+			label = load
+		}
+		return mcpgo.NewToolResultText(fmt.Sprintf("waited %dms for %q", time.Since(start).Milliseconds(), label)), nil
 	})
 }
 
@@ -371,6 +420,7 @@ func (s *Server) handleEval(ctx context.Context, req mcpgo.CallToolRequest) (*mc
 		if err != nil {
 			return errResult(fmt.Errorf("eval: %w", err))
 		}
+		_ = b.InvalidateCachedExtract(page)
 		return mcpgo.NewToolResultText(value), nil
 	})
 }
@@ -416,10 +466,16 @@ func (s *Server) handleHover(ctx context.Context, req mcpgo.CallToolRequest) (*m
 	}
 	return s.withPage(func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
 		snap := s.snapshotForResolve(page)
-		if err := engine.HoverRef(page, ref, snap); err != nil {
+		var err error
+		if s.rt != nil {
+			err = s.rt.PageSession(page).Hover(ref, snap)
+		} else {
+			err = engine.HoverRef(page, ref, snap)
+		}
+		if err != nil {
 			return errResult(fmt.Errorf("hover %s: %w", ref, err))
 		}
-		return mcpgo.NewToolResultText(fmt.Sprintf("hovered %s", ref)), nil
+		return s.mutationResult(b, page, fmt.Sprintf("hovered %s", ref), snapshotModeFromReq(req))
 	})
 }
 
@@ -435,7 +491,7 @@ func (s *Server) handleDrag(ctx context.Context, req mcpgo.CallToolRequest) (*mc
 		if err := engine.DragDrop(page, from, to, snap, steps); err != nil {
 			return errResult(fmt.Errorf("drag %s→%s: %w", from, to, err))
 		}
-		return mcpgo.NewToolResultText(fmt.Sprintf("dragged %s → %s", from, to)), nil
+		return s.mutationResult(b, page, fmt.Sprintf("dragged %s -> %s", from, to))
 	})
 }
 
@@ -448,17 +504,20 @@ func (s *Server) handleFillForm(ctx context.Context, req mcpgo.CallToolRequest) 
 	if err := json.Unmarshal([]byte(fieldsRaw), &fields); err != nil {
 		return errResult(fmt.Errorf("fields must be a JSON object: %w", err))
 	}
+	normalized := make(map[string]string, len(fields))
+	for ref, value := range fields {
+		normalized[normalizeRef(ref)] = value
+	}
 	return s.withPage(func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
 		snap := s.snapshotForResolve(page)
-		filled := 0
-		for ref, value := range fields {
-			ref = normalizeRef(ref)
-			if err := engine.TypeRef(page, ref, value, snap); err != nil {
-				return errResult(fmt.Errorf("fill %s: %w", ref, err))
-			}
-			filled++
+		filled, snap, err := engine.FillFields(b, page, normalized, snap)
+		if err != nil {
+			return errResult(err)
 		}
-		return mcpgo.NewToolResultText(fmt.Sprintf("filled %d fields", filled)), nil
+		if snap != nil {
+			s.snapshot = snap
+		}
+		return s.mutationResult(b, page, fmt.Sprintf("filled %d fields", filled))
 	})
 }
 
@@ -488,10 +547,27 @@ func (s *Server) handleUpload(ctx context.Context, req mcpgo.CallToolRequest) (*
 		if err := el.SetFiles(paths); err != nil {
 			return errResult(fmt.Errorf("upload: %w", err))
 		}
-		return mcpgo.NewToolResultText(fmt.Sprintf("uploaded %d file(s) to %s", len(paths), ref)), nil
+		return s.mutationResult(b, page, fmt.Sprintf("uploaded %d file(s) to %s", len(paths), ref))
 	})
 }
 
+func (s *Server) adoptPage(b *engine.Browser, page *rod.Page) {
+	_ = b.SetCurrentPage(page)
+	s.page = page
+	s.snapshot = b.Snapshot(page)
+	if s.dialogPolicy == nil {
+		s.dialogPolicy = &engine.DialogAutoPolicy{Accept: true}
+	}
+	engine.StartDialogAutoHandler(page, s.dialogPolicy)
+	if s.rt == nil {
+		s.rt = engine.NewRuntime(b)
+	}
+	if !s.opts.Stealth {
+		if hub := s.rt.AttachEvents(page); hub != nil {
+			s.observer = hub.Observer()
+		}
+	}
+}
 func (s *Server) handleTabs(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	action := mcpgo.ParseString(req, "action", "list")
 	index := int(mcpgo.ParseFloat64(req, "index", -1))
@@ -507,6 +583,7 @@ func (s *Server) handleTabs(ctx context.Context, req mcpgo.CallToolRequest) (*mc
 			if err != nil {
 				return errResult(fmt.Errorf("switch tab: %w", err))
 			}
+			s.adoptPage(b, newPage)
 			info, _ := newPage.Info()
 			url := ""
 			if info != nil {
@@ -517,11 +594,34 @@ func (s *Server) handleTabs(ctx context.Context, req mcpgo.CallToolRequest) (*mc
 			if index < 0 {
 				return errResult(fmt.Errorf("index is required for close"))
 			}
-			_, err := engine.CloseTab(b.RodBrowser(), index)
+			closedID, err := engine.CloseTab(b.RodBrowser(), index)
 			if err != nil {
 				return errResult(fmt.Errorf("close tab: %w", err))
 			}
+			_ = b.DeleteSnapshot(closedID)
+			if s.page != nil && s.page.TargetID == closedID {
+				pages, perr := b.RodBrowser().Pages()
+				if perr == nil && len(pages) > 0 {
+					s.adoptPage(b, pages[0])
+				} else {
+					s.page = nil
+					s.snapshot = nil
+				}
+			}
 			return mcpgo.NewToolResultText(fmt.Sprintf("closed tab %d", index)), nil
+		case "new":
+			url := mcpgo.ParseString(req, "url", "")
+			newPage, err := engine.NewTab(b.RodBrowser(), url)
+			if err != nil {
+				return errResult(fmt.Errorf("new tab: %w", err))
+			}
+			s.adoptPage(b, newPage)
+			info, _ := newPage.Info()
+			label := "about:blank"
+			if info != nil && info.URL != "" {
+				label = info.URL
+			}
+			return mcpgo.NewToolResultText(fmt.Sprintf("opened tab: %s", label)), nil
 		default:
 			tabs, err := engine.ListTabs(b.RodBrowser(), currentID)
 			if err != nil {
@@ -532,15 +632,43 @@ func (s *Server) handleTabs(ctx context.Context, req mcpgo.CallToolRequest) (*mc
 	})
 }
 
+func (s *Server) handleDialog(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	action := strings.ToLower(mcpgo.ParseString(req, "action", "accept"))
+	text := mcpgo.ParseString(req, "text", "")
+	// Dialog events are handled by a background CDP listener while MCP calls
+	// may reconfigure the policy concurrently. Protect both the pointer and
+	// the policy update; the policy itself also synchronizes its fields.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.dialogPolicy == nil {
+		s.dialogPolicy = &engine.DialogAutoPolicy{}
+	}
+	switch action {
+	case "dismiss":
+		s.dialogPolicy.Set(false, text)
+	default:
+		s.dialogPolicy.Set(true, text)
+		action = "accept"
+	}
+	return mcpgo.NewToolResultText(fmt.Sprintf("dialogs will %s", action)), nil
+}
 func (s *Server) handleBack(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	return s.withPage(func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
-		return historyStep(page, "back", (*rod.Page).NavigateBack)
+		res, err := historyStep(page, "back")
+		if err == nil {
+			_ = b.InvalidateCachedExtract(page)
+		}
+		return res, err
 	})
 }
 
 func (s *Server) handleForward(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	return s.withPage(func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
-		return historyStep(page, "forward", (*rod.Page).NavigateForward)
+		res, err := historyStep(page, "forward")
+		if err == nil {
+			_ = b.InvalidateCachedExtract(page)
+		}
+		return res, err
 	})
 }
 
@@ -549,12 +677,13 @@ func (s *Server) handleForward(ctx context.Context, req mcpgo.CallToolRequest) (
 // what the CLI uses — pre-registering the lifecycle listener inside
 // engine.Navigate isn't an option here because the navigation kick is one
 // method call, not a separate page.Navigate(url).
-func historyStep(page *rod.Page, action string, step func(*rod.Page) error) (*mcpgo.CallToolResult, error) {
-	if err := step(page); err != nil {
-		return errResult(fmt.Errorf("%s: %w", action, err))
+func historyStep(page *rod.Page, action string) (*mcpgo.CallToolResult, error) {
+	delta := 1
+	if action == "back" {
+		delta = -1
 	}
-	if err := engine.WaitForPage(page, "stable"); err != nil {
-		return errResult(fmt.Errorf("%s: wait: %w", action, err))
+	if err := engine.HistoryStep(page, delta, "stable"); err != nil {
+		return errResult(fmt.Errorf("%s: %w", action, err))
 	}
 	info, err := page.Info()
 	if err != nil || info == nil {
@@ -704,4 +833,45 @@ func tryNavigateRecovery(page *rod.Page, err error) (bool, error) {
 		return true, nil
 	}
 	return false, nil
+}
+
+func snapshotModeFromReq(req mcpgo.CallToolRequest) engine.SnapshotMode {
+	mode, err := engine.ParseSnapshotMode(mcpgo.ParseString(req, "snapshot", "diff"))
+	if err != nil {
+		return engine.SnapshotModeDiff
+	}
+	return mode
+}
+
+func (s *Server) mutationResult(b *engine.Browser, page *rod.Page, summary string, mode ...engine.SnapshotMode) (*mcpgo.CallToolResult, error) {
+	chosen := engine.SnapshotModeDiff
+	if len(mode) > 0 && mode[0] != "" {
+		chosen = mode[0]
+	}
+	prev := s.snapshotForResolve(page)
+	switch chosen {
+	case engine.SnapshotModeNone:
+		_ = b.InvalidateCachedExtract(page)
+		return jsonResult(engine.SnapshotDiff{Unchanged: true}, summary)
+	case engine.SnapshotModeFull:
+		_ = b.InvalidateCachedExtract(page)
+		if err := engine.WaitForImminentDOM(page, 0); err != nil {
+			return errResult(err)
+		}
+		result, err := engine.Extract(page, engine.LevelSkeleton, "", false)
+		if err != nil {
+			return errResult(err)
+		}
+		s.rememberSnapshot(page, result)
+		return jsonResult(result, summary)
+	default:
+		diff, result, err := engine.CaptureMutation(b, page, prev)
+		if err != nil {
+			return errResult(err)
+		}
+		if result != nil {
+			s.rememberSnapshot(page, result)
+		}
+		return jsonResult(diff, summary+"\n"+engine.FormatDiff(diff))
+	}
 }

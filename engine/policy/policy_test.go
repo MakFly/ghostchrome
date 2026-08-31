@@ -29,6 +29,9 @@ func TestAllowURL_AllowedDomains(t *testing.T) {
 		{"https://notexample.com", false},
 		{"data:text/html,<h1>ok</h1>", true},
 		{"about:blank", true},
+		{"javascript:alert(1)", false},
+		{"file:///etc/passwd", false},
+		{"ftp://example.com/file", false},
 	}
 
 	for _, c := range cases {
@@ -106,6 +109,21 @@ func TestAllowAction_NilPolicy(t *testing.T) {
 	var p *Policy
 	if err := p.AllowAction("eval"); err != nil {
 		t.Fatalf("nil policy should allow everything: %v", err)
+	}
+}
+
+func TestAllowURL_DeniedSchemes(t *testing.T) {
+	p := &Policy{}
+	for _, raw := range []string{
+		"javascript:alert(1)",
+		"file:///tmp/x",
+		"blob:https://example.com/uuid",
+		"about:srcdoc",
+		"chrome://settings",
+	} {
+		if err := p.AllowURL(raw); !errors.Is(err, ErrPolicyDenied) {
+			t.Errorf("AllowURL(%q) = %v, want policy denied", raw, err)
+		}
 	}
 }
 

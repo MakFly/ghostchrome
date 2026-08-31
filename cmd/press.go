@@ -15,7 +15,7 @@ var pressCmd = &cobra.Command{
 	Long: `Press a keyboard key (Enter, Tab, Escape, Backspace, ArrowDown, etc.).
 If a URL is provided, navigates first then presses.
 Use --on @ref to focus an element before pressing.
-After pressing, extracts a skeleton of the resulting page.
+After pressing, prints a compact a11y-ref diff (override with --snapshot=full|none).
 
 Examples:
   ghostchrome press Enter https://example.com --on @2
@@ -50,22 +50,7 @@ Examples:
 			exitErr("press", err)
 		}
 
-		result := snapshotPage(b, page, engine.LevelSkeleton)
-
-		type pressResult struct {
-			Action string                   `json:"action"`
-			Key    string                   `json:"key"`
-			On     string                   `json:"on,omitempty"`
-			Result *engine.ExtractionResult `json:"result"`
-		}
-
-		text := formatCachedOrLivePageState("press", b, page, result)
-		output(&pressResult{
-			Action: "press",
-			Key:    key,
-			On:     flagPressOn,
-			Result: result,
-		}, text)
+		emitMutationOutput("press", flagPressOn, b, page, nil)
 	},
 }
 
@@ -73,5 +58,6 @@ func init() {
 	pressCmd.Flags().StringVar(&flagPressOn, "on", "", "Focus element by @ref before pressing (e.g. @2)")
 	pressCmd.Flags().StringVar(&pressWaitFor, "wait-for", "", "Wait for --on element state before pressing: attached|visible|hidden|enabled|stable|none (default: visible)")
 	pressCmd.Flags().IntVar(&pressWaitTimeoutMs, "wait-timeout-ms", 0, "Max milliseconds to wait for the element state (0 = no wait; default: 5000)")
+	registerSnapshotModeFlag(pressCmd)
 	rootCmd.AddCommand(pressCmd)
 }

@@ -103,8 +103,10 @@ func (p *PersistentSessionObserver) attachNewPages() {
 	if err != nil {
 		return
 	}
+	live := make(map[proto.TargetTargetID]struct{}, len(pages))
 	for _, page := range pages {
 		id := page.TargetID
+		live[id] = struct{}{}
 		if _, exists := p.pages[id]; exists {
 			continue
 		}
@@ -128,6 +130,13 @@ func (p *PersistentSessionObserver) attachNewPages() {
 				}
 			}
 		}(observer)
+	}
+	for id, observer := range p.pages {
+		if _, ok := live[id]; ok {
+			continue
+		}
+		_ = observer.Stop()
+		delete(p.pages, id)
 	}
 }
 

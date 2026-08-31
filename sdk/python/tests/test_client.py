@@ -186,12 +186,27 @@ class TestClick(unittest.TestCase):
         op, args, _ = transport.calls[0]
         self.assertEqual(op, "click")
         self.assertEqual(args["ref"], "@3")
-        self.assertIsNone(result)
+        from ghostchrome.types import SnapshotDiff
+        self.assertIsInstance(result, SnapshotDiff)
 
-    def test_click_returns_none_result(self):
+    def test_click_omitted_result_is_unchanged_diff(self):
         client, _ = make_client({"id": "x", "ok": True})
         result, obs = client.click("@3")
-        self.assertIsNone(result)
+        self.assertTrue(result.unchanged)
+        self.assertEqual(result.stats.kept, 0)
+
+    def test_click_forwards_button(self):
+        client, transport = make_client({"id": "x", "ok": True})
+        client.click("@3", button="right")
+        _, args, _ = transport.calls[0]
+        self.assertEqual(args["button"], "right")
+
+    def test_dblclick_forwards_button(self):
+        client, transport = make_client({"id": "x", "ok": True})
+        client.dblclick("@3", button="middle")
+        op, args, _ = transport.calls[0]
+        self.assertEqual(op, "dblclick")
+        self.assertEqual(args["button"], "middle")
 
 
 class TestHover(unittest.TestCase):
@@ -201,7 +216,8 @@ class TestHover(unittest.TestCase):
         op, args, _ = transport.calls[0]
         self.assertEqual(op, "hover")
         self.assertEqual(args["ref"], "@5")
-        self.assertIsNone(result)
+        from ghostchrome.types import SnapshotDiff
+        self.assertIsInstance(result, SnapshotDiff)
 
 
 class TestType(unittest.TestCase):
@@ -212,7 +228,8 @@ class TestType(unittest.TestCase):
         self.assertEqual(op, "type")
         self.assertEqual(args["ref"], "@2")
         self.assertEqual(args["text"], "hello world")
-        self.assertIsNone(result)
+        from ghostchrome.types import SnapshotDiff
+        self.assertIsInstance(result, SnapshotDiff)
 
 
 class TestPress(unittest.TestCase):
@@ -223,7 +240,8 @@ class TestPress(unittest.TestCase):
         self.assertEqual(op, "press")
         self.assertEqual(args["key"], "Enter")
         self.assertNotIn("ref", args)
-        self.assertIsNone(result)
+        from ghostchrome.types import SnapshotDiff
+        self.assertIsInstance(result, SnapshotDiff)
 
     def test_press_key_with_ref(self):
         client, transport = make_client({"id": "x", "ok": True})
@@ -241,7 +259,8 @@ class TestSelect(unittest.TestCase):
         self.assertEqual(op, "select")
         self.assertEqual(args["ref"], "@7")
         self.assertEqual(args["values"], ["opt1", "opt2"])
-        self.assertIsNone(result)
+        from ghostchrome.types import SnapshotDiff
+        self.assertIsInstance(result, SnapshotDiff)
 
 
 class TestFill(unittest.TestCase):
@@ -384,6 +403,15 @@ class TestWait(unittest.TestCase):
         _, args, _ = transport.calls[0]
         self.assertEqual(args["ms"], 500)
         self.assertNotIn("selector", args)
+
+    def test_wait_forwards_text_url_load(self):
+        client, transport = make_client({"id": "x", "ok": True})
+        client.wait(text="Ready", url="/dash", load="domcontentloaded", state="visible")
+        _, args, _ = transport.calls[0]
+        self.assertEqual(args["text"], "Ready")
+        self.assertEqual(args["url"], "/dash")
+        self.assertEqual(args["load"], "domcontentloaded")
+        self.assertEqual(args["state"], "visible")
 
 
 class TestErrors(unittest.TestCase):

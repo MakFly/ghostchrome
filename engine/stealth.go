@@ -599,10 +599,9 @@ func applyStealthWithProfile(page *rod.Page, profile stealthProfile) error {
 	secChUA := fmt.Sprintf(`"Chromium";v="%s", "Google Chrome";v="%s", "Not?A_Brand";v="99"`, profile.chromeMajor, profile.chromeMajor)
 	err = proto.NetworkSetExtraHTTPHeaders{
 		Headers: proto.NetworkHeaders{
-			"Sec-CH-UA":                 gson.New(secChUA),
-			"Sec-CH-UA-Mobile":          gson.New("?0"),
-			"Sec-CH-UA-Platform":        gson.New(fmt.Sprintf("%q", profile.os.chPlatform)),
-			"Upgrade-Insecure-Requests": gson.New("1"),
+			"Sec-CH-UA":          gson.New(secChUA),
+			"Sec-CH-UA-Mobile":   gson.New("?0"),
+			"Sec-CH-UA-Platform": gson.New(fmt.Sprintf("%q", profile.os.chPlatform)),
 		},
 	}.Call(page)
 	if err != nil {

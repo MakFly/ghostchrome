@@ -328,6 +328,7 @@ type Browser struct {
 	timeout           time.Duration
 	connected         bool // true if connected to external Chrome (don't close it)
 	attachFresh       bool // true when ConnectURL points at a foreign Chrome we must not disturb
+	ownership         Ownership
 	connectURL        string
 	statePath         string
 	state             *sessionState
@@ -506,11 +507,12 @@ func NewBrowserWith(opts BrowserOpts) (*Browser, error) {
 		continuousLogPath, _ = continuousObserverLogPath(connectURL)
 	}
 
-	return &Browser{
+	out := &Browser{
 		browser:           b,
 		timeout:           timeout,
 		connected:         connectURL != "",
 		attachFresh:       connectURL != "" && opts.AttachFresh,
+		ownership:         browserOwnership(opts, ownedLauncher, providerCleanup),
 		connectURL:        connectURL,
 		statePath:         statePath,
 		state:             state,
@@ -522,7 +524,24 @@ func NewBrowserWith(opts BrowserOpts) (*Browser, error) {
 
 		providerCleanup: providerCleanup,
 		ownedLauncher:   ownedLauncher,
-	}, nil
+	}
+	_ = watcherFor(out.browser)
+	return out, nil
+}
+
+func browserOwnership(opts BrowserOpts, ownedLauncher *launcher.Launcher, providerCleanup func()) Ownership {
+	switch {
+	case providerCleanup != nil:
+		return OwnershipProvider
+	case opts.ManagedSession && opts.ConnectURL != "":
+		return OwnershipManaged
+	case opts.ConnectURL != "":
+		return OwnershipAttached
+	case ownedLauncher != nil || opts.ConnectURL == "":
+		return OwnershipEphemeral
+	default:
+		return OwnershipAttached
+	}
 }
 
 // LauncherOwnsRodTempProfile reports whether the launcher's final user data
@@ -592,7 +611,20 @@ func CleanupFailedLauncher(l *launcher.Launcher, removeProfile bool) {
 
 func connectRodBrowser(connectURL string, timeout time.Duration, cdpTimeoutMS int, headers map[string]string) (*rod.Browser, error) {
 	if len(headers) == 0 && cdpTimeoutMS <= 0 {
-		b := rod.New().ControlURL(connectURL).Timeout(timeout)
+		// Do not wrap Connect in Browser.Timeout: initEvents binds to that
+		// context, and CancelTimeout kills the CDP event fan-out. Popup
+		// adoption and EventHub then never see Target.targetCreated.
+		ctx := context.Background()
+		var cancel context.CancelFunc
+		if timeout > 0 {
+			ctx, cancel = context.WithTimeout(ctx, timeout)
+			defer cancel()
+		}
+		client, err := cdp.StartWithURL(ctx, connectURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		b := rod.New().Client(client)
 		if err := b.Connect(); err != nil {
 			return nil, err
 		}
@@ -612,7 +644,7 @@ func connectRodBrowser(connectURL string, timeout time.Duration, cdpTimeoutMS in
 	if err != nil {
 		return nil, err
 	}
-	b := rod.New().Client(client).Timeout(timeout)
+	b := rod.New().Client(client)
 	if err := b.Connect(); err != nil {
 		return nil, err
 	}
@@ -928,6 +960,22 @@ func (b *Browser) CachedExtract(page *rod.Page) *ExtractionResult {
 	return snap.CachedExtraction
 }
 
+// InvalidateCachedExtract drops the cached accessibility dump for page so the
+// next snapshot re-extracts after a mutating action. Refs stay in place so
+// click/type can still resolve @N until a fresh extract overwrites them.
+func (b *Browser) InvalidateCachedExtract(page *rod.Page) error {
+	if !b.connected || b.state == nil || page == nil {
+		return nil
+	}
+	snap := b.snapshotByTarget(page.TargetID)
+	if snap == nil || snap.CachedExtraction == nil {
+		return nil
+	}
+	snap.CachedExtraction = nil
+	b.state.Snapshots[string(page.TargetID)] = *snap
+	return saveSessionState(b.statePath, b.state)
+}
+
 // Snapshot returns the last persisted snapshot for the current page.
 func (b *Browser) Snapshot(page *rod.Page) *PageSnapshot {
 	if !b.connected || b.state == nil || page == nil {
@@ -1233,11 +1281,17 @@ func (b *Browser) Close() {
 	b.closeOnce.Do(func() {
 		b.drainBackgroundObserver()
 		if b.browser != nil {
-			if b.connected {
+			stopBrowserEventHubs(b.browser)
+			forgetBrowserEventState(b.browser)
+			StopPopupWatch(b.browser)
+			switch b.ownership {
+			case OwnershipAttached, OwnershipManaged:
 				if b.attachFresh && b.page != nil {
 					_ = b.page.Close()
 				}
-			} else {
+			case OwnershipProvider:
+				// Provider callback owns process teardown.
+			default:
 				_ = b.browser.Close()
 			}
 		}

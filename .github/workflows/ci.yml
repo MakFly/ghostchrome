@@ -8,7 +8,11 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
@@ -38,6 +42,20 @@ jobs:
           # exists in CI is a linter nobody runs before pushing.
           version: v2.12.2
 
+  conformance-10k:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+      - uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+      # The release gate is the real 10k-op loop, not the 20-op developer
+      # default used by the ordinary integration suite.
+      - run: GHOSTCHROME_CONFORMANCE_OPS=10000 go test ./engine -run TestConformanceCoreLoop -count=1 -timeout 30m
+
   integration:
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -50,3 +68,24 @@ jobs:
         with:
           chrome-version: stable
       - run: go test -count=1 -race ./...
+
+  macos-smoke:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+      # Keep browser-backed coverage on pull requests as well as main pushes;
+      # the regular macOS job only runs -short and cannot catch CDP regressions.
+      - run: go test ./engine -run 'TestConformanceCoreLoop|TestNavigateUsesEventHub|TestStartEventHubIdempotent|TestCaptureMutationWaitsForXHR|TestClickIframeLinkWaitsForFrameNav|TestExtractClickNestedIframeRef|TestClickFileInputInIframeDoesNotHang|TestClickFileInputInIframeAfterNavigationDoesNotHang|TestDialogAfterNavigationDoesNotHang|TestHandleNextDialogWaitsForAndHandlesDialogs|TestDialogAutoHandlerAcceptsTwoAlerts|TestResolveRefReportsStaleSnapshots' -count=1 -timeout 30m
+
+  windows-smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+      - run: go build ./...
+      - run: go test -short -count=1 ./...

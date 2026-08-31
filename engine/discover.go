@@ -175,6 +175,66 @@ func versionMatchesChannelFamily(version *cdpVersionInfo, family string) bool {
 	}
 }
 
+// ProbeCDPEndpoint checks that a CDP HTTP or WebSocket URL still answers
+// /json/version. It never opens a Rod session and therefore never sends
+// Browser.close, which would kill an external Chrome.
+func ProbeCDPEndpoint(raw string, timeout time.Duration) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", fmt.Errorf("cdp endpoint is empty")
+	}
+	if timeout <= 0 {
+		timeout = 800 * time.Millisecond
+	}
+	versionURL, err := cdpVersionURL(raw)
+	if err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "GET", versionURL, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := (&http.Client{Timeout: timeout}).Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("%s returned HTTP %d", versionURL, resp.StatusCode)
+	}
+	var payload cdpVersionInfo
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return "", err
+	}
+	if payload.WebSocketDebuggerURL == "" {
+		return "", fmt.Errorf("%s did not return webSocketDebuggerUrl", versionURL)
+	}
+	return payload.WebSocketDebuggerURL, nil
+}
+
+func cdpVersionURL(raw string) (string, error) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("parse cdp endpoint: %w", err)
+	}
+	switch u.Scheme {
+	case "ws":
+		u.Scheme = "http"
+	case "wss":
+		u.Scheme = "https"
+	case "http", "https":
+		return strings.TrimRight(raw, "/") + "/json/version", nil
+	default:
+		return "", fmt.Errorf("unsupported cdp endpoint scheme %q (use http(s) or ws(s))", u.Scheme)
+	}
+	u.Path = "/json/version"
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String(), nil
+}
+
 // ResolveCDPEndpoint returns a browser WebSocket debugger URL for a CDP
 // endpoint. ws:// and wss:// inputs are already resolved; http(s) inputs are
 // probed via /json/version.

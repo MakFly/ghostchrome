@@ -25,6 +25,11 @@ from .types import (
     ScrollResult,
     UrlResult,
     _parse_observation,
+    SnapshotDiff,
+    TabInfo,
+    DialogResult,
+    TabsActionResult,
+    _parse_mutation_result,
 )
 
 
@@ -39,6 +44,9 @@ def _check(raw: dict, op: str = "") -> Response:
         observation=obs,
         error=raw.get("error"),
         events=raw.get("events", []),
+        protocol=raw.get("protocol"),
+        error_code=raw.get("error_code"),
+        retryable=raw.get("retryable"),
     )
     if not resp.ok:
         raise GhostchromeError(op or "unknown", resp.error or str(raw))
@@ -124,10 +132,11 @@ class Ghostchrome:
     def init(self) -> tuple[InitResult, Optional[Observation]]:
         """Open the browser (no-op if already open).
 
-        The agent omits ``result`` for this op; fields are always None.
+        Newer agents include protocol/version in the result.
         """
         resp = self._call("init")
-        return InitResult(), resp.observation
+        d = _result_dict(resp)
+        return InitResult(protocol=d.get("protocol"), version=d.get("version")), resp.observation
 
     def close(self) -> None:
         """Close the browser session and shut down the agent."""
@@ -233,30 +242,43 @@ class Ghostchrome:
     # Interaction ops
     # ------------------------------------------------------------------
 
-    def click(self, ref: str) -> tuple[None, Optional[Observation]]:
+    def click(self, ref: str, *, snapshot: Optional[str] = None, button: Optional[str] = None) -> tuple[SnapshotDiff | ExtractResult, Optional[Observation]]:
         """Click an element by its ``@ref`` from the last extract/snapshot."""
-        resp = self._call("click", {"ref": ref})
-        return None, resp.observation
+        args: dict[str, Any] = {"ref": ref}
+        if snapshot is not None:
+            args["snapshot"] = snapshot
+        if button is not None:
+            args["button"] = button
+        resp = self._call("click", args)
+        return _parse_mutation_result(resp.result), resp.observation
 
-    def dblclick(self, ref: str) -> tuple[None, Optional[Observation]]:
+    def dblclick(self, ref: str, *, snapshot: Optional[str] = None, button: Optional[str] = None) -> tuple[SnapshotDiff | ExtractResult, Optional[Observation]]:
         """Double-click an element by its ``@ref`` from the last extract/snapshot."""
-        resp = self._call("dblclick", {"ref": ref})
-        return None, resp.observation
+        args: dict[str, Any] = {"ref": ref}
+        if snapshot is not None:
+            args["snapshot"] = snapshot
+        if button is not None:
+            args["button"] = button
+        resp = self._call("dblclick", args)
+        return _parse_mutation_result(resp.result), resp.observation
 
-    def check(self, ref: str) -> tuple[None, Optional[Observation]]:
+    def check(self, ref: str) -> tuple[SnapshotDiff | ExtractResult, Optional[Observation]]:
         """Tick a checkbox/radio by ``@ref`` (idempotent — no-op if already checked)."""
         resp = self._call("check", {"ref": ref})
-        return None, resp.observation
+        return _parse_mutation_result(resp.result), resp.observation
 
-    def uncheck(self, ref: str) -> tuple[None, Optional[Observation]]:
+    def uncheck(self, ref: str) -> tuple[SnapshotDiff | ExtractResult, Optional[Observation]]:
         """Untick a checkbox by ``@ref`` (idempotent — no-op if already unchecked)."""
         resp = self._call("uncheck", {"ref": ref})
-        return None, resp.observation
+        return _parse_mutation_result(resp.result), resp.observation
 
-    def hover(self, ref: str) -> tuple[None, Optional[Observation]]:
+    def hover(self, ref: str, *, snapshot: Optional[str] = None) -> tuple[SnapshotDiff | ExtractResult, Optional[Observation]]:
         """Hover over an element by ``@ref`` (reveals dropdowns, tooltips)."""
-        resp = self._call("hover", {"ref": ref})
-        return None, resp.observation
+        args: dict[str, Any] = {"ref": ref}
+        if snapshot is not None:
+            args["snapshot"] = snapshot
+        resp = self._call("hover", args)
+        return _parse_mutation_result(resp.result), resp.observation
 
     def type_(
         self,
@@ -264,7 +286,8 @@ class Ghostchrome:
         text: str,
         *,
         submit: bool = False,
-    ) -> tuple[None, Optional[Observation]]:
+        snapshot: Optional[str] = None,
+    ) -> tuple[SnapshotDiff | ExtractResult, Optional[Observation]]:
         """Type text into an input/textarea identified by ``@ref``.
 
         The field is cleared before typing.
@@ -277,40 +300,51 @@ class Ghostchrome:
         args: dict[str, Any] = {"ref": ref, "text": text}
         if submit:
             args["submit"] = True
+        if snapshot is not None:
+            args["snapshot"] = snapshot
         resp = self._call("type", args)
-        return None, resp.observation
+        return _parse_mutation_result(resp.result), resp.observation
 
     def press(
         self,
         key: str,
         *,
         ref: Optional[str] = None,
-    ) -> tuple[None, Optional[Observation]]:
+        snapshot: Optional[str] = None,
+    ) -> tuple[SnapshotDiff | ExtractResult, Optional[Observation]]:
         """Press a keyboard key; optionally focus an element by ``@ref`` first.
 
         Args:
             key: Key name, e.g. ``Enter``, ``Escape``, ``ArrowDown``.
             ref: Optional ``@ref`` to focus before pressing.
+            snapshot: ``none | diff | full`` (default: diff).
         """
         a: dict[str, Any] = {"key": key}
         if ref is not None:
             a["ref"] = ref
+        if snapshot is not None:
+            a["snapshot"] = snapshot
         resp = self._call("press", a)
-        return None, resp.observation
+        return _parse_mutation_result(resp.result), resp.observation
 
     def select(
         self,
         ref: str,
         values: list[str],
-    ) -> tuple[None, Optional[Observation]]:
+        *,
+        snapshot: Optional[str] = None,
+    ) -> tuple[SnapshotDiff | ExtractResult, Optional[Observation]]:
         """Pick one or more options in a ``<select>`` element by ``@ref``.
 
         Args:
             ref:    ``@ref`` of the ``<select>`` element.
             values: Option values to select.
         """
-        resp = self._call("select", {"ref": ref, "values": values})
-        return None, resp.observation
+        args: dict[str, Any] = {"ref": ref, "values": values}
+        if snapshot is not None:
+            args["snapshot"] = snapshot
+        resp = self._call("select", args)
+        return _parse_mutation_result(resp.result), resp.observation
 
     def fill(
         self,
@@ -430,19 +464,32 @@ class Ghostchrome:
         self,
         *,
         selector: Optional[str] = None,
+        ref: Optional[str] = None,
+        text: Optional[str] = None,
+        url: Optional[str] = None,
+        load: Optional[str] = None,
+        state: Optional[str] = None,
         ms: Optional[int] = None,
+        timeout_ms: Optional[int] = None,
     ) -> tuple[None, Optional[Observation]]:
-        """Wait for a CSS selector to appear or a fixed delay in ms.
-
-        Args:
-            selector: CSS selector to wait for.
-            ms:       Fixed delay in milliseconds.
-        """
+        """Wait for a selector/@ref, visible text, URL substring, load state, or delay."""
         a: dict[str, Any] = {}
         if selector is not None:
             a["selector"] = selector
+        if ref is not None:
+            a["ref"] = ref
+        if text is not None:
+            a["text"] = text
+        if url is not None:
+            a["url"] = url
+        if load is not None:
+            a["load"] = load
+        if state is not None:
+            a["state"] = state
         if ms is not None:
             a["ms"] = ms
+        if timeout_ms is not None:
+            a["timeout_ms"] = timeout_ms
         resp = self._call("wait", a)
         return None, resp.observation
 
@@ -476,6 +523,59 @@ class Ghostchrome:
             )
             for e in raw_list
         ]
+
+    def dialog(
+        self,
+        *,
+        action: Optional[str] = None,
+        text: Optional[str] = None,
+    ) -> tuple[DialogResult, Optional[Observation]]:
+        """Set how JavaScript dialogs are auto-handled (accept or dismiss)."""
+        args: dict[str, Any] = {}
+        if action is not None:
+            args["action"] = action
+        if text is not None:
+            args["text"] = text
+        resp = self._call("dialog", args)
+        d = _result_dict(resp)
+        return DialogResult(action=d.get("action", ""), text=d.get("text", "")), resp.observation
+
+    def tabs(
+        self,
+        *,
+        action: Optional[str] = None,
+        index: Optional[int] = None,
+        url: Optional[str] = None,
+    ) -> tuple[list[TabInfo] | TabsActionResult, Optional[Observation]]:
+        """List, switch, close, or open browser tabs."""
+        args: dict[str, Any] = {}
+        if action is not None:
+            args["action"] = action
+        if index is not None:
+            args["index"] = index
+        if url is not None:
+            args["url"] = url
+        resp = self._call("tabs", args)
+        if isinstance(resp.result, list):
+            tabs = [
+                TabInfo(
+                    index=item.get("index", 0),
+                    url=item.get("url", ""),
+                    title=item.get("title", ""),
+                    target_id=item.get("target_id", ""),
+                    active=bool(item.get("active", False)),
+                )
+                for item in resp.result
+                if isinstance(item, dict)
+            ]
+            return tabs, resp.observation
+        d = _result_dict(resp)
+        return TabsActionResult(
+            action=d.get("action", ""),
+            index=d.get("index"),
+            url=d.get("url", ""),
+            title=d.get("title", ""),
+        ), resp.observation
 
     def url(self) -> tuple[UrlResult, Optional[Observation]]:
         """Return the current page URL and title."""

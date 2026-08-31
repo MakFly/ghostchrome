@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/go-rod/rod"
@@ -109,7 +111,7 @@ type VideoState struct {
 	Chapters      []VideoChapter `json:"chapters,omitempty"`
 }
 
-// VideoChapter is one requested video chapter marker.
+// VideoChapter is one requested video chapterker.
 type VideoChapter struct {
 	Title       string `json:"title"`
 	Description string `json:"description,omitempty"`
@@ -135,6 +137,12 @@ type RefSnapshot struct {
 	BackendNodeID proto.DOMBackendNodeID `json:"backend_node_id"`
 	Role          string                 `json:"role,omitempty"`
 	Name          string                 `json:"name,omitempty"`
+	// Nth is the 0-based occurrence of role+name among interactive nodes
+	// at snapshot time. Used to re-resolve after a SPA rerender.
+	Nth  int    `json:"nth,omitempty"`
+	Href string `json:"href,omitempty"`
+
+	FrameID proto.PageFrameID `json:"frame_id,omitempty"`
 }
 
 func sessionStatePath(connectURL string) (string, error) {
@@ -145,7 +153,7 @@ func sessionStatePath(connectURL string) (string, error) {
 
 	hash := sha1.Sum([]byte(connectURL))
 	dir := filepath.Join(cacheDir, "ghostchrome", "sessions")
-	// 0o700: snapshots may reference URLs with tokens — keep owner-only.
+	// 0o700: snapshots may reference URLs with tokens â keep owner-only.
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
@@ -222,21 +230,48 @@ func snapshotFromResult(page *rod.Page, result *ExtractionResult) (*PageSnapshot
 		snapshot.Title = info.Title
 	}
 
-	for ref, node := range result.Refs {
-		if node.BackendNodeID == 0 {
-			continue
-		}
-		snapshot.Refs[ref] = RefSnapshot{
-			BackendNodeID: node.BackendNodeID,
-			Role:          node.Role,
-			Name:          node.Name,
-		}
-	}
-
+	snapshot.Refs = assignRefSnapshots(result.Refs)
 	return snapshot, nil
 }
 
 // BuildSnapshot creates an in-memory ref snapshot from an extraction result.
 func BuildSnapshot(page *rod.Page, result *ExtractionResult) (*PageSnapshot, error) {
 	return snapshotFromResult(page, result)
+}
+
+func SnapshotRefNum(ref string) (int, bool) {
+	return snapshotRefNum(ref)
+}
+
+func snapshotRefNum(ref string) (int, bool) {
+	n, err := strconv.Atoi(strings.TrimPrefix(ref, "@"))
+	return n, err == nil
+}
+
+func assignRefSnapshots(refs map[string]ExtractedNode) map[string]RefSnapshot {
+	out := map[string]RefSnapshot{}
+	keys := make([]string, 0, len(refs))
+	for ref := range refs {
+		keys = append(keys, ref)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		ni, iok := snapshotRefNum(keys[i])
+		nj, jok := snapshotRefNum(keys[j])
+		if iok && jok {
+			return ni < nj
+		}
+		return keys[i] < keys[j]
+	})
+	nthByKey := map[string]int{}
+	for _, ref := range keys {
+		node := refs[ref]
+		if node.BackendNodeID == 0 {
+			continue
+		}
+		key := strings.ToLower(node.Role) + "|" + strings.ToLower(strings.TrimSpace(node.Name))
+		nth := nthByKey[key]
+		nthByKey[key] = nth + 1
+		out[ref] = RefSnapshot{BackendNodeID: node.BackendNodeID, Role: node.Role, Name: node.Name, Nth: nth, Href: node.Href, FrameID: node.FrameID}
+	}
+	return out
 }

@@ -56,10 +56,24 @@ func (p *Policy) AllowURL(rawURL string) error {
 		return fmt.Errorf("%w: invalid URL %q", ErrPolicyDenied, rawURL)
 	}
 
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https":
+		// fall through to host allow/block lists
+	case "about":
+		if parsed.Opaque == "blank" || parsed.Path == "blank" || parsed.String() == "about:blank" {
+			return nil
+		}
+		return fmt.Errorf("%w: scheme %q is not allowed", ErrPolicyDenied, parsed.Scheme)
+	case "data":
+		return nil
+	default:
+		return fmt.Errorf("%w: scheme %q is not allowed", ErrPolicyDenied, parsed.Scheme)
+	}
+
 	host := strings.ToLower(parsed.Hostname())
 
-	if host == "" || parsed.Scheme == "data" || parsed.Scheme == "about" || parsed.Scheme == "blob" {
-		return nil
+	if host == "" {
+		return fmt.Errorf("%w: invalid URL %q", ErrPolicyDenied, rawURL)
 	}
 
 	for _, pattern := range p.BlockedDomains {

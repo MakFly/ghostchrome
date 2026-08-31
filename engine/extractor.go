@@ -34,6 +34,7 @@ type ExtractedNode struct {
 	Disabled      bool                   `json:"disabled,omitempty"`
 	Box           *ElementBox            `json:"box,omitempty"`
 	BackendNodeID proto.DOMBackendNodeID `json:"-"`
+	FrameID       proto.PageFrameID      `json:"-"`
 	Children      []ExtractedNode        `json:"children,omitempty"`
 }
 
@@ -95,14 +96,23 @@ type ExtractionStats struct {
 
 // Roles considered interactive — get @ref assignments.
 var interactiveRoles = map[string]bool{
-	"button":   true,
-	"link":     true,
-	"textbox":  true,
-	"checkbox": true,
-	"radio":    true,
-	"combobox": true,
-	"menuitem": true,
-	"tab":      true,
+	"button":           true,
+	"link":             true,
+	"textbox":          true,
+	"checkbox":         true,
+	"radio":            true,
+	"combobox":         true,
+	"menuitem":         true,
+	"tab":              true,
+	"switch":           true,
+	"slider":           true,
+	"spinbutton":       true,
+	"option":           true,
+	"searchbox":        true,
+	"listbox":          true,
+	"menuitemcheckbox": true,
+	"menuitemradio":    true,
+	"treeitem":         true,
 }
 
 // Skeleton-level roles.
@@ -116,6 +126,12 @@ var skeletonRoles = map[string]bool{
 	"combobox":      true,
 	"menuitem":      true,
 	"tab":           true,
+	"switch":        true,
+	"slider":        true,
+	"spinbutton":    true,
+	"option":        true,
+	"searchbox":     true,
+	"listbox":       true,
 	"navigation":    true,
 	"form":          true,
 	"search":        true,
@@ -190,7 +206,7 @@ func ExtractWithTimeout(page *rod.Page, level ExtractLevel, selector string, tim
 	// If selector is provided, scope to that subtree via DOM + AX query.
 	var scopeNodeIDs map[proto.AccessibilityAXNodeID]bool
 	if selector != "" {
-		scopeNodeIDs, err = resolveScope(page, selector)
+		scopeNodeIDs, err = resolveScope(page, selector, nodeMap)
 		if err != nil {
 			return nil, fmt.Errorf("resolve selector %q: %w", selector, err)
 		}
@@ -226,6 +242,10 @@ func ExtractWithTimeout(page *rod.Page, level ExtractLevel, selector string, tim
 		ssrPayloads = ssrFallbackPayloads(p)
 	}
 
+	if selector == "" {
+		appendSameOriginIframes(page, level, &extractedNodes, refs, &stats, &refCounter)
+	}
+
 	return &ExtractionResult{
 		Nodes:       extractedNodes,
 		Refs:        refs,
@@ -249,8 +269,95 @@ func ssrFallbackPayloads(page *rod.Page) []SSRPayload {
 	return ExtractSSRPayloads(html)
 }
 
+func appendSameOriginIframes(page *rod.Page, level ExtractLevel, nodes *[]ExtractedNode, refs map[string]ExtractedNode, stats *ExtractionStats, refCounter *int) {
+	if page == nil || selectorScoped(nodes) {
+		return
+	}
+
+	appendSameOriginIframesAt(page, level, nodes, refs, stats, refCounter, 0)
+}
+
+const maxIframeDepth = 3
+
+func appendSameOriginIframesAt(page *rod.Page, level ExtractLevel, nodes *[]ExtractedNode, refs map[string]ExtractedNode, stats *ExtractionStats, refCounter *int, depth int) {
+	if page == nil || depth >= maxIframeDepth {
+		return
+	}
+	iframes, err := page.Elements("iframe")
+	if err != nil || len(iframes) == 0 {
+		return
+	}
+	budget := newEnrichmentBudget()
+	for _, iframe := range iframes {
+		frame, err := iframe.Frame()
+		if err != nil || frame == nil {
+			continue
+		}
+		_ = proto.AccessibilityEnable{}.Call(frame)
+		result, err := proto.AccessibilityGetFullAXTree{FrameID: frame.FrameID}.Call(frame)
+		if err != nil || result == nil {
+			continue
+		}
+		StartFileChooserIntercept(frame)
+		nodeMap := make(map[proto.AccessibilityAXNodeID]*proto.AccessibilityAXNode, len(result.Nodes))
+		for _, n := range result.Nodes {
+			nodeMap[n.NodeID] = n
+		}
+		stats.TotalNodes += len(result.Nodes)
+		var frameNodes []ExtractedNode
+		for _, n := range result.Nodes {
+			if n.ParentID == "" {
+				frameNodes = append(frameNodes, buildTree(frame, nodeMap, n.NodeID, level, nil, refCounter, refs, stats, budget)...)
+			}
+		}
+		stampFrame(frameNodes, frame.FrameID)
+		syncFrameRefs(frameNodes, refs)
+		appendSameOriginIframesAt(frame, level, &frameNodes, refs, stats, refCounter, depth+1)
+		if len(frameNodes) == 0 {
+			continue
+		}
+		*nodes = append(*nodes, ExtractedNode{Role: "iframe", Name: iframeName(iframe), Children: frameNodes})
+	}
+}
+
+func selectorScoped(nodes *[]ExtractedNode) bool {
+	return nodes == nil
+}
+
+func iframeName(el *rod.Element) string {
+	if el == nil {
+		return ""
+	}
+	if title, err := el.Attribute("title"); err == nil && title != nil && *title != "" {
+		return *title
+	}
+	if name, err := el.Attribute("name"); err == nil && name != nil && *name != "" {
+		return *name
+	}
+	return ""
+}
+
+func stampFrame(nodes []ExtractedNode, frame proto.PageFrameID) {
+	for i := range nodes {
+		nodes[i].FrameID = frame
+		stampFrame(nodes[i].Children, frame)
+	}
+}
+
+func syncFrameRefs(nodes []ExtractedNode, refs map[string]ExtractedNode) {
+	for _, n := range nodes {
+		if n.Ref != "" {
+			if stored, ok := refs[n.Ref]; ok {
+				stored.FrameID = n.FrameID
+				refs[n.Ref] = stored
+			}
+		}
+		syncFrameRefs(n.Children, refs)
+	}
+}
+
 // resolveScope finds all AX node IDs that are descendants of the given CSS selector.
-func resolveScope(page *rod.Page, selector string) (map[proto.AccessibilityAXNodeID]bool, error) {
+func resolveScope(page *rod.Page, selector string, nodeMap map[proto.AccessibilityAXNodeID]*proto.AccessibilityAXNode) (map[proto.AccessibilityAXNodeID]bool, error) {
 	// Get the DOM node for the selector, then query AX tree for its subtree.
 	el, err := page.Element(selector)
 	if err != nil {
@@ -263,20 +370,47 @@ func resolveScope(page *rod.Page, selector string) (map[proto.AccessibilityAXNod
 		return nil, fmt.Errorf("describe element: %w", err)
 	}
 
-	// Use AccessibilityGetPartialAXTree to get the subtree.
-	partial, err := proto.AccessibilityGetPartialAXTree{
-		BackendNodeID:  desc.BackendNodeID,
-		FetchRelatives: true,
-	}.Call(page)
-	if err != nil {
-		return nil, fmt.Errorf("get partial AX tree: %w", err)
+	rootID := axNodeIDForBackend(nodeMap, desc.BackendNodeID)
+	if rootID == "" {
+		return nil, fmt.Errorf("no accessibility node for selector %q", selector)
 	}
+	return axSubtreeIDs(nodeMap, rootID), nil
+}
 
-	ids := make(map[proto.AccessibilityAXNodeID]bool, len(partial.Nodes))
-	for _, n := range partial.Nodes {
-		ids[n.NodeID] = true
+func axNodeIDForBackend(nodeMap map[proto.AccessibilityAXNodeID]*proto.AccessibilityAXNode, backend proto.DOMBackendNodeID) proto.AccessibilityAXNodeID {
+	var fallback proto.AccessibilityAXNodeID
+	for id, n := range nodeMap {
+		if n == nil || n.BackendDOMNodeID != backend {
+			continue
+		}
+		if len(n.ChildIDs) > 0 {
+			return id
+		}
+		if fallback == "" {
+			fallback = id
+		}
 	}
-	return ids, nil
+	return fallback
+}
+
+func axSubtreeIDs(nodeMap map[proto.AccessibilityAXNodeID]*proto.AccessibilityAXNode, root proto.AccessibilityAXNodeID) map[proto.AccessibilityAXNodeID]bool {
+	ids := map[proto.AccessibilityAXNodeID]bool{}
+	var walk func(proto.AccessibilityAXNodeID)
+	walk = func(id proto.AccessibilityAXNodeID) {
+		if id == "" || ids[id] {
+			return
+		}
+		ids[id] = true
+		n := nodeMap[id]
+		if n == nil {
+			return
+		}
+		for _, child := range n.ChildIDs {
+			walk(child)
+		}
+	}
+	walk(root)
+	return ids
 }
 
 // buildTree recursively builds ExtractedNode tree from the flat AX node map.

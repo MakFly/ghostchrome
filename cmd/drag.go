@@ -31,19 +31,12 @@ Examples:
 			exitErr("drag", err)
 		}
 
-		result := snapshotPage(b, page, engine.LevelSkeleton)
-
-		type dragResult struct {
-			From  string `json:"from"`
-			To    string `json:"to"`
-			Steps int    `json:"steps"`
-		}
-		text := formatCurrentPlaywrightPageStateOutput("drag", page, result)
-		output(&dragResult{From: fromRef, To: toRef, Steps: flagDragSteps}, text)
+		emitMutationOutput("drag", fromRef, b, page, nil)
 	},
 }
 
 func init() {
 	dragCmd.Flags().IntVar(&flagDragSteps, "steps", 10, "Number of intermediate mouse move steps")
+	registerSnapshotModeFlag(dragCmd)
 	rootCmd.AddCommand(dragCmd)
 }

@@ -47,3 +47,21 @@ e2e url="https://www.chronovet.fr/":
     CGO_ENABLED=0 go build -ldflags="-X main.version={{version}}" -o ghostchrome .
     GHOSTCHROME_BIN="$PWD/ghostchrome" bun run examples/typescript/chronovet.ts {{url}}
     GHOSTCHROME_BIN="$PWD/ghostchrome" python3 examples/python/chronovet.py {{url}}
+
+
+# Chrome-backed reliability loop (skipped under go test -short).
+# Override count with GHOSTCHROME_CONFORMANCE_OPS=10000.
+conformance:
+    go test ./engine -run 'TestConformanceCoreLoop|TestNavigateUsesEventHub|TestStartEventHubIdempotent' -count=1 -timeout 20m
+
+# 10k-op soak. Requires Chrome.
+soak:
+    GHOSTCHROME_SOAK=1 GHOSTCHROME_CONFORMANCE_OPS=10000 go test ./engine -run TestConformanceSoak -count=1 -timeout 2h
+
+# Latest agent-browser click numbers.
+bench-ab:
+    cat benchmark/results-agent-browser-click.md
+
+# 8h duration soak. Requires Chrome.
+soak-8h:
+    GHOSTCHROME_SOAK=1 GHOSTCHROME_SOAK_DURATION=8h go test ./engine -run TestConformanceDuration -count=1 -timeout 9h -v

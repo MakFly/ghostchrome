@@ -98,12 +98,12 @@ Then in another terminal:
 			}
 		}
 
-		// Opt-in idle shutdown. Off by default so the daemon stays persistent
+		// Idle shutdown. Defaults to 1h so a forgotten daemon cannot squat RAM forever
 		// (see the runtime policy in CLAUDE.md); when GHOSTCHROME_IDLE_TIMEOUT is
 		// set, serve exits after that long with no browser activity — matching
 		// agent-browser's AGENT_BROWSER_IDLE_TIMEOUT_MS and bounding the disk/RAM
 		// growth of a forgotten daemon.
-		idleTimeout := serveIdleTimeout()
+		idleTimeout := serveIdleTimeoutForSession(flagHeadless)
 		var lastActivity time.Time
 		var lastTargets string
 		if idleTimeout > 0 && port > 0 {
@@ -163,6 +163,11 @@ Then in another terminal:
 							lastTargets = cur
 							lastActivity = time.Now()
 						} else if time.Since(lastActivity) >= idleTimeout {
+							if flagUserProfile != "" && engine.SessionLeaseFresh(flagUserProfile, idleTimeout) {
+								lastActivity = time.Now()
+								continue
+							}
+
 							fmt.Fprintf(os.Stderr, "idle for %s — serve exiting\n", idleTimeout)
 							return
 						}
@@ -201,13 +206,28 @@ func warmUpServeChrome(wsURL string, cleanup func()) error {
 	return nil
 }
 
-// serveIdleTimeout parses GHOSTCHROME_IDLE_TIMEOUT. Empty/invalid/<=0 disables
-// idle shutdown (the default). Accepts a Go duration ("30m", "90s") or a bare
-// integer number of seconds.
+// defaultServeIdleTimeout is the CLI daemon idle window when
+// GHOSTCHROME_IDLE_TIMEOUT is unset. Named sessions spawned by the
+// transparent daemon inherit this: attached/headed/leased Chrome is
+// never reaped (serve does not own those processes).
+const defaultServeIdleTimeout = time.Hour
+
+// serveIdleTimeout parses GHOSTCHROME_IDLE_TIMEOUT. Empty falls back to
+// 1h. Explicit 0/off/invalid disables idle shutdown. Accepts a Go duration
+// ("30m", "90s") or a bare integer number of seconds.
+
+// serveIdleTimeoutForSession applies ownership rules on top of the parsed
+// idle window: headed Chrome is a live user session and is never reaped.
+func serveIdleTimeoutForSession(headless bool) time.Duration {
+	if !headless {
+		return 0
+	}
+	return serveIdleTimeout()
+}
 func serveIdleTimeout() time.Duration {
 	v := strings.TrimSpace(os.Getenv("GHOSTCHROME_IDLE_TIMEOUT"))
 	if v == "" {
-		return 0
+		return defaultServeIdleTimeout
 	}
 	if d, err := time.ParseDuration(v); err == nil {
 		return d

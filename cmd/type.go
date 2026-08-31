@@ -81,16 +81,25 @@ Examples:
 				if rerr != nil {
 					exitErr("type", rerr)
 				}
+				if err := engine.TypeElement(page, typedEl, text); err != nil {
+					exitErr("type", err)
+				}
 			default:
-				typedEl, rerr = engine.WaitForTarget(page, ref, snapshot, waitState, waitTimeout)
+				if waitTimeout > 0 {
+					if _, rerr = engine.WaitForTarget(page, ref, snapshot, waitState, waitTimeout); rerr != nil {
+						exitIfStaleRef(rerr, "type")
+						exitErr("type", rerr)
+					}
+				}
+				if rerr = engine.TypeRef(page, ref, text, snapshot); rerr != nil {
+					exitIfStaleRef(rerr, "type")
+					exitErr("type", rerr)
+				}
+				typedEl, rerr = engine.ResolveRef(page, ref, snapshot)
 				if rerr != nil {
 					exitIfStaleRef(rerr, "type")
 					exitErr("type", rerr)
 				}
-			}
-
-			if err := engine.TypeElement(page, typedEl, text); err != nil {
-				exitErr("type", err)
 			}
 
 			if typeSubmit {
@@ -105,23 +114,7 @@ Examples:
 			}
 		}
 
-		result := snapshotPage(b, page, engine.LevelSkeleton)
-
-		type typeResult struct {
-			actionResult
-			Text string `json:"text"`
-		}
-
-		textOutput := formatCurrentPlaywrightPageStateOutput("type", page, result)
-		output(&typeResult{
-			actionResult: actionResult{
-				Action:  "type",
-				Ref:     ref,
-				Locator: typeLocator.Describe(),
-				Result:  result,
-			},
-			Text: text,
-		}, textOutput)
+		emitMutationOutput("type", ref, b, page, nil)
 	},
 }
 
@@ -130,5 +123,6 @@ func init() {
 	typeCmd.Flags().StringVar(&typeWaitFor, "wait-for", "", "Wait for element state before typing: attached|visible|hidden|enabled|stable|none (default: visible)")
 	typeCmd.Flags().IntVar(&typeWaitTimeoutMs, "wait-timeout-ms", 0, "Max milliseconds to wait for the element state (0 = no wait; default: 5000)")
 	typeCmd.Flags().BoolVar(&typeSubmit, "submit", false, "Press Enter after typing (submit the form)")
+	registerSnapshotModeFlag(typeCmd)
 	rootCmd.AddCommand(typeCmd)
 }

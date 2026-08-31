@@ -13,11 +13,11 @@ func DragDrop(page *rod.Page, fromRef, toRef string, snapshot *PageSnapshot, ste
 	if steps <= 0 {
 		steps = 10
 	}
-	srcEl, err := ResolveRef(page, fromRef, snapshot)
+	srcEl, err := ResolveRefSemantic(page, fromRef, snapshot)
 	if err != nil {
 		return fmt.Errorf("source %s: %w", fromRef, err)
 	}
-	dstEl, err := ResolveRef(page, toRef, snapshot)
+	dstEl, err := ResolveRefSemantic(page, toRef, snapshot)
 	if err != nil {
 		return fmt.Errorf("target %s: %w", toRef, err)
 	}
@@ -62,7 +62,7 @@ func DragDrop(page *rod.Page, fromRef, toRef string, snapshot *PageSnapshot, ste
 	if err := mouse.Up(proto.InputMouseButtonLeft, 1); err != nil {
 		return fmt.Errorf("mouse up: %w", err)
 	}
-	_ = page.WaitStable(300 * time.Millisecond)
+	settleAfterAction(page, 0)
 	return nil
 }
 
@@ -90,6 +90,6 @@ func DragDropCoords(page *rod.Page, sx, sy, dx, dy float64, steps int) error {
 	if err := mouse.Up(proto.InputMouseButtonLeft, 1); err != nil {
 		return fmt.Errorf("mouse up: %w", err)
 	}
-	_ = page.WaitStable(300 * time.Millisecond)
+	settleAfterAction(page, 0)
 	return nil
 }

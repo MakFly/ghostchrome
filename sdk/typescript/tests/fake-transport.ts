@@ -52,7 +52,7 @@ export class FakeTransport implements Transport {
 
     // Only attach result if the canned response provides it.
     // This mirrors the binary which omits the field for no-result ops
-    // (init, wait, close, click, hover, type, press, select).
+    // (wait and close; interaction ops now return snapshot diffs).
     if (canned.result !== undefined) {
       response.result = canned.result as R;
     }

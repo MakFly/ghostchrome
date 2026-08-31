@@ -17,8 +17,7 @@ export interface OpRequest<A = Record<string, unknown>> {
 /**
  * A response received on stdout from the ghostchrome agent.
  *
- * - `result` is OMITTED (undefined) for ops that return nothing
- *   (init, wait, close, click, hover, type, press, select).
+ * - `result` may be omitted for legacy/no-result responses.
  * - `error` is present when `ok=false`.
  * - `events` is present only when the agent was started with `--observe`.
  * - `observation` is present whenever a page is active.
@@ -28,6 +27,9 @@ export interface OpResponse<R = unknown> {
   ok: boolean;
   result?: R;
   error?: string;
+  protocol?: number;
+  error_code?: string;
+  retryable?: boolean;
   /** Raw CDP events captured during the op (only when --observe is active). */
   events?: unknown[];
   observation?: Observation;
@@ -73,7 +75,9 @@ export type OpName =
   | "wait"
   | "errors"
   | "url"
-  | "close";
+  | "close"
+  | "tabs"
+  | "dialog";
 
 // ---------------------------------------------------------------------------
 // Op args — one interface per op
@@ -105,24 +109,36 @@ export interface ExtractArgs {
 export interface ClickArgs {
   /** @ref of the element, e.g. @5 */
   ref: string;
+  /** Mouse button: left, right, or middle (default: left) */
+  button?: "left" | "right" | "middle";
+  /** none | diff | full (default: diff) */
+  snapshot?: string;
 }
 
 /** hover */
 export interface HoverArgs {
   /** @ref of the element */
   ref: string;
+  /** none | diff | full (default: diff) */
+  snapshot?: string;
 }
 
 /** dblclick */
 export interface DblClickArgs {
   /** @ref of the element, e.g. @5 */
   ref: string;
+  /** Mouse button: left, right, or middle (default: left) */
+  button?: "left" | "right" | "middle";
+  /** none | diff | full (default: diff) */
+  snapshot?: string;
 }
 
 /** check / uncheck */
 export interface CheckArgs {
   /** @ref of the checkbox/radio */
   ref: string;
+  /** none | diff | full (default: diff) */
+  snapshot?: string;
 }
 
 /** type */
@@ -135,6 +151,8 @@ export interface TypeArgs {
   clear?: boolean;
   /** If true, press Enter after typing (submit the form) */
   submit?: boolean;
+  /** none | diff | full (default: diff) */
+  snapshot?: string;
 }
 
 /** press */
@@ -143,6 +161,8 @@ export interface PressArgs {
   key: string;
   /** Optional @ref to focus before pressing */
   ref?: string;
+  /** none | diff | full (default: diff) */
+  snapshot?: string;
 }
 
 /** select */
@@ -151,6 +171,8 @@ export interface SelectArgs {
   ref: string;
   /** Option values to select */
   values: string[];
+  /** none | diff | full (default: diff) */
+  snapshot?: string;
 }
 
 /** fill — map of @ref → value strings */
@@ -194,8 +216,20 @@ export interface ScreenshotArgs {
 export interface WaitArgs {
   /** CSS selector to wait for */
   selector?: string;
+  /** @ref from the last snapshot to wait for */
+  ref?: string;
+  /** Visible text substring to wait for */
+  text?: string;
+  /** Wait until the current URL contains this substring */
+  url?: string;
+  /** Page load state: load | domcontentloaded | idle | stable | none */
+  load?: string;
+  /** Element state: attached | visible | hidden | enabled | stable */
+  state?: string;
   /** Fixed delay in milliseconds */
   ms?: number;
+  /** Maximum wait time in milliseconds */
+  timeout_ms?: number;
 }
 
 /** errors / url / close: no args */
@@ -208,9 +242,12 @@ export type CloseArgs = Record<string, never>;
 // ---------------------------------------------------------------------------
 
 /**
- * init — binary omits `result`; client resolves with `{}`.
+ * init result. Newer binaries include protocol/version.
  */
-export type InitResult = Record<string, never>;
+export interface InitResult {
+  protocol?: number;
+  version?: string;
+}
 
 /**
  * navigate result.
@@ -270,11 +307,81 @@ export interface ExtractResult {
   };
 }
 
-/**
- * Ops that emit no result (init, wait, close, click, hover, type, press, select).
- * The binary omits `result` entirely; the client resolves with `{}`.
- */
+/** A node included in a snapshot diff. */
+export interface DiffNode {
+  ref?: string;
+  role?: string;
+  name?: string;
+  href?: string;
+  value?: string;
+}
+
+/** A changed node in a snapshot diff. */
+export interface DiffEntry {
+  before: DiffNode;
+  after: DiffNode;
+}
+
+/** Counts of snapshot changes. */
+export interface DiffStats {
+  added: number;
+  removed: number;
+  changed: number;
+  kept: number;
+}
+
+/** Snapshot changes returned by interaction operations. */
+export interface SnapshotDiff {
+  unchanged?: boolean;
+  added?: DiffNode[];
+  removed?: string[];
+  changed?: Record<string, DiffEntry>;
+  stats: DiffStats;
+}
+
+/** Empty result used by wait and close. */
 export type EmptyResult = Record<string, never>;
+
+/** tabs */
+export interface TabsArgs {
+  /** list (default) | switch | close | new */
+  action?: string;
+  /** Tab index for switch/close */
+  index?: number;
+  /** URL for action=new */
+  url?: string;
+}
+
+export interface TabInfo {
+  index: number;
+  url?: string;
+  title?: string;
+  target_id?: string;
+  active?: boolean;
+}
+
+export interface TabsActionResult {
+  action: string;
+  index?: number;
+  url?: string;
+  title?: string;
+}
+
+export type TabsResult = TabInfo[] | TabsActionResult;
+
+/** dialog */
+export interface DialogArgs {
+  action?: string;
+  text?: string;
+}
+
+export interface DialogResult {
+  action: string;
+  text?: string;
+}
+
+/** click/type/select return a compact diff, or a skeleton extract when snapshot=full. */
+export type MutationResult = SnapshotDiff | ExtractResult;
 
 /**
  * fill result.

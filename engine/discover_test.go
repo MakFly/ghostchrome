@@ -42,6 +42,41 @@ func TestResolveCDPEndpointWS(t *testing.T) {
 	}
 }
 
+func TestProbeCDPEndpointFromWebsocketURL(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/json/version" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/browser/live",
+		})
+	}))
+	defer srv.Close()
+
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := "ws://" + u.Host + "/devtools/browser/live"
+	got, err := ProbeCDPEndpoint(ws, time.Second)
+	if err != nil {
+		t.Fatalf("ProbeCDPEndpoint: %v", err)
+	}
+	if got != "ws://127.0.0.1:9222/devtools/browser/live" {
+		t.Fatalf("unexpected ws url %q", got)
+	}
+}
+
+func TestCDPVersionURL(t *testing.T) {
+	got, err := cdpVersionURL("ws://127.0.0.1:9222/devtools/browser/abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "http://127.0.0.1:9222/json/version" {
+		t.Fatalf("got %q", got)
+	}
+}
+
 func TestChannelFamily(t *testing.T) {
 	tests := map[string]string{
 		"chrome":        "chrome",

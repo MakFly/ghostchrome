@@ -283,3 +283,47 @@ func TestWaitForRefNilSnapshot(t *testing.T) {
 		t.Fatal("expected error for nil snapshot")
 	}
 }
+
+func TestWaitForTargetRefAfterRerender(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires Chrome")
+	}
+	html := `<!doctype html><html><body>
+<button id="go">Go</button>
+<script>
+setTimeout(() => {
+  const next = document.createElement('button');
+  next.id = 'go';
+  next.textContent = 'Go';
+  const old = document.getElementById('go');
+  if (old) old.replaceWith(next);
+}, 80);
+</script>
+</body></html>`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(html))
+	}))
+	t.Cleanup(server.Close)
+
+	_, page := newIsolatedPage(t)
+	if _, err := Navigate(page, server.URL, "domcontentloaded"); err != nil {
+		t.Fatalf("navigate: %v", err)
+	}
+	result, err := Extract(page, LevelSkeleton, "", false)
+	if err != nil {
+		t.Fatalf("extract: %v", err)
+	}
+	snap, err := BuildSnapshot(page, result)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	// Force the original node out of the tree, then wait via the stale ref.
+	el, err := WaitForTarget(page, "@1", snap, StateVisible, 2*time.Second)
+	if err != nil {
+		t.Fatalf("wait ref after rerender: %v", err)
+	}
+	if el == nil {
+		t.Fatal("expected element")
+	}
+}

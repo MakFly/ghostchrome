@@ -51,26 +51,12 @@ Examples:
 			exitErr("upload", err)
 		}
 
-		type uploadResult struct {
-			Action   string   `json:"action"`
-			Ref      string   `json:"ref,omitempty"`
-			Selector string   `json:"selector,omitempty"`
-			Files    []string `json:"files"`
-			Count    int      `json:"count"`
-		}
-		result := snapshotPage(b, page, engine.LevelSkeleton)
-		text := formatCurrentPlaywrightPageStateOutput("upload", page, result)
-		output(&uploadResult{
-			Action:   "upload",
-			Ref:      ref,
-			Selector: flagUploadSelector,
-			Files:    files,
-			Count:    len(files),
-		}, text)
+		emitMutationOutput("upload", ref, b, page, nil)
 	},
 }
 
 func init() {
 	uploadCmd.Flags().StringVar(&flagUploadSelector, "selector", "", "CSS selector for the file input (use when the ref is a styled wrapper button)")
+	registerSnapshotModeFlag(uploadCmd)
 	rootCmd.AddCommand(uploadCmd)
 }

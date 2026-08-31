@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"github.com/dev-toolings/ghostchrome/engine"
-	"github.com/go-rod/rod"
 	"github.com/spf13/cobra"
 )
 
@@ -12,15 +11,15 @@ type navResult struct {
 	Title  string `json:"title"`
 }
 
-func runHistoryStep(action string, step func(*rod.Page) error) {
+func runHistoryStep(action string) {
 	b, page := openPage()
 	defer b.Close()
 
-	if err := step(page); err != nil {
-		exitErr(action, err)
+	delta := 1
+	if action == "back" {
+		delta = -1
 	}
-
-	if err := engine.WaitForPage(page, "load"); err != nil {
+	if err := engine.HistoryStep(page, delta, "load"); err != nil {
 		exitErr(action, err)
 	}
 
@@ -29,7 +28,7 @@ func runHistoryStep(action string, step func(*rod.Page) error) {
 		exitErr("page info", err)
 	}
 
-	result := snapshotPage(b, page, engine.LevelSkeleton)
+	result := snapshotPageAfterMutation(b, page, engine.LevelSkeleton)
 
 	text := formatPlaywrightPageStateOutput(&engine.PageInfo{
 		URL:   info.URL,
@@ -53,7 +52,7 @@ Examples:
   ghostchrome back --connect ws://127.0.0.1:9222`,
 	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		runHistoryStep("back", (*rod.Page).NavigateBack)
+		runHistoryStep("back")
 	},
 }
 
@@ -68,7 +67,7 @@ Examples:
   ghostchrome forward --connect ws://127.0.0.1:9222`,
 	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		runHistoryStep("forward", (*rod.Page).NavigateForward)
+		runHistoryStep("forward")
 	},
 }
 

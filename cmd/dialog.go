@@ -58,7 +58,7 @@ func runDialogHandler(accept bool, text string) {
 		action = "dialog-accept"
 	}
 
-	snapshot := snapshotPage(b, page, engine.LevelSkeleton)
+	snapshot := snapshotPageAfterMutation(b, page, engine.LevelSkeleton)
 	textOutput := formatCurrentPlaywrightPageStateOutput(action, page, snapshot)
 	output(dialogResult, textOutput)
 }

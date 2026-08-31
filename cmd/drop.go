@@ -49,20 +49,13 @@ Examples:
 			exitErr("drop", err)
 		}
 
-		result := snapshotPage(b, page, engine.LevelSkeleton)
-		text := formatCurrentPlaywrightPageStateOutput("drop", page, result)
-		output(&struct {
-			Action string                   `json:"action"`
-			Target string                   `json:"target"`
-			Paths  []string                 `json:"paths,omitempty"`
-			Data   []engine.DropData        `json:"data,omitempty"`
-			Result *engine.ExtractionResult `json:"result"`
-		}{Action: "drop", Target: args[0], Paths: flagDropPaths, Data: data, Result: result}, text)
+		emitMutationOutput("drop", args[0], b, page, nil)
 	},
 }
 
 func init() {
 	dropCmd.Flags().StringArrayVar(&flagDropPaths, "path", nil, "File path to add to DataTransfer (repeatable)")
 	dropCmd.Flags().StringArrayVar(&flagDropData, "data", nil, "DataTransfer value as MIME=VALUE (repeatable)")
+	registerSnapshotModeFlag(dropCmd)
 	rootCmd.AddCommand(dropCmd)
 }

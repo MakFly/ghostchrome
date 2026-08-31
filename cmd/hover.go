@@ -53,25 +53,19 @@ Examples:
 				exitErr("hover", err)
 			}
 		} else {
-			el, err := engine.WaitForTarget(page, ref, snapshot, waitState, waitTimeout)
-			if err != nil {
-				exitIfStaleRef(err, "hover")
-				exitErr("hover", err)
+			if waitTimeout > 0 {
+				if _, err := engine.WaitForTarget(page, ref, snapshot, waitState, waitTimeout); err != nil {
+					exitIfStaleRef(err, "hover")
+					exitErr("hover", err)
+				}
 			}
-			if err := engine.HoverElement(page, el); err != nil {
+			if err := engine.HoverRef(page, ref, snapshot); err != nil {
+				exitIfStaleRef(err, "hover")
 				exitErr("hover", err)
 			}
 		}
 
-		result := snapshotPage(b, page, engine.LevelSkeleton)
-
-		text := formatCurrentPlaywrightPageStateOutput("hover", page, result)
-		output(&actionResult{
-			Action:  "hover",
-			Ref:     ref,
-			Locator: hoverLocator.Describe(),
-			Result:  result,
-		}, text)
+		emitMutationOutput("hover", ref, b, page, nil)
 	},
 }
 
@@ -79,5 +73,6 @@ func init() {
 	hoverLocator.RegisterOn(hoverCmd)
 	hoverCmd.Flags().StringVar(&hoverWaitFor, "wait-for", "", "Wait for element state before hovering: attached|visible|hidden|enabled|stable|none (default: visible)")
 	hoverCmd.Flags().IntVar(&hoverWaitTimeoutMs, "wait-timeout-ms", 0, "Max milliseconds to wait for the element state (0 = no wait; default: 5000)")
+	registerSnapshotModeFlag(hoverCmd)
 	rootCmd.AddCommand(hoverCmd)
 }

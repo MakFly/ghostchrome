@@ -166,6 +166,25 @@ func TestObserver_DrainNonDestructive(t *testing.T) {
 	}
 }
 
+func TestObserver_HistoryRing(t *testing.T) {
+	o := &Observer{
+		opts:    ObserverOpts{BufferSize: 8, History: 3},
+		events:  make(chan ObserverEvent, 8),
+		pending: make(map[proto.NetworkRequestID]*pendingNet),
+		stopped: make(chan struct{}),
+	}
+	for i := 0; i < 5; i++ {
+		o.emit(ObserverEvent{TS: int64(i + 1), Kind: KindPage, Event: "e"})
+	}
+	got := o.Drain(0)
+	if len(got) != 3 {
+		t.Fatalf("expected ring of 3, got %d", len(got))
+	}
+	if got[0].TS != 3 || got[2].TS != 5 {
+		t.Fatalf("expected oldest retained TS=3, newest=5, got %+v", got)
+	}
+}
+
 func TestObserver_NDJSONRoundTrip(t *testing.T) {
 	evt := ObserverEvent{
 		TS:         1234567890123,

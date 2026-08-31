@@ -96,6 +96,10 @@ class SubprocessTransport(Transport):
         self._closed = False
         self._reader = threading.Thread(target=self._read_loop, daemon=True)
         self._reader.start()
+        self._stderr_lock = threading.Lock()
+        self._stderr_tail = ""
+        self._stderr_reader = threading.Thread(target=self._read_stderr, daemon=True)
+        self._stderr_reader.start()
 
     # ------------------------------------------------------------------
     # Internal reader loop (runs in background thread)
@@ -113,6 +117,16 @@ class SubprocessTransport(Transport):
             line = line.strip()
             if line:
                 self._dispatch_line(line)
+
+    def _read_stderr(self) -> None:
+        """Drain stderr so a noisy child cannot deadlock on a full pipe."""
+        assert self._proc.stderr is not None
+        while True:
+            chunk = self._proc.stderr.read(4096)
+            if not chunk:
+                return
+            with self._stderr_lock:
+                self._stderr_tail = (self._stderr_tail + chunk)[-65536:]
 
     def _dispatch_line(self, line: str) -> None:
         try:

@@ -113,6 +113,10 @@ Full protocol, per-site medians, limitations, and reproduction details:
 The raw-sample helpers are [`benchmark/cli-measure.mjs`](benchmark/cli-measure.mjs)
 and [`benchmark/mcp-measure.mjs`](benchmark/mcp-measure.mjs).
 
+The agent-browser hot-path results and release gates are tracked in
+[`benchmark/results-agent-browser-click.md`](benchmark/results-agent-browser-click.md)
+and [`docs/reliability-plan.md`](docs/reliability-plan.md).
+
 ---
 
 ## Install

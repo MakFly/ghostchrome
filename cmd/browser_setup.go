@@ -212,6 +212,9 @@ func openPage() (*engine.Browser, *rod.Page) {
 	applyConfigPermissions(b)
 	applyConfigStorageState(b, page)
 	autoStartVideoIfConfigured(b)
+	if flagSession != "" {
+		engine.TouchSessionLease(flagSession)
+	}
 	if flagStealth {
 		// The background observer subscribes to Runtime.consoleAPICalled /
 		// Runtime.exceptionThrown, which makes rod auto-enable the Runtime
@@ -222,6 +225,8 @@ func openPage() (*engine.Browser, *rod.Page) {
 	} else {
 		b.StartBackgroundObserver(page)
 	}
+
+	engine.StartFileChooserIntercept(page)
 
 	return b, page
 }

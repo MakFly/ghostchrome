@@ -140,3 +140,18 @@ func TestFormatPlaywrightPageStateOutputJSONSkipsSnapshotForAllCommands(t *testi
 		})
 	}
 }
+
+func TestSnapshotModeDefaultsToDiff(t *testing.T) {
+	old := flagSnapshotMode
+	t.Cleanup(func() { flagSnapshotMode = old })
+	flagSnapshotMode = ""
+	if got := snapshotMode(); got != engine.SnapshotModeDiff {
+		t.Fatalf("snapshotMode() = %q, want diff", got)
+	}
+}
+
+func TestSnapshotModeRejectsUnknown(t *testing.T) {
+	if _, err := engine.ParseSnapshotMode("banana"); err == nil {
+		t.Fatal("expected error")
+	}
+}

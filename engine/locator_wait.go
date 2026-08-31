@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/go-rod/rod"
-	"github.com/go-rod/rod/lib/proto"
 )
 
 // ElementState describes the desired element state for WaitForLocator.
@@ -154,25 +153,30 @@ func WaitForTarget(page *rod.Page, target string, snapshot *PageSnapshot, state 
 // WaitForRef waits until the element identified by ref in snapshot reaches the
 // desired state.
 //
-// IMPORTANT: This function PRESERVES the original ref → backendNodeID mapping.
-// It never re-extracts or remaps refs — if the element is stale it returns
-// ErrStaleRef so the caller can decide to re-extract.
+// Refs resolve through ResolveRefSemantic: backendNodeId first, then
+// role+name+nth. Ambiguous matches fail closed (ErrAmbiguousRef).
 //
 // Returns the resolved element once it satisfies state, or an error.
 func WaitForRef(page *rod.Page, ref string, snapshot *PageSnapshot, state ElementState, timeout time.Duration) (*rod.Element, error) {
+	parsed, err := parseRef(ref)
+	if err != nil {
+		return nil, err
+	}
 	if snapshot == nil {
 		return nil, fmt.Errorf("%w: run preview, extract, or navigate --extract first", ErrStaleRef)
 	}
-	refInfo, ok := snapshot.Refs[ref]
-	if !ok || refInfo.BackendNodeID == 0 {
-		return nil, fmt.Errorf("%w: ref %s not found in last snapshot", ErrStaleRef, ref)
+	if _, ok := snapshot.Refs[parsed]; !ok {
+		return nil, fmt.Errorf("%w: ref %s not found in last snapshot", ErrStaleRef, parsed)
+	}
+
+	resolve := func() (*rod.Element, error) {
+		return ResolveRefSemantic(page, parsed, snapshot)
 	}
 
 	if timeout <= 0 {
-		// One-shot: resolve and check state immediately.
-		el, err := elementFromBackendNodeID(page, refInfo.BackendNodeID)
+		el, err := resolve()
 		if err != nil {
-			return nil, fmt.Errorf("%w: ref %s — %v", ErrStaleRef, ref, err)
+			return nil, err
 		}
 		return el, checkState(el, state)
 	}
@@ -182,18 +186,28 @@ func WaitForRef(page *rod.Page, ref string, snapshot *PageSnapshot, state Elemen
 
 	interval := 100 * time.Millisecond
 	const maxInterval = 500 * time.Millisecond
+	var last error
 
 	for {
-		el, err := elementFromBackendNodeID(page, refInfo.BackendNodeID)
+		el, err := resolve()
 		if err == nil {
 			if stateErr := checkState(el, state); stateErr == nil {
 				return el, nil
+			} else {
+				last = stateErr
 			}
+		} else if errors.Is(err, ErrAmbiguousRef) {
+			return nil, err
+		} else {
+			last = err
 		}
 
 		select {
 		case <-ctx.Done():
-			return nil, fmt.Errorf("wait for ref %s (state=%s) timed out after %s", ref, state, timeout)
+			if last != nil {
+				return nil, fmt.Errorf("wait for ref %s (state=%s) timed out after %s: %w", parsed, state, timeout, last)
+			}
+			return nil, fmt.Errorf("wait for ref %s (state=%s) timed out after %s", parsed, state, timeout)
 		case <-time.After(interval):
 		}
 
@@ -202,23 +216,6 @@ func WaitForRef(page *rod.Page, ref string, snapshot *PageSnapshot, state Elemen
 			interval = maxInterval
 		}
 	}
-}
-
-// elementFromBackendNodeID resolves a DOM node by its backend ID. Returns
-// ErrStaleRef-compatible error if the node is gone.
-func elementFromBackendNodeID(page *rod.Page, nodeID proto.DOMBackendNodeID) (*rod.Element, error) {
-	el, err := page.ElementFromNode(&proto.DOMNode{BackendNodeID: nodeID})
-	if err != nil {
-		return nil, err
-	}
-	connected, err := el.Eval(`() => this.isConnected`)
-	if err != nil {
-		return nil, err
-	}
-	if connected == nil || connected.Value.Val() != true {
-		return nil, errors.New("element is detached from DOM")
-	}
-	return el, nil
 }
 
 // checkState verifies that el satisfies state.
@@ -277,15 +274,14 @@ func checkStable(el *rod.Element) error {
 	if err != nil {
 		return fmt.Errorf("stable check second read: %w", err)
 	}
-	// Compare first quad corner.
 	if len(box1.Quads) == 0 || len(box2.Quads) == 0 {
-		return nil // nothing to compare
+		return nil
 	}
 	q1, q2 := box1.Quads[0], box2.Quads[0]
 	if len(q1) >= 2 && len(q2) >= 2 {
 		dx := q1[0] - q2[0]
 		dy := q1[1] - q2[1]
-		const tol = 1.0 // 1 pixel tolerance
+		const tol = 1.0
 		if dx > tol || dx < -tol || dy > tol || dy < -tol {
 			return fmt.Errorf("element is moving (dx=%.1f dy=%.1f)", dx, dy)
 		}

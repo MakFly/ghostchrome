@@ -81,6 +81,7 @@ func Catalog() []Op {
 			Summary: "Tick a checkbox or radio by @ref (idempotent — no-op if already checked).",
 			Args: []Arg{
 				{Name: "ref", Type: ArgString, Required: true, Description: "@ref of the checkbox/radio"},
+				{Name: "snapshot", Type: ArgString, Required: false, Description: "none | diff | full (default: diff)"},
 			},
 			Surfaces: []string{"jsonl"},
 		},
@@ -90,6 +91,7 @@ func Catalog() []Op {
 			Args: []Arg{
 				{Name: "ref", Type: ArgString, Required: true, Description: "@ref of the element, e.g. @5"},
 				{Name: "button", Type: ArgString, Required: false, Description: "Mouse button: left, right, or middle (default: left)"},
+				{Name: "snapshot", Type: ArgString, Required: false, Description: "none | diff | full (default: diff)"},
 			},
 			Surfaces: []string{"jsonl", "mcp", "ai"},
 		},
@@ -105,8 +107,18 @@ func Catalog() []Op {
 			Args: []Arg{
 				{Name: "ref", Type: ArgString, Required: true, Description: "@ref of the element, e.g. @5"},
 				{Name: "button", Type: ArgString, Required: false, Description: "Mouse button: left, right, or middle (default: left)"},
+				{Name: "snapshot", Type: ArgString, Required: false, Description: "none | diff | full (default: diff)"},
 			},
 			Surfaces: []string{"jsonl"},
+		},
+		{
+			Name:    "dialog",
+			Summary: "Set how JavaScript dialogs (alert/confirm/prompt) are auto-handled. Default accept.",
+			Args: []Arg{
+				{Name: "action", Type: ArgString, Required: false, Description: "accept (default) | dismiss"},
+				{Name: "text", Type: ArgString, Required: false, Description: "Prompt response text when action=accept"},
+			},
+			Surfaces: []string{"jsonl", "mcp"},
 		},
 		{
 			Name:    "done",
@@ -179,6 +191,7 @@ func Catalog() []Op {
 			Summary: "Hover over an element by @ref (reveals dropdowns, tooltips).",
 			Args: []Arg{
 				{Name: "ref", Type: ArgString, Required: true, Description: "@ref of the element"},
+				{Name: "snapshot", Type: ArgString, Required: false, Description: "none | diff | full (default: diff)"},
 			},
 			Surfaces: []string{"jsonl", "mcp", "ai"},
 		},
@@ -203,6 +216,7 @@ func Catalog() []Op {
 			Args: []Arg{
 				{Name: "key", Type: ArgString, Required: true, Description: "Key name, e.g. Enter, Escape, ArrowDown"},
 				{Name: "ref", Type: ArgString, Required: false, Description: "Optional @ref to focus before pressing"},
+				{Name: "snapshot", Type: ArgString, Required: false, Description: "none | diff | full (default: diff)"},
 			},
 			Surfaces: []string{"jsonl", "mcp", "ai"},
 		},
@@ -248,6 +262,7 @@ func Catalog() []Op {
 				{Name: "ref", Type: ArgString, Required: true, Description: "@ref of the <select> element"},
 				// JSONL/AI use "values" (array); MCP uses "value" (string, JSON-array-as-string for multi-select).
 				{Name: "values", Type: ArgArray, Required: true, Description: "Option values to select (JSONL/AI: string array; MCP: 'value' string or JSON-array string)"},
+				{Name: "snapshot", Type: ArgString, Required: false, Description: "none | diff | full (default: diff)"},
 			},
 			Surfaces: []string{"jsonl", "mcp", "ai"},
 		},
@@ -264,12 +279,13 @@ func Catalog() []Op {
 		},
 		{
 			Name:    "tabs",
-			Summary: "List, switch, or close browser tabs. MCP surface only (JSONL/CLI use dedicated commands).",
+			Summary: "List, switch, close, or open browser tabs.",
 			Args: []Arg{
-				{Name: "action", Type: ArgString, Required: false, Description: "list (default) | switch | close"},
+				{Name: "action", Type: ArgString, Required: false, Description: "list (default) | switch | close | new"},
 				{Name: "index", Type: ArgNumber, Required: false, Description: "Tab index for switch/close actions"},
+				{Name: "url", Type: ArgString, Required: false, Description: "URL for action=new (blank tab when omitted)"},
 			},
-			Surfaces: []string{"mcp"},
+			Surfaces: []string{"jsonl", "mcp"},
 		},
 		{
 			Name:    "type",
@@ -278,6 +294,7 @@ func Catalog() []Op {
 				{Name: "ref", Type: ArgString, Required: true, Description: "@ref of the input element"},
 				{Name: "text", Type: ArgString, Required: true, Description: "Text to type (field is cleared first)"},
 				{Name: "submit", Type: ArgBoolean, Required: false, Description: "If true, press Enter after typing (submit the form)"},
+				{Name: "snapshot", Type: ArgString, Required: false, Description: "none | diff | full (default: diff)"},
 			},
 			Surfaces: []string{"jsonl", "mcp", "ai"},
 		},
@@ -286,6 +303,7 @@ func Catalog() []Op {
 			Summary: "Untick a checkbox by @ref (idempotent — no-op if already unchecked).",
 			Args: []Arg{
 				{Name: "ref", Type: ArgString, Required: true, Description: "@ref of the checkbox"},
+				{Name: "snapshot", Type: ArgString, Required: false, Description: "none | diff | full (default: diff)"},
 			},
 			Surfaces: []string{"jsonl"},
 		},
@@ -306,19 +324,29 @@ func Catalog() []Op {
 		},
 		{
 			Name:    "wait",
-			Summary: "Wait for a CSS selector to appear or a fixed delay in ms.",
+			Summary: "Wait for a selector/@ref, visible text, URL substring, load state, or a fixed delay.",
 			Args: []Arg{
 				{Name: "selector", Type: ArgString, Required: false, Description: "CSS selector to wait for"},
+				{Name: "ref", Type: ArgString, Required: false, Description: "@ref from the last snapshot to wait for"},
+				{Name: "text", Type: ArgString, Required: false, Description: "Visible text substring to wait for"},
+				{Name: "url", Type: ArgString, Required: false, Description: "Wait until the current URL contains this substring"},
+				{Name: "load", Type: ArgString, Required: false, Description: "Page load state: load | domcontentloaded | idle | stable | none"},
+				{Name: "state", Type: ArgString, Required: false, Description: "Element state: attached | visible | hidden | enabled | stable (default: visible)"},
 				{Name: "ms", Type: ArgInteger, Required: false, Description: "Fixed delay in milliseconds"},
+				{Name: "timeout_ms", Type: ArgInteger, Required: false, Description: "Maximum wait time in milliseconds"},
 			},
 			Surfaces: []string{"jsonl", "ai"},
 		},
 		{
 			Name:    "wait_for",
-			Summary: "Wait for a selector, text, or timeout. MCP surface only (JSONL uses 'wait').",
+			Summary: "Wait for a @ref/selector/text/url/load condition. MCP surface only (JSONL uses 'wait').",
 			Args: []Arg{
+				{Name: "ref", Type: ArgString, Required: false, Description: "@ref from the last snapshot to wait for"},
 				{Name: "selector", Type: ArgString, Required: false, Description: "CSS selector to wait for"},
 				{Name: "text", Type: ArgString, Required: false, Description: "Visible text substring to wait for"},
+				{Name: "url", Type: ArgString, Required: false, Description: "Wait until the current URL contains this substring"},
+				{Name: "load", Type: ArgString, Required: false, Description: "Page load state: load | domcontentloaded | idle | stable | none"},
+				{Name: "state", Type: ArgString, Required: false, Description: "Element state: attached | visible | hidden | enabled | stable (default: visible)"},
 				{Name: "timeout_ms", Type: ArgNumber, Required: false, Description: "Maximum wait time in ms (default 5000, max 30000)"},
 			},
 			Surfaces: []string{"mcp"},

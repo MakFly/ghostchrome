@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-rod/rod"
@@ -61,16 +63,19 @@ func ResolveRef(page *rod.Page, ref string, snapshot *PageSnapshot) (*rod.Elemen
 	if err != nil {
 		return nil, err
 	}
-	return resolveRefSnapshot(page, parsed, snapshot)
+	return ResolveRefSemantic(page, parsed, snapshot)
 }
 
 // ClickRef clicks the element at the given ref.
 func ClickRef(page *rod.Page, ref string, snapshot *PageSnapshot) error {
-	el, err := ResolveRef(page, ref, snapshot)
-	if err != nil {
-		return err
-	}
-	return ClickElementWithButton(page, el, proto.InputMouseButtonLeft)
+	return ClickRefWithButton(page, ref, snapshot, proto.InputMouseButtonLeft)
+}
+
+// ClickRefWithButton clicks the element at ref with an explicit mouse button.
+func ClickRefWithButton(page *rod.Page, ref string, snapshot *PageSnapshot, button proto.InputMouseButton) error {
+	return withSemanticRetry(page, ref, snapshot, func(el *rod.Element) error {
+		return ClickElementWithButton(page, el, button)
+	})
 }
 
 // ClickElement performs a click on an already-resolved element (used by the
@@ -81,20 +86,24 @@ func ClickElement(page *rod.Page, el *rod.Element) error {
 
 // ClickElementWithButton performs a click with an explicit mouse button.
 func ClickElementWithButton(page *rod.Page, el *rod.Element, button proto.InputMouseButton) error {
+	if err := EnsureActionable(el, actionBudget(page)); err != nil {
+		return fmt.Errorf("click: %w", err)
+	}
 	if HumanMode() {
 		if err := humanClick(page, el, button); err != nil {
 			return fmt.Errorf("click: %w", err)
 		}
-		_ = page.WaitStable(500 * time.Millisecond)
+		settleAfterAction(page, 0)
+		WaitForClickNavigation(page)
+		WaitForClickDownload(page)
 		return nil
-	}
-	if err := el.ScrollIntoView(); err != nil {
-		return fmt.Errorf("scroll into view: %w", err)
 	}
 	if err := el.Click(button, 1); err != nil {
 		return fmt.Errorf("click: %w", err)
 	}
-	_ = page.WaitStable(500 * time.Millisecond)
+	settleAfterAction(page, 0)
+	WaitForClickNavigation(page)
+	WaitForClickDownload(page)
 	return nil
 }
 
@@ -105,9 +114,14 @@ func DblClickRef(page *rod.Page, ref string, snapshot *PageSnapshot) error {
 
 // DblClickRefWithButton double-clicks an element with an explicit mouse button.
 func DblClickRefWithButton(page *rod.Page, ref string, snapshot *PageSnapshot, button proto.InputMouseButton) error {
-	el, err := ResolveRef(page, ref, snapshot)
-	if err != nil {
-		return err
+	return withSemanticRetry(page, ref, snapshot, func(el *rod.Element) error {
+		return dblClickElementWithButton(page, el, button)
+	})
+}
+
+func dblClickElementWithButton(page *rod.Page, el *rod.Element, button proto.InputMouseButton) error {
+	if err := EnsureActionable(el, actionBudget(page)); err != nil {
+		return fmt.Errorf("dblclick: %w", err)
 	}
 	if HumanMode() {
 		if err := humanClick(page, el, button); err != nil {
@@ -117,16 +131,13 @@ func DblClickRefWithButton(page *rod.Page, ref string, snapshot *PageSnapshot, b
 		if err := humanClick(page, el, button); err != nil {
 			return fmt.Errorf("dblclick: %w", err)
 		}
-		_ = page.WaitStable(500 * time.Millisecond)
+		settleAfterAction(page, 0)
 		return nil
-	}
-	if err := el.ScrollIntoView(); err != nil {
-		return fmt.Errorf("scroll into view: %w", err)
 	}
 	if err := el.Click(button, 2); err != nil {
 		return fmt.Errorf("dblclick: %w", err)
 	}
-	_ = page.WaitStable(500 * time.Millisecond)
+	settleAfterAction(page, 0)
 	return nil
 }
 
@@ -134,18 +145,16 @@ func DblClickRefWithButton(page *rod.Page, ref string, snapshot *PageSnapshot, b
 // idempotent: if the element is already in the target state it does nothing,
 // so "check" never accidentally toggles a box that was already ticked.
 func SetCheckedRef(page *rod.Page, ref string, checked bool, snapshot *PageSnapshot) error {
-	el, err := ResolveRef(page, ref, snapshot)
-	if err != nil {
-		return err
-	}
-	prop, err := el.Property("checked")
-	if err != nil {
-		return fmt.Errorf("read checked state: %w", err)
-	}
-	if prop.Bool() == checked {
-		return nil // already in the desired state
-	}
-	return ClickElement(page, el)
+	return withSemanticRetry(page, ref, snapshot, func(el *rod.Element) error {
+		prop, err := el.Property("checked")
+		if err != nil {
+			return fmt.Errorf("read checked state: %w", err)
+		}
+		if prop.Bool() == checked {
+			return nil // already in the desired state
+		}
+		return ClickElement(page, el)
+	})
 }
 
 // HasSelector reports whether at least one element matches selector.
@@ -176,7 +185,7 @@ func ScrollToRef(page *rod.Page, ref string, snapshot *PageSnapshot) error {
 	if err := el.ScrollIntoView(); err != nil {
 		return fmt.Errorf("scroll into view: %w", err)
 	}
-	_ = page.WaitStable(200 * time.Millisecond)
+	settleAfterAction(page, 0)
 	return nil
 }
 
@@ -193,7 +202,7 @@ func ScrollToY(page *rod.Page, y int, bottomSentinel bool) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("scroll eval: %w", err)
 	}
-	_ = page.WaitStable(200 * time.Millisecond)
+	settleAfterAction(page, 0)
 	return int(res.Value.Num()), nil
 }
 
@@ -204,7 +213,7 @@ func ScrollBy(page *rod.Page, dy int) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("scroll-by eval: %w", err)
 	}
-	_ = page.WaitStable(200 * time.Millisecond)
+	settleAfterAction(page, 0)
 	return int(res.Value.Num()), nil
 }
 
@@ -218,6 +227,9 @@ func ScrollBy(page *rod.Page, dy int) (int, error) {
 //
 // Exactly one of ref or selector must be non-empty.
 func UploadRef(page *rod.Page, ref string, selector string, files []string, snapshot *PageSnapshot) error {
+	if err := ActivePolicy.AllowAction("upload"); err != nil {
+		return err
+	}
 	if len(files) == 0 {
 		return fmt.Errorf("upload: need at least one file path")
 	}
@@ -236,10 +248,13 @@ func UploadRef(page *rod.Page, ref string, selector string, files []string, snap
 			return fmt.Errorf("selector %q: %w", selector, err)
 		}
 	case ref != "":
-		el, err = ResolveRef(page, ref, snapshot)
-		if err != nil {
-			return err
-		}
+		return withSemanticRetry(page, ref, snapshot, func(el *rod.Element) error {
+			if err := el.SetFiles(files); err != nil {
+				return fmt.Errorf("set files: %w", err)
+			}
+			settleAfterAction(page, 0)
+			return nil
+		})
 	default:
 		return fmt.Errorf("upload: need either a ref or --selector")
 	}
@@ -247,22 +262,65 @@ func UploadRef(page *rod.Page, ref string, selector string, files []string, snap
 	if err := el.SetFiles(files); err != nil {
 		return fmt.Errorf("set files: %w", err)
 	}
-	_ = page.WaitStable(300 * time.Millisecond)
+	settleAfterAction(page, 0)
 	return nil
+}
+
+// FillFields types each ref→value pair in numeric @N order. After every field
+// it rebuilds the snapshot so a country→city cascade cannot click a stale ref.
+func FillFields(b *Browser, page *rod.Page, fields map[string]string, snapshot *PageSnapshot) (int, *PageSnapshot, error) {
+	if len(fields) == 0 {
+		return 0, snapshot, fmt.Errorf("fill: fields required")
+	}
+	refs := make([]string, 0, len(fields))
+	for ref := range fields {
+		refs = append(refs, ref)
+	}
+	sort.Slice(refs, func(i, j int) bool {
+		ni, iok := snapshotRefNum(refs[i])
+		nj, jok := snapshotRefNum(refs[j])
+		if iok && jok {
+			return ni < nj
+		}
+		if iok != jok {
+			return iok
+		}
+		return refs[i] < refs[j]
+	})
+	snap := snapshot
+	for _, ref := range refs {
+		if err := TypeRef(page, ref, fields[ref], snap); err != nil {
+			return 0, snap, fmt.Errorf("fill %s: %w", ref, err)
+		}
+		if b != nil {
+			_ = b.InvalidateCachedExtract(page)
+		}
+		result, err := Extract(page, LevelSkeleton, "", false)
+		if err == nil {
+			if b != nil {
+				_ = b.SaveSnapshot(page, result)
+			}
+			if next, serr := BuildSnapshot(page, result); serr == nil {
+				snap = next
+			}
+		}
+	}
+	return len(fields), snap, nil
 }
 
 // TypeRef types text into the element at the given ref.
 // Uses focus + select all + keyboard typing to work with React/Vue/Angular.
 func TypeRef(page *rod.Page, ref string, text string, snapshot *PageSnapshot) error {
-	el, err := ResolveRef(page, ref, snapshot)
-	if err != nil {
-		return err
-	}
-	return TypeElement(page, el, text)
+	return withSemanticRetry(page, ref, snapshot, func(el *rod.Element) error {
+		return TypeElement(page, el, text)
+	})
 }
 
 // TypeElement writes text into an already-resolved element.
 func TypeElement(page *rod.Page, el *rod.Element, text string) error {
+	if err := EnsureActionable(el, actionBudget(page)); err != nil {
+		return fmt.Errorf("type: %w", err)
+	}
 	if HumanMode() {
 		if err := humanClick(page, el, proto.InputMouseButtonLeft); err != nil {
 			return fmt.Errorf("focus-click: %w", err)
@@ -282,7 +340,6 @@ func TypeElement(page *rod.Page, el *rod.Element, text string) error {
 		return fmt.Errorf("focus: %w", err)
 	}
 	_ = el.Click(proto.InputMouseButtonLeft, 3)
-	time.Sleep(50 * time.Millisecond)
 	_ = el.SelectAllText()
 	if err := page.InsertText(text); err != nil {
 		return fmt.Errorf("type text: %w", err)
@@ -317,7 +374,9 @@ func SubmitOnElement(page *rod.Page, el *rod.Element) error {
 	if err := page.Keyboard.Type(input.Enter); err != nil {
 		return fmt.Errorf("submit: %w", err)
 	}
-	_ = page.WaitStable(500 * time.Millisecond)
+	settleAfterAction(page, 0)
+	setClickNavHint(page, true)
+	WaitForClickNavigation(page)
 	return nil
 }
 
@@ -441,6 +500,9 @@ func elementScreenshotFmt(el *rod.Element, fmt_ proto.PageCaptureScreenshotForma
 // EvalJS evaluates JavaScript on the page or in an element context.
 // If elementRef is non-empty, the JS runs with `this` bound to that element.
 func EvalJS(page *rod.Page, expr string, elementRef string, snapshot *PageSnapshot) (string, error) {
+	if err := ActivePolicy.AllowAction("eval"); err != nil {
+		return "", err
+	}
 	if elementRef != "" {
 		el, err := ResolveTarget(page, elementRef, snapshot)
 		if err != nil {
@@ -505,34 +567,32 @@ func intPtr(v int) *int {
 
 // SelectOption selects option(s) in a <select> element by visible text.
 func SelectOption(page *rod.Page, ref string, values []string, snapshot *PageSnapshot) error {
-	el, err := ResolveRef(page, ref, snapshot)
-	if err != nil {
-		return err
-	}
-	err = el.Select(values, true, rod.SelectorTypeText)
-	if err != nil {
-		return fmt.Errorf("select: %w", err)
-	}
-	_ = page.WaitStable(300 * time.Millisecond)
-	return nil
+	return withSemanticRetry(page, ref, snapshot, func(el *rod.Element) error {
+		if err := el.Select(values, true, rod.SelectorTypeText); err != nil {
+			return fmt.Errorf("select: %w", err)
+		}
+		settleAfterAction(page, 0)
+		return nil
+	})
 }
 
 // HoverRef hovers over the element at the given ref.
 func HoverRef(page *rod.Page, ref string, snapshot *PageSnapshot) error {
-	el, err := ResolveRef(page, ref, snapshot)
-	if err != nil {
-		return err
-	}
-	return HoverElement(page, el)
+	return withSemanticRetry(page, ref, snapshot, func(el *rod.Element) error {
+		return HoverElement(page, el)
+	})
 }
 
 // HoverElement hovers on an already-resolved element.
 func HoverElement(page *rod.Page, el *rod.Element) error {
+	if err := EnsureActionable(el, actionBudget(page)); err != nil {
+		return fmt.Errorf("hover: %w", err)
+	}
 	if HumanMode() {
 		if err := humanHover(page, el); err != nil {
 			return fmt.Errorf("hover: %w", err)
 		}
-		_ = page.WaitStable(300 * time.Millisecond)
+		settleAfterAction(page, 0)
 		return nil
 	}
 	if err := el.ScrollIntoView(); err != nil {
@@ -541,7 +601,7 @@ func HoverElement(page *rod.Page, el *rod.Element) error {
 	if err := el.Hover(); err != nil {
 		return fmt.Errorf("hover: %w", err)
 	}
-	_ = page.WaitStable(300 * time.Millisecond)
+	settleAfterAction(page, 0)
 	return nil
 }
 
@@ -561,13 +621,14 @@ var keyMap = map[string]input.Key{
 // PressKey sends a keyboard key press. If ref is non-empty, focuses the element first.
 func PressKey(page *rod.Page, key string, ref string, snapshot *PageSnapshot) error {
 	if ref != "" {
-		el, err := ResolveRef(page, ref, snapshot)
+		err := withSemanticRetry(page, ref, snapshot, func(el *rod.Element) error {
+			if err := el.Focus(); err != nil {
+				return fmt.Errorf("focus: %w", err)
+			}
+			return nil
+		})
 		if err != nil {
 			return err
-		}
-		err = el.Focus()
-		if err != nil {
-			return fmt.Errorf("focus: %w", err)
 		}
 	}
 	k, ok := keyMap[strings.ToLower(key)]
@@ -578,10 +639,22 @@ func PressKey(page *rod.Page, key string, ref string, snapshot *PageSnapshot) er
 	if err != nil {
 		return fmt.Errorf("press: %w", err)
 	}
-	if pressKeyMayNavigate(key) {
-		_ = page.WaitStable(200 * time.Millisecond)
+	switch {
+	case pressKeyMaySubmit(key):
+		setClickNavHint(page, true)
+		WaitForClickNavigation(page)
+	case pressKeyMayNavigate(key):
+		settleAfterAction(page, 0)
 	}
 	return nil
+}
+
+func pressKeyMaySubmit(key string) bool {
+	switch strings.ToLower(key) {
+	case "enter", "numpadenter":
+		return true
+	}
+	return false
 }
 
 func pressKeyMayNavigate(key string) bool {
@@ -617,7 +690,7 @@ type TabInfo struct {
 
 // ListTabs returns info for every open tab in the browser.
 func ListTabs(browser *rod.Browser, currentTargetID string) ([]TabInfo, error) {
-	pages, err := browser.Pages()
+	pages, err := browser.Timeout(250 * time.Millisecond).Pages()
 	if err != nil {
 		return nil, err
 	}
@@ -640,6 +713,83 @@ func ListTabs(browser *rod.Browser, currentTargetID string) ([]TabInfo, error) {
 		})
 	}
 	return tabs, nil
+}
+
+// RefMayOpenPopup reports whether clicking this snapshot ref is likely to
+// open a new tab (anchor with target=_blank / window.open / download).
+func RefMayOpenPopup(snapshot *PageSnapshot, ref string) bool {
+	if snapshot == nil {
+		return false
+	}
+	parsed, err := parseRef(ref)
+	if err != nil {
+		return false
+	}
+	info, ok := snapshot.Refs[parsed]
+	if !ok {
+		return false
+	}
+	role := strings.ToLower(info.Role)
+	href := strings.ToLower(info.Href)
+	name := strings.ToLower(info.Name)
+	return refLooksLikePopup(role, href, name)
+}
+
+func refLooksLikePopup(role, href, name string) bool {
+	href = strings.ToLower(strings.TrimSpace(href))
+	name = strings.ToLower(name)
+	role = strings.ToLower(role)
+	if strings.Contains(href, "javascript:window.open") || strings.Contains(href, "window.open(") {
+		return true
+	}
+	if strings.Contains(name, "opens in a new") || strings.Contains(name, "open in new") {
+		return true
+	}
+	// AX url/name never includes target=_blank. Only scan tabs for explicit
+	// popup/download signals so ordinary same-tab links skip Pages().
+	if role == "link" {
+		switch {
+		case strings.HasPrefix(href, "javascript:window.open"):
+			return true
+		case strings.Contains(href, "target=_blank"), strings.Contains(href, "target='_blank'"), strings.Contains(href, "target=\"_blank\""):
+			return true
+		}
+	}
+	return false
+}
+
+// SnapshotPageTargets records open page targets so a later PopupOpenedSince
+// can detect a target=_blank / window.open without waiting.
+func SnapshotPageTargets(page *rod.Page) map[string]struct{} {
+	out := map[string]struct{}{}
+	if page == nil {
+		return out
+	}
+	pages, err := page.Browser().Pages()
+	if err != nil {
+		return out
+	}
+	for _, p := range pages {
+		out[string(p.TargetID)] = struct{}{}
+	}
+	return out
+}
+
+// PopupOpenedSince returns a page that appeared after SnapshotPageTargets.
+func PopupOpenedSince(page *rod.Page, before map[string]struct{}) *rod.Page {
+	if page == nil {
+		return nil
+	}
+	pages, err := page.Browser().Pages()
+	if err != nil {
+		return nil
+	}
+	for _, p := range pages {
+		if _, ok := before[string(p.TargetID)]; !ok {
+			return p
+		}
+	}
+	return nil
 }
 
 // SwitchTab activates the tab at the given index and returns its page.
@@ -680,8 +830,12 @@ func CloseTab(browser *rod.Browser, index int) (proto.TargetTargetID, error) {
 	if index < 0 || index >= len(pages) {
 		return "", fmt.Errorf("tab index %d out of range (0-%d)", index, len(pages)-1)
 	}
-	targetID := pages[index].TargetID
-	return targetID, pages[index].Close()
+	page := pages[index]
+	targetID := page.TargetID
+	// Drop per-target listener registry state before closing the target so a
+	// long-lived daemon does not retain the closed tab's identity.
+	forgetPageEventState(page)
+	return targetID, page.Close()
 }
 
 // ---------------------------------------------------------------------------
@@ -703,6 +857,179 @@ func SetViewport(page *rod.Page, width, height int) error {
 	}.Call(page)
 }
 
+// DialogAutoPolicy is mutated in place so JSONL/MCP can change accept/dismiss
+// without restarting the CDP listener. Use Set and Snapshot when accessing it
+// after the handler has started; the handler runs concurrently with callers.
+type DialogAutoPolicy struct {
+	mu     sync.RWMutex
+	Accept bool
+	Prompt string
+}
+
+// Set updates the policy atomically from the dialog handler's point of view.
+func (p *DialogAutoPolicy) Set(accept bool, prompt string) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	p.Accept = accept
+	p.Prompt = prompt
+	p.mu.Unlock()
+}
+
+// Snapshot returns a consistent policy value for one dialog event.
+func (p *DialogAutoPolicy) Snapshot() (accept bool, prompt string) {
+	if p == nil {
+		return true, ""
+	}
+	p.mu.RLock()
+	accept, prompt = p.Accept, p.Prompt
+	p.mu.RUnlock()
+	return accept, prompt
+}
+
+// StartDialogAutoHandler accepts or dismisses JavaScript dialogs as they open
+// so a click that triggers alert/confirm cannot stall the agent loop.
+var (
+	dialogAutoOnce     sync.Map // *rod.Page -> struct{}
+	dialogAutoPolicies sync.Map // *rod.Page -> *DialogAutoPolicy
+	dialogAutoWaiters  sync.Map // *rod.Page -> *dialogWaiter
+)
+
+type dialogWaiter struct {
+	accept bool
+	prompt string
+	done   chan dialogOutcome
+}
+
+type dialogOutcome struct {
+	result *DialogResult
+	err    error
+}
+
+func StartDialogAutoHandler(page *rod.Page, policy *DialogAutoPolicy) {
+	if page == nil || policy == nil {
+		return
+	}
+	// Navigation can reset Page domain state. Re-enable it on every call while
+	// keeping exactly one event listener for each rod.Page instance.
+	_ = proto.PageEnable{}.Call(page)
+	dialogAutoPolicies.Store(page, policy)
+	if _, loaded := dialogAutoOnce.LoadOrStore(page, struct{}{}); loaded {
+		return
+	}
+	StartFileChooserIntercept(page)
+	// Keep one persistent event subscription. Re-arming HandleDialog after
+	// each event races with back-to-back alert() calls (the second dialog can
+	// open before the next WaitEvent is registered). EachEvent stays subscribed
+	// for the page lifetime and does not disable Page.enable after handling.
+	go page.EachEvent(func(event *proto.PageJavascriptDialogOpening) {
+		// An explicit HandleNextDialog call takes precedence over the default
+		// auto policy. This keeps the CLI's one-shot dialog command usable even
+		// when navigation already installed the persistent auto handler.
+		if raw, ok := dialogAutoWaiters.Load(page); ok {
+			waiter := raw.(*dialogWaiter)
+			if dialogAutoWaiters.CompareAndDelete(page, waiter) {
+				accept, prompt := waiter.accept, waiter.prompt
+				err := proto.PageHandleJavaScriptDialog{
+					Accept:     accept,
+					PromptText: prompt,
+				}.Call(page)
+				action := dialogAction(accept)
+				result := &DialogResult{
+					Handled:       err == nil,
+					Action:        action,
+					Type:          string(event.Type),
+					Message:       event.Message,
+					URL:           event.URL,
+					DefaultPrompt: event.DefaultPrompt,
+				}
+				if err != nil {
+					waiter.done <- dialogOutcome{err: err}
+				} else {
+					waiter.done <- dialogOutcome{result: result}
+				}
+				return
+			}
+		}
+		currentPolicy := policy
+		if current, ok := dialogAutoPolicies.Load(page); ok {
+			currentPolicy = current.(*DialogAutoPolicy)
+		}
+		accept, prompt := currentPolicy.Snapshot()
+		_ = proto.PageHandleJavaScriptDialog{
+			Accept:     accept,
+			PromptText: prompt,
+		}.Call(page)
+	})()
+}
+
+// EnableDialogAutoAccept ensures the page has a dialog listener even when the
+// caller has not configured an explicit policy. Existing explicit policies are
+// preserved across navigation.
+func EnableDialogAutoAccept(page *rod.Page) {
+	if page == nil {
+		return
+	}
+	policy := &DialogAutoPolicy{Accept: true}
+	if existing, ok := dialogAutoPolicies.Load(page); ok {
+		policy = existing.(*DialogAutoPolicy)
+	}
+	StartDialogAutoHandler(page, policy)
+}
+
+// fileChooserOnce is keyed by the underlying CDP session, not *rod.Page:
+// Rod returns a fresh Page clone for every iframe.Frame() call. Pointer keys
+// would therefore register another event listener on every extraction.
+type pageSessionKey struct {
+	browser *rod.Browser
+	session proto.TargetSessionID
+}
+
+var fileChooserOnce sync.Map // pageSessionKey -> struct{}
+
+// forgetPageEventState releases registry entries after a target is closed.
+// The event goroutines are tied to Rod's page context and terminate with the
+// target; deleting the keys prevents long-lived sessions that rotate tabs
+// from retaining closed page/session identities.
+func forgetPageEventState(page *rod.Page) {
+	if page == nil {
+		return
+	}
+	fileChooserOnce.Delete(pageSessionKey{browser: page.Browser(), session: page.SessionID})
+	dialogAutoOnce.Delete(page)
+	dialogAutoPolicies.Delete(page)
+	dialogAutoWaiters.Delete(page)
+}
+
+func forgetBrowserEventState(browser *rod.Browser) {
+	if browser == nil {
+		return
+	}
+	pages, err := browser.Pages()
+	if err != nil {
+		return
+	}
+	for _, page := range pages {
+		forgetPageEventState(page)
+	}
+}
+
+// StartFileChooserIntercept prevents native OS file dialogs from blocking
+// clicks on <input type=file>. Upload still uses SetFiles.
+func StartFileChooserIntercept(page *rod.Page) {
+	if page == nil {
+		return
+	}
+	_ = proto.PageSetInterceptFileChooserDialog{Enabled: true}.Call(page)
+	key := pageSessionKey{browser: page.Browser(), session: page.SessionID}
+	if _, loaded := fileChooserOnce.LoadOrStore(key, struct{}{}); !loaded {
+		go page.EachEvent(func(e *proto.PageFileChooserOpened) {
+			// Swallow the chooser. Native dialogs hang headless Chrome.
+		})()
+	}
+}
+
 // DialogResult describes how a JS dialog handler completed.
 type DialogResult struct {
 	Handled       bool   `json:"handled"`
@@ -718,8 +1045,36 @@ type DialogResult struct {
 // The timeout is propagated via context so wait() unblocks cleanly on timeout
 // and no goroutine is leaked.
 func HandleNextDialog(page *rod.Page, accept bool, promptText string, timeout time.Duration) (*DialogResult, error) {
+	if page == nil {
+		return nil, fmt.Errorf("dialog: page is nil")
+	}
 	ctx, cancel := context.WithTimeout(page.GetContext(), timeout)
 	defer cancel()
+
+	// Navigation installs the persistent auto handler. Route a one-shot
+	// explicit request through that listener so it cannot lose a race to the
+	// default auto-accept callback.
+	if _, auto := dialogAutoOnce.Load(page); auto {
+		waiter := &dialogWaiter{
+			accept: accept,
+			prompt: promptText,
+			done:   make(chan dialogOutcome, 1),
+		}
+		if _, loaded := dialogAutoWaiters.LoadOrStore(page, waiter); loaded {
+			return nil, fmt.Errorf("dialog: another handler is already waiting")
+		}
+		defer dialogAutoWaiters.CompareAndDelete(page, waiter)
+		select {
+		case outcome := <-waiter.done:
+			if outcome.err != nil {
+				return nil, outcome.err
+			}
+			return outcome.result, nil
+		case <-ctx.Done():
+			return &DialogResult{Action: dialogAction(accept), TimedOut: true}, nil
+		}
+	}
+
 	scoped := page.Context(ctx)
 
 	wait, handle := scoped.HandleDialog()
@@ -778,4 +1133,31 @@ func HandleNextDialog(page *rod.Page, accept bool, promptText string, timeout ti
 			TimedOut: true,
 		}, nil
 	}
+}
+
+func dialogAction(accept bool) string {
+	if accept {
+		return "accept"
+	}
+	return "dismiss"
+}
+
+func actionBudget(page *rod.Page) time.Duration {
+	if page == nil {
+		return DefaultActionTimeout
+	}
+	if dl, ok := page.GetContext().Deadline(); ok {
+		remain := time.Until(dl)
+		if remain > 0 && remain < DefaultActionTimeout {
+			return remain
+		}
+	}
+	return DefaultActionTimeout
+}
+
+func settleAfterAction(page *rod.Page, d time.Duration) {
+	if page == nil || d <= 0 {
+		return
+	}
+	_ = page.WaitStable(d)
 }

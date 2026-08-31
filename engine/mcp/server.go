@@ -47,6 +47,9 @@ type Options struct {
 	// Policy restricts which domains can be navigated to, and which actions
 	// (eval, upload, clipboard) are allowed. Nil means no restrictions.
 	Policy *policy.Policy
+	// SessionName, when set, refreshes the named-session lease on every tool
+	// call so serve idle reaping will not kill an attached MCP loop.
+	SessionName string
 }
 
 // Server holds the shared browser and exposes tool handlers backed by the
@@ -57,15 +60,17 @@ type Server struct {
 	mu           sync.Mutex
 	browser      *engine.Browser
 	page         *rod.Page
-	snapshot     *engine.PageSnapshot     // last in-memory snapshot (for ref resolution)
+	snapshot     *engine.PageSnapshot // last in-memory snapshot (for ref resolution)
+	rt           *engine.Runtime
 	observer     *engine.Observer         // long-lived; feeds error/network info into snapshot
 	observerFn   context.CancelFunc       // cancel attached to the observer's context
 	blocker      *engine.InterceptSession // non-nil when anti-bot blocker is active
-	lastActivity time.Time                // updated on every ensurePageLocked; drives the idle reaper
-	closed       bool                     // terminal state set only by Server.Close
-	done         chan struct{}            // stops background reapers after terminal close
-	closeDone    chan struct{}            // closes after terminal teardown and prewarm drain
-	prewarmWG    sync.WaitGroup           // drains any prewarm admitted before terminal close
+	dialogPolicy *engine.DialogAutoPolicy
+	lastActivity time.Time      // updated on every ensurePageLocked; drives the idle reaper
+	closed       bool           // terminal state set only by Server.Close
+	done         chan struct{}  // stops background reapers after terminal close
+	closeDone    chan struct{}  // closes after terminal teardown and prewarm drain
+	prewarmWG    sync.WaitGroup // drains any prewarm admitted before terminal close
 }
 
 // New returns a Server that lazy-initializes the browser on the first tool
@@ -151,6 +156,10 @@ func (s *Server) reapIfIdle() {
 	if s.closed || s.opts.IdleTimeout <= 0 || s.browser == nil || s.lastActivity.IsZero() {
 		return
 	}
+	if !s.opts.Headless || s.opts.Connect != "" {
+		// Attached or headed Chrome is a live user session. Never reap it.
+		return
+	}
 	if time.Since(s.lastActivity) >= s.opts.IdleTimeout {
 		fmt.Fprintf(os.Stderr, "[ghostchrome mcp] idle for %s — releasing chrome (relaunches on next call)\n", s.opts.IdleTimeout)
 		s.closeLocked()
@@ -197,10 +206,14 @@ func (s *Server) Close() {
 // closeLocked tears down the browser and every piece of per-browser state
 // (observer, blocker, snapshot). Caller MUST hold s.mu.
 func (s *Server) closeLocked() {
-	if s.observer != nil {
+	if s.rt != nil {
+		if hub := s.rt.EventHub(); hub != nil {
+			hub.Stop()
+		}
+	} else if s.observer != nil {
 		_ = s.observer.Stop()
-		s.observer = nil
 	}
+	s.observer = nil
 	if s.observerFn != nil {
 		s.observerFn()
 		s.observerFn = nil
@@ -214,6 +227,7 @@ func (s *Server) closeLocked() {
 		s.browser = nil
 		s.page = nil
 		s.snapshot = nil
+		s.rt = nil
 	}
 }
 
@@ -235,6 +249,9 @@ func (s *Server) ensurePageLocked() (*engine.Browser, *rod.Page, error) {
 	// crash-relaunch alike) so the reaper only fires after real inactivity.
 	s.lastActivity = time.Now()
 	defer func() { s.lastActivity = time.Now() }()
+	if s.opts.SessionName != "" {
+		engine.TouchSessionLease(s.opts.SessionName)
+	}
 	if s.page != nil && s.browser != nil {
 		if s.browser.Alive(alivenessProbeTimeout) {
 			return s.browser, s.page, nil
@@ -249,6 +266,14 @@ func (s *Server) ensurePageLocked() (*engine.Browser, *rod.Page, error) {
 			return nil, nil, fmt.Errorf("chrome process died and could not be relaunched: %w", err)
 		}
 		return b, page, nil
+	}
+	if s.browser != nil && s.page == nil && s.browser.Alive(alivenessProbeTimeout) {
+		page, err := s.browser.Page()
+		if err != nil {
+			return nil, nil, err
+		}
+		s.page = page
+		return s.browser, page, nil
 	}
 	return s.launchPageLocked()
 }
@@ -314,14 +339,11 @@ func (s *Server) launchPageLocked() (*engine.Browser, *rod.Page, error) {
 	if s.opts.Stealth {
 		fmt.Fprintln(os.Stderr, "[ghostchrome mcp] observer disabled in stealth (avoids Runtime.enable); errors tool will return empty")
 	} else {
-		obs := engine.NewObserver(page, engine.ObserverOpts{BufferSize: 512})
-		obsCtx, cancel := context.WithCancel(context.Background())
-		if err := obs.Start(obsCtx); err != nil {
-			cancel()
-			// Non-fatal: page still works, errors tool will just be empty.
-		} else {
-			s.observer = obs
-			s.observerFn = cancel
+		if s.rt == nil {
+			s.rt = engine.NewRuntime(b)
+		}
+		if hub := s.rt.AttachEvents(page); hub != nil {
+			s.observer = hub.Observer()
 		}
 	}
 
@@ -332,6 +354,13 @@ func (s *Server) launchPageLocked() (*engine.Browser, *rod.Page, error) {
 
 	s.browser = b
 	s.page = page
+	if s.dialogPolicy == nil {
+		s.dialogPolicy = &engine.DialogAutoPolicy{Accept: true}
+	}
+	engine.StartDialogAutoHandler(page, s.dialogPolicy)
+	if s.rt == nil {
+		s.rt = engine.NewRuntime(b)
+	}
 	return b, page, nil
 }
 

@@ -3,7 +3,11 @@ package engine
 import (
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
+
+	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/proto"
 )
 
 // TestStripSSRForCacheClearsPayloadsWithoutMutatingOriginal is a pure,
@@ -85,5 +89,33 @@ func TestSaveSnapshotStripsSSRPayloadsFromCache(t *testing.T) {
 	}
 	if len(cached.SSRPayloads) != 0 {
 		t.Fatalf("expected cached extraction to never leak SSR payloads to a non-SSR caller, got %+v", cached.SSRPayloads)
+	}
+}
+
+func TestInvalidateCachedExtractClearsURLCache(t *testing.T) {
+	b := &Browser{
+		connected: true,
+		statePath: filepath.Join(t.TempDir(), "state.json"),
+		state: &sessionState{
+			Snapshots: map[string]PageSnapshot{
+				"target-1": {
+					TargetID:         "target-1",
+					URL:              "https://example.com/",
+					CachedExtraction: &ExtractionResult{Nodes: []ExtractedNode{{Role: "button"}}},
+				},
+			},
+		},
+	}
+	page := &rod.Page{}
+	page.TargetID = proto.TargetTargetID("target-1")
+	snap := b.state.Snapshots["target-1"]
+	if snap.CachedExtraction == nil {
+		t.Fatal("expected cached extraction before invalidate")
+	}
+	if err := b.InvalidateCachedExtract(page); err != nil {
+		t.Fatalf("invalidate: %v", err)
+	}
+	if b.state.Snapshots["target-1"].CachedExtraction != nil {
+		t.Fatal("expected cached extraction to be cleared")
 	}
 }

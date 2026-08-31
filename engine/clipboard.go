@@ -10,6 +10,9 @@ import (
 
 // ClipboardRead returns the current clipboard text content.
 func ClipboardRead(page *rod.Page) (string, error) {
+	if err := ActivePolicy.AllowAction("clipboard"); err != nil {
+		return "", err
+	}
 	if err := grantClipboardPermission(page); err != nil {
 		return "", err
 	}
@@ -22,6 +25,9 @@ func ClipboardRead(page *rod.Page) (string, error) {
 
 // ClipboardWrite sets the clipboard text content.
 func ClipboardWrite(page *rod.Page, text string) error {
+	if err := ActivePolicy.AllowAction("clipboard"); err != nil {
+		return err
+	}
 	if err := grantClipboardPermission(page); err != nil {
 		return err
 	}

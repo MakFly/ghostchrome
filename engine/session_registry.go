@@ -12,8 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/go-rod/rod"
 )
 
 // SessionEntry is one named, auto-managed Chrome in the session registry.
@@ -71,16 +69,67 @@ func sessionRegistryPath() (string, error) {
 	return filepath.Join(dir, "sessions.json"), nil
 }
 
-func sessionLogPath(name string) (string, error) {
+func sessionDir(name string) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Join(home, ".ghostchrome", "sessions")
+	dir := filepath.Join(home, ".ghostchrome", "sessions", name)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, name+".log"), nil
+	return dir, nil
+}
+
+func sessionLogPath(name string) (string, error) {
+	dir, err := sessionDir(name)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "serve.log"), nil
+}
+
+func sessionLeasePath(name string) (string, error) {
+	dir, err := sessionDir(name)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "lease"), nil
+}
+
+// TouchSessionLease records that a client is using the named session so the
+// serve idle reaper will not kill an attached JSONL/MCP/CLI loop.
+func TouchSessionLease(name string) {
+	if err := validateSessionName(name); err != nil {
+		return
+	}
+	path, err := sessionLeasePath(name)
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(path, []byte(time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o600)
+}
+
+func SessionLeaseFresh(name string, window time.Duration) bool {
+	if window <= 0 || validateSessionName(name) != nil {
+		return false
+	}
+	path, err := sessionLeasePath(name)
+	if err != nil {
+		return false
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return time.Since(info.ModTime()) < window
+}
+func sessionSocketPath(name string) (string, error) {
+	dir, err := sessionDir(name)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "cdp.sock"), nil
 }
 
 func loadSessionRegistry() (*sessionRegistry, string, error) {
@@ -110,7 +159,55 @@ func saveSessionRegistry(path string, reg *sessionRegistry) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o600)
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".sessions-*.tmp")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(tmp.Name()) }()
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
+}
+
+func withSessionRegistry(fn func(reg *sessionRegistry, path string) error) error {
+	path, err := sessionRegistryPath()
+	if err != nil {
+		return err
+	}
+	return lockContinuousLog(path, func() error {
+		reg, _, err := loadSessionRegistry()
+		if err != nil {
+			return err
+		}
+		return fn(reg, path)
+	})
+}
+
+func waitSessionDead(e SessionEntry, timeout time.Duration) {
+	if e.PID <= 0 && e.Port == 0 {
+		return
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if _, alive := sessionAlive(e); !alive {
+			if e.PID <= 0 {
+				return
+			}
+			if _, still := processCmdline(e.PID); !still {
+				return
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 // sessionAlive probes the session's CDP port. It returns the (fresh) browser
@@ -119,11 +216,10 @@ func saveSessionRegistry(path string, reg *sessionRegistry) error {
 // port stops answering.
 func sessionAlive(e SessionEntry) (string, bool) {
 	if e.WSURL != "" && e.Port == 0 {
-		browser := rod.New().ControlURL(e.WSURL)
-		if err := browser.Connect(); err != nil {
+		ws, err := ProbeCDPEndpoint(e.WSURL, 600*time.Millisecond)
+		if err != nil || ws == "" {
 			return "", false
 		}
-		_ = browser.Close()
 		return e.WSURL, true
 	}
 	ws, err := DiscoverCDP([]int{e.Port}, 600*time.Millisecond)
@@ -220,100 +316,102 @@ func AcquireSession(name string, opts SessionSpawnOpts) (string, error) {
 	if err := validateSessionName(name); err != nil {
 		return "", err
 	}
-	reg, path, err := loadSessionRegistry()
-	if err != nil {
-		return "", err
-	}
-
-	if entry, ok := reg.Sessions[name]; ok {
-		if ws, alive := sessionAlive(entry); alive {
-			return ws, nil
+	var ws string
+	err := withSessionRegistry(func(reg *sessionRegistry, path string) error {
+		if entry, ok := reg.Sessions[name]; ok {
+			if existing, alive := sessionAlive(entry); alive {
+				ws = existing
+				return nil
+			}
+			killSessionProcess(entry)
+			waitSessionDead(entry, 3*time.Second)
+			delete(reg.Sessions, name)
 		}
-		// CDP-dead, but the serve process may still linger (e.g. Chrome
-		// crashed and serve hasn't polled yet). Kill it so we never orphan
-		// the old serve when spawning its replacement.
-		killSessionProcess(entry)
-		delete(reg.Sessions, name)
-	}
 
-	// The previous Chrome for this session was killed, not closed, so its
-	// SingletonLock may still be in the profile. Chrome would abort on it.
-	if profileDir, err := ResolveProfileDir(name); err == nil {
-		clearStaleProfileLock(profileDir)
-	}
+		if profileDir, err := ResolveProfileDir(name); err == nil {
+			clearStaleProfileLock(profileDir)
+		}
 
-	port, err := freePort()
-	if err != nil {
-		return "", fmt.Errorf("allocate port: %w", err)
-	}
-	exe, err := os.Executable()
-	if err != nil {
-		return "", fmt.Errorf("locate ghostchrome binary: %w", err)
-	}
+		port, err := freePort()
+		if err != nil {
+			return fmt.Errorf("allocate port: %w", err)
+		}
+		exe, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("locate ghostchrome binary: %w", err)
+		}
 
-	args := []string{
-		"serve",
-		"--port", strconv.Itoa(port),
-		"--user-profile", name,
-		fmt.Sprintf("--headless=%t", opts.Headless),
-	}
-	if opts.Stealth {
-		args = append(args, "--stealth")
-	}
-	if opts.Proxy != "" {
-		args = append(args, "--proxy", opts.Proxy)
-	}
-	if opts.ProxyBypass != "" {
-		args = append(args, "--proxy-bypass", opts.ProxyBypass)
-	}
-	if opts.ConfigPath != "" {
-		args = append(args, "--config", opts.ConfigPath)
-	}
+		args := []string{
+			"serve",
+			"--port", strconv.Itoa(port),
+			"--user-profile", name,
+			fmt.Sprintf("--headless=%t", opts.Headless),
+		}
+		if opts.Stealth {
+			args = append(args, "--stealth")
+		}
+		if opts.Proxy != "" {
+			args = append(args, "--proxy", opts.Proxy)
+		}
+		if opts.ProxyBypass != "" {
+			args = append(args, "--proxy-bypass", opts.ProxyBypass)
+		}
+		if opts.ConfigPath != "" {
+			args = append(args, "--config", opts.ConfigPath)
+		}
 
-	logPath, err := sessionLogPath(name)
+		logPath, err := sessionLogPath(name)
+		if err != nil {
+			return err
+		}
+		logFile, err := os.Create(logPath)
+		if err != nil {
+			return fmt.Errorf("open session log: %w", err)
+		}
+
+		cmd := exec.Command(exe, args...)
+		env := suppressDaemonEnv(os.Environ())
+		if opts.ExecutablePath != "" {
+			env = append(env, "PLAYWRIGHT_MCP_EXECUTABLE_PATH="+opts.ExecutablePath)
+		}
+		cmd.Env = env
+		cmd.Stdout = logFile
+		cmd.Stderr = logFile
+		cmd.SysProcAttr = detachSysProcAttr()
+		if err := cmd.Start(); err != nil {
+			logFile.Close()
+			return fmt.Errorf("spawn session serve: %w", err)
+		}
+		pid := cmd.Process.Pid
+		_ = cmd.Process.Release()
+		logFile.Close()
+
+		ready, err := waitForCDP(port, 15*time.Second)
+		if err != nil {
+			_ = killPID(pid)
+			return fmt.Errorf("session %q: chrome did not come up (see %s): %w", name, logPath, err)
+		}
+		if sock, serr := sessionSocketPath(name); serr == nil {
+			_ = os.WriteFile(sock, []byte(ready+"\n"), 0o600)
+		}
+
+		reg.Sessions[name] = SessionEntry{
+			Name:       name,
+			Port:       port,
+			PID:        pid,
+			WSURL:      ready,
+			Profile:    name,
+			LaunchedAt: time.Now().UTC().Format(time.RFC3339),
+		}
+		if err := saveSessionRegistry(path, reg); err != nil {
+			_ = killPID(pid)
+			return fmt.Errorf("save sessions registry: %w", err)
+		}
+		ws = ready
+		return nil
+	})
 	if err != nil {
 		return "", err
-	}
-	logFile, err := os.Create(logPath)
-	if err != nil {
-		return "", fmt.Errorf("open session log: %w", err)
-	}
-
-	cmd := exec.Command(exe, args...)
-	env := suppressDaemonEnv(os.Environ())
-	if opts.ExecutablePath != "" {
-		env = append(env, "PLAYWRIGHT_MCP_EXECUTABLE_PATH="+opts.ExecutablePath)
-	}
-	cmd.Env = env
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
-	cmd.SysProcAttr = detachSysProcAttr()
-	if err := cmd.Start(); err != nil {
-		logFile.Close()
-		return "", fmt.Errorf("spawn session serve: %w", err)
-	}
-	pid := cmd.Process.Pid
-	// Detach: let the serve outlive this CLI process. The child keeps its own
-	// copy of the log fd, so the parent can close its handle.
-	_ = cmd.Process.Release()
-	logFile.Close()
-
-	ws, err := waitForCDP(port, 15*time.Second)
-	if err != nil {
-		_ = killPID(pid)
-		return "", fmt.Errorf("session %q: chrome did not come up (see %s): %w", name, logPath, err)
-	}
-
-	reg.Sessions[name] = SessionEntry{
-		Name:       name,
-		Port:       port,
-		PID:        pid,
-		WSURL:      ws,
-		Profile:    name,
-		LaunchedAt: time.Now().UTC().Format(time.RFC3339),
-	}
-	if err := saveSessionRegistry(path, reg); err != nil {
-		return "", fmt.Errorf("save sessions registry: %w", err)
 	}
 	return ws, nil
 }
@@ -371,27 +469,25 @@ func AttachSession(name string, wsURL string) (SessionEntry, error) {
 	if strings.TrimSpace(wsURL) == "" {
 		return SessionEntry{}, fmt.Errorf("cdp endpoint is empty")
 	}
-	browser := rod.New().ControlURL(wsURL)
-	if err := browser.Connect(); err != nil {
+	if _, err := ProbeCDPEndpoint(wsURL, time.Second); err != nil {
 		return SessionEntry{}, fmt.Errorf("connect cdp endpoint: %w", err)
 	}
-	_ = browser.Close()
 
-	reg, path, err := loadSessionRegistry()
+	var entry SessionEntry
+	err := withSessionRegistry(func(reg *sessionRegistry, path string) error {
+		entry = SessionEntry{
+			Name:       name,
+			Port:       0,
+			PID:        0,
+			WSURL:      wsURL,
+			Profile:    "",
+			LaunchedAt: time.Now().UTC().Format(time.RFC3339),
+		}
+		reg.Sessions[name] = entry
+		return saveSessionRegistry(path, reg)
+	})
 	if err != nil {
 		return SessionEntry{}, err
-	}
-	entry := SessionEntry{
-		Name:       name,
-		Port:       0,
-		PID:        0,
-		WSURL:      wsURL,
-		Profile:    "",
-		LaunchedAt: time.Now().UTC().Format(time.RFC3339),
-	}
-	reg.Sessions[name] = entry
-	if err := saveSessionRegistry(path, reg); err != nil {
-		return SessionEntry{}, fmt.Errorf("save sessions registry: %w", err)
 	}
 	return entry, nil
 }
@@ -452,66 +548,60 @@ func ListSessions() ([]SessionRegistryEntry, error) {
 // StopSession terminates the named session's process and removes it from the
 // registry (best-effort: the process may already be gone).
 func StopSession(name string) error {
-	reg, path, err := loadSessionRegistry()
-	if err != nil {
-		return err
-	}
-	entry, ok := reg.Sessions[name]
-	if !ok {
-		return fmt.Errorf("session %q: %w", name, ErrSessionNotFound)
-	}
-	killSessionProcess(entry)
-	delete(reg.Sessions, name)
-	if lp, err := sessionLogPath(name); err == nil {
-		_ = os.Remove(lp)
-	}
-	return saveSessionRegistry(path, reg)
+	return withSessionRegistry(func(reg *sessionRegistry, path string) error {
+		entry, ok := reg.Sessions[name]
+		if !ok {
+			return fmt.Errorf("session %q: %w", name, ErrSessionNotFound)
+		}
+		killSessionProcess(entry)
+		waitSessionDead(entry, 5*time.Second)
+		delete(reg.Sessions, name)
+		if dir, err := sessionDir(name); err == nil {
+			_ = os.RemoveAll(dir)
+		}
+		return saveSessionRegistry(path, reg)
+	})
 }
 
 // PruneSessions removes registry entries whose Chrome is no longer reachable,
 // killing any lingering serve process and its log. Returns the count pruned.
 func PruneSessions() (int, error) {
-	reg, path, err := loadSessionRegistry()
-	if err != nil {
-		return 0, err
-	}
 	n := 0
-	for name, entry := range reg.Sessions {
-		if _, alive := sessionAlive(entry); alive {
-			continue
+	err := withSessionRegistry(func(reg *sessionRegistry, path string) error {
+		for name, entry := range reg.Sessions {
+			if _, alive := sessionAlive(entry); alive {
+				continue
+			}
+			killSessionProcess(entry)
+			waitSessionDead(entry, 2*time.Second)
+			if dir, lerr := sessionDir(name); lerr == nil {
+				_ = os.RemoveAll(dir)
+			}
+			delete(reg.Sessions, name)
+			n++
 		}
-		killSessionProcess(entry)
-		if lp, lerr := sessionLogPath(name); lerr == nil {
-			_ = os.Remove(lp)
+		if n > 0 {
+			return saveSessionRegistry(path, reg)
 		}
-		delete(reg.Sessions, name)
-		n++
-	}
-	if n > 0 {
-		if err := saveSessionRegistry(path, reg); err != nil {
-			return n, err
-		}
-	}
-	return n, nil
+		return nil
+	})
+	return n, err
 }
 
 // KillAllSessions stops every registered session.
 func KillAllSessions() (int, error) {
-	reg, path, err := loadSessionRegistry()
-	if err != nil {
-		return 0, err
-	}
 	n := 0
-	for name, entry := range reg.Sessions {
-		killSessionProcess(entry)
-		if lp, lerr := sessionLogPath(name); lerr == nil {
-			_ = os.Remove(lp)
+	err := withSessionRegistry(func(reg *sessionRegistry, path string) error {
+		for name, entry := range reg.Sessions {
+			killSessionProcess(entry)
+			waitSessionDead(entry, 2*time.Second)
+			if dir, lerr := sessionDir(name); lerr == nil {
+				_ = os.RemoveAll(dir)
+			}
+			n++
 		}
-		n++
-	}
-	reg.Sessions = map[string]SessionEntry{}
-	if err := saveSessionRegistry(path, reg); err != nil {
-		return n, err
-	}
-	return n, nil
+		reg.Sessions = map[string]SessionEntry{}
+		return saveSessionRegistry(path, reg)
+	})
+	return n, err
 }

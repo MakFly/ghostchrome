@@ -214,5 +214,31 @@ class TestSubprocessTransportTimeout(unittest.TestCase):
                 pass
 
 
+
+class TestSubprocessTransportStderr(unittest.TestCase):
+    def test_large_stderr_does_not_deadlock(self):
+        noisy_code = r"""
+import json, sys
+sys.stderr.write("x" * (2 * 1024 * 1024))
+sys.stderr.flush()
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    req = json.loads(line)
+    sys.stdout.write(json.dumps({"id": req.get("id", ""), "ok": True, "result": {"url": "about:blank"}}) + "\n")
+    sys.stdout.flush()
+    if req.get("op") == "close":
+        break
+"""
+        transport = _make_transport(noisy_code, timeout=5.0)
+        try:
+            resp = transport.send("url")
+            self.assertTrue(resp["ok"])
+            self.assertEqual(resp["result"]["url"], "about:blank")
+        finally:
+            transport.close()
+
+
 if __name__ == "__main__":
     unittest.main()

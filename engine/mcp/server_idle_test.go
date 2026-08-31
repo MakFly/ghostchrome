@@ -277,3 +277,23 @@ func TestReapIfIdleReleasesThenRelaunches(t *testing.T) {
 		t.Fatalf("relaunched page unusable: %v", err)
 	}
 }
+
+func TestReapIfIdleSkipsAttachedAndHeaded(t *testing.T) {
+	now := time.Now().Add(-time.Hour)
+
+	attached := New(Options{Headless: true, Connect: "ws://127.0.0.1:9222", IdleTimeout: time.Second})
+	attached.browser = &engine.Browser{}
+	attached.lastActivity = now
+	attached.reapIfIdle()
+	if attached.browser == nil {
+		t.Fatal("attached chrome must not be reaped")
+	}
+
+	headed := New(Options{Headless: false, IdleTimeout: time.Second})
+	headed.browser = &engine.Browser{}
+	headed.lastActivity = now
+	headed.reapIfIdle()
+	if headed.browser == nil {
+		t.Fatal("headed chrome must not be reaped")
+	}
+}

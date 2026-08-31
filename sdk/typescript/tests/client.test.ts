@@ -120,16 +120,35 @@ describe("extract", () => {
 // ---------------------------------------------------------------------------
 
 describe("click", () => {
-  it("sends ref as arg, result is empty (binary omits result)", async () => {
+  it("sends ref as arg and returns a snapshot diff", async () => {
     const { gc, transport } = makeClient();
-    // click emits no result — binary omits the field entirely
-    transport.register("click", { ok: true });
+    transport.register("click", {
+      ok: true,
+      result: { unchanged: true, stats: { added: 0, removed: 0, changed: 0, kept: 4 } },
+    });
 
-    await gc.click("@3");
+    const { result } = await gc.click("@3");
 
     const req = transport.received[0]!;
     expect(req.op).toBe("click");
     expect((req.args as { ref: string }).ref).toBe("@3");
+    expect(result.unchanged).toBe(true);
+    expect(result.stats.kept).toBe(4);
+  });
+  it("forwards button on click", async () => {
+    const { gc, transport } = makeClient();
+    transport.register("click", { ok: true, result: { unchanged: true } });
+    await gc.click("@3", { button: "right" });
+    const req = transport.received[0]!;
+    expect((req.args as { button?: string }).button).toBe("right");
+  });
+  it("forwards button on dblclick", async () => {
+    const { gc, transport } = makeClient();
+    transport.register("dblclick", { ok: true, result: { unchanged: true } });
+    await gc.dblclick("@3", { button: "middle" });
+    const req = transport.received[0]!;
+    expect(req.op).toBe("dblclick");
+    expect((req.args as { button?: string }).button).toBe("middle");
   });
 });
 
@@ -330,6 +349,15 @@ describe("wait", () => {
     await gc.wait({ ms: 500 });
     expect((transport.received[0]!.args as { ms: number }).ms).toBe(500);
   });
+  it("forwards text, url, and load", async () => {
+    const { gc, transport } = makeClient();
+    transport.register("wait", { ok: true });
+    await gc.wait({ text: "Ready", url: "/dash", load: "domcontentloaded" });
+    const args = transport.received[0]!.args as { text?: string; url?: string; load?: string };
+    expect(args.text).toBe("Ready");
+    expect(args.url).toBe("/dash");
+    expect(args.load).toBe("domcontentloaded");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -459,12 +487,11 @@ describe("close", () => {
 // ---------------------------------------------------------------------------
 
 describe("omitted result normalisation", () => {
-  it("click resolves with {} when binary omits result", async () => {
+  it("close resolves with {} when binary omits result", async () => {
     const { gc, transport } = makeClient();
-    // No result property — exactly what the binary emits for no-result ops
-    transport.register("click", { ok: true });
+    transport.register("close", { ok: true });
 
-    const { result } = await gc.click("@1");
+    const { result } = await gc.close();
     expect(result).toEqual({});
   });
 
@@ -530,6 +557,8 @@ describe("contract coverage", () => {
       errors: "errors",
       url: "url",
       close: "close",
+      tabs: "tabs",
+      dialog: "dialog",
     };
 
     const transport = new FakeTransport();
