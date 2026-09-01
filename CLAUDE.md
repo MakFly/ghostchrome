@@ -69,6 +69,17 @@ the default execution context. `--connect=auto`, explicit `--connect ws://...`, 
 `-s <name>` are overrides for advanced use cases. Cold spawn is a documented escape
 hatch only (via `GHOSTCHROME_NO_DAEMON=1`).
 
+## Installation modes and agent skill
+
+`ghostchrome setup --mode cli|mcp` installs exactly one local transport. CLI mode
+installs `ghostchrome`; MCP mode installs the standalone `ghostchrome-mcp` and
+registers it for the selected global clients. `setup switch --to ... --yes` is the
+only supported mode transition. The canonical English skill lives under
+`.claude/skills/ghostchrome/` and is copied unchanged to Claude, Codex, and Grok;
+it reads `~/.ghostchrome/install.json` and must use exactly one transport per flow.
+Use `ghostchrome setup doctor --strict` for installation/CDP diagnostics and keep
+global AGENTS/CLAUDE instruction edits explicit with `setup instructions --write`.
+
 ## Conventions
 
 - Language: English for code, comments, and commits

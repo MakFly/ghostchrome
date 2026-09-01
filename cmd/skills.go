@@ -4,12 +4,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
 
 // embeddedSkills maps skill name → SKILL.md content, registered from main via
-// SetEmbeddedSkill (the content is //go:embed-ed into the binary).
+// SetEmbeddedSkill (kept for compatibility with stripped/minimal builds).
 var embeddedSkills = map[string]string{}
 
 // bundledSkillNames lists every skill ghostchrome ships, used for removal even
@@ -44,11 +45,25 @@ func installEmbeddedSkills() ([]string, error) {
 		if err := os.MkdirAll(sdir, 0o755); err != nil {
 			return done, fmt.Errorf("%s: %w", name, err)
 		}
-		path := filepath.Join(sdir, "SKILL.md")
-		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-			return done, fmt.Errorf("%s: %w", name, err)
+		files := map[string]string{"SKILL.md": content}
+		if name == "ghostchrome" {
+			for relative, fileContent := range embeddedSkillFiles {
+				files[relative] = fileContent
+			}
 		}
-		done = append(done, path)
+		for relative, fileContent := range files {
+			if relative == "" || filepath.IsAbs(relative) || relative == "." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || relative == ".." {
+				return done, fmt.Errorf("%s: invalid embedded path %q", name, relative)
+			}
+			path := filepath.Join(sdir, filepath.FromSlash(relative))
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				return done, fmt.Errorf("%s: %w", name, err)
+			}
+			if err := os.WriteFile(path, []byte(fileContent), 0o644); err != nil {
+				return done, fmt.Errorf("%s: %w", name, err)
+			}
+			done = append(done, path)
+		}
 	}
 	return done, nil
 }

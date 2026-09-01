@@ -134,39 +134,56 @@ single static Go binary.
 | Uninstall | manual | `ghostchrome uninstall --purge --yes` |
 | Runtime | Node.js + Playwright + FFmpeg (~330 MB) | one ~19 MB binary, system Chrome |
 
-### 1. Install the CLI
+### 1. Install one runtime
 
 ```bash
 bun install -g @ghostchrome/cli       # or: bunx @ghostchrome/cli <cmd>
 # npm install -g @ghostchrome/cli     # works too
 ```
 
-The package resolves the prebuilt Go binary for your platform (Linux/macOS,
+The package resolves the prebuilt Go CLI binary for your platform (Linux/macOS,
 amd64/arm64; Windows amd64) — no Node runtime, no postinstall, no browser
-download. The bundled agent skill is installed globally to
-`~/.claude/skills/ghostchrome/` (and removed on `ghostchrome uninstall`); the
-curl installer below does this automatically, or run `ghostchrome skills install`.
+download. For exclusive CLI/MCP setup and global Claude/Codex/Grok skill
+installation, use the mode-aware installer below.
 Prefer a single binary with no package manager? Use the installer:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dev-toolings/ghostchrome/main/scripts/install.sh | bash
+# Install exactly one runtime (the mode is intentionally mandatory).
+curl -fsSL https://raw.githubusercontent.com/dev-toolings/ghostchrome/main/scripts/install.sh \
+  | bash -s -- --mode cli --clients claude,codex,grok
+
+# Or install the standalone MCP runtime instead of the CLI.
+curl -fsSL https://raw.githubusercontent.com/dev-toolings/ghostchrome/main/scripts/install.sh \
+  | bash -s -- --mode mcp --clients claude,codex,grok
 ```
 
-Either way, verify it works:
+The installer writes the selected binary under `~/.ghostchrome/bin`, verifies
+the release checksum and installs the shared skill for each selected client.
+It refuses to overwrite the opposite runtime; switch explicitly with
+`ghostchrome setup switch --to cli|mcp --yes`.
+
+Verify the selected runtime:
 
 ```bash
+# CLI mode
 ghostchrome --version
-ghostchrome doctor          # checks Chrome, profiles, connectivity
+ghostchrome setup doctor --strict
+
+# MCP mode
+ghostchrome-mcp --version
+claude mcp list              # or the equivalent Codex/Grok client check
 ```
 
 ### 2. Wire it into your coding agent
 
+In MCP mode, `install.sh --mode mcp` registers Claude, Codex, and Grok
+automatically. The equivalent manual Claude registration is:
+
 ```bash
-# Claude Code — register the MCP server (16 tools, drop-in for @playwright/mcp)
-claude mcp add ghostchrome -- ghostchrome mcp
+claude mcp add ghostchrome -- ~/.ghostchrome/bin/ghostchrome-mcp
 
 # …or attach to an already-running Chrome instead of launching one
-claude mcp add ghostchrome -- ghostchrome mcp --connect=auto
+GHOSTCHROME_CONNECT=auto claude mcp add ghostchrome -- ~/.ghostchrome/bin/ghostchrome-mcp
 ```
 
 For Codex, Cursor, Aider, or a custom loop see [Using it with LLM agents](#using-it-with-llm-agents).
@@ -342,24 +359,24 @@ Full parity matrix: `docs/playwright-cli-parity.md` (local).
 
 ## Using it with LLM agents
 
-One binary, **three surfaces**, same engine:
+Same engine, with one installed runtime surface at a time:
 
-1. **MCP stdio server** (`ghostchrome mcp`) — 16 tools, the drop-in replacement for `@playwright/mcp`.
+1. **MCP stdio server** (`ghostchrome-mcp`) — 16 tools, the drop-in replacement for `@playwright/mcp`.
 2. **Regular CLI** — allowlist `ghostchrome` for shell-tool agents.
-3. **Typed SDKs** (`sdk/python`, `sdk/typescript`) — drive the persistent JSONL `agent` loop from code.
+3. **Typed SDKs** (`sdk/python`, `sdk/typescript`) — available with CLI mode and drive the persistent JSONL `agent` loop from code.
 
 ### Claude Code (Anthropic)
 
 ```bash
-claude mcp add ghostchrome -- ghostchrome mcp --stealth
+./install.sh --mode mcp --clients claude,codex,grok
 ```
 
-That's it. Claude Code will spawn `ghostchrome mcp` in stdio mode on demand and route the 16 tools to the model. Add `--connect=auto` to attach to an already-running Chrome instead of launching one.
+Setup registers the standalone `ghostchrome-mcp` in Claude Code, Codex, and Grok. Add `GHOSTCHROME_CONNECT=auto` to its MCP environment when attaching to an already-running Chrome is required.
 
 ### Codex (OpenAI)
 
 ```bash
-codex mcp add ghostchrome -- ghostchrome mcp --stealth
+codex mcp list
 ```
 
 ### MCP tool surface (v2.0)

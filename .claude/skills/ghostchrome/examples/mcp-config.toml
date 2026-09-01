@@ -1,0 +1,7 @@
+# Shape rendered by `ghostchrome setup` for Codex/Grok-style TOML clients.
+# Replace the placeholder with the stable path printed by `ghostchrome setup status`.
+# Do not point this entry at a repository checkout or at the CLI binary.
+
+[mcp_servers.ghostchrome]
+command = "/home/user/.ghostchrome/bin/ghostchrome-mcp"
+args = ["--stealth"]
