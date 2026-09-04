@@ -357,9 +357,6 @@ func TestClickFileInputDoesNotHang(t *testing.T) {
 	if err != nil {
 		t.Fatalf("snapshot: %v", err)
 	}
-	if ClickNavHint(page) {
-		// probe hasn't run yet
-	}
 	done := make(chan error, 1)
 	go func() { done <- ClickRef(page, "@1", snap) }()
 	select {

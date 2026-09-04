@@ -998,14 +998,6 @@ func snapshotModeFromArgs(raw json.RawMessage) engine.SnapshotMode {
 	return mode
 }
 
-func (s *agentSession) mutationDiff(b *engine.Browser, page *rod.Page, prev *engine.PageSnapshot) engine.SnapshotDiff {
-	out := s.mutationResult(b, page, prev, engine.SnapshotModeDiff)
-	if diff, ok := out.(engine.SnapshotDiff); ok {
-		return diff
-	}
-	return engine.SnapshotDiff{Unchanged: true}
-}
-
 // mutationResult honours none/diff/full. snapshot=full returns the skeleton
 // ExtractionResult (same shape as extract) so agents can keep refs without a
 // second extract call. none skips AX work after the mutation.

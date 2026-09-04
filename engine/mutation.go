@@ -67,9 +67,9 @@ func WaitForImminentDOM(page *rod.Page, timeout time.Duration) error {
 	return waitForImminentDOM(page, timeout)
 }
 
-// waitForImminentDOM resolves after the first DOM mutation, two animation
-// frames, or timeout. The JavaScript timeout bounds the wait; the page timeout
-// only guards against an interrupted evaluation that never settles.
+// waitForImminentDOM resolves after the first DOM mutation or timeout. Waiting
+// for the bounded timeout on a static page also covers delayed XHR callbacks;
+// animation frames alone can run before their response arrives on fast hosts.
 func waitForImminentDOM(page *rod.Page, timeout time.Duration) error {
 	if page == nil {
 		return nil
@@ -96,10 +96,6 @@ func waitForImminentDOM(page *rod.Page, timeout time.Duration) error {
 			characterData: true,
 			subtree: true,
 		});
-		// A mutation can be scheduled by a framework in the next paint even
-		// when no synchronous DOM operation follows the click. Two frames give
-		// that work a chance to land without imposing a fixed sleep on callers.
-		requestAnimationFrame(() => requestAnimationFrame(finish));
 		timer = setTimeout(finish, timeout);
 	})`, timeout.Milliseconds())
 	return err

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -14,8 +15,11 @@ func setupTestEnvironment(t *testing.T) (string, string) {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	if runtime.GOOS == "windows" {
+		t.Setenv("USERPROFILE", home)
+	}
 	sourceDir := t.TempDir()
-	source := filepath.Join(sourceDir, "ghostchrome-source")
+	source := filepath.Join(sourceDir, "ghostchrome-source"+binarySuffix())
 	if err := os.WriteFile(source, []byte("#!/bin/sh\necho ghostchrome-test\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -76,10 +80,10 @@ func TestSetupCLIIsExclusiveAndIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("install CLI: %v", err)
 	}
-	if first.Mode != setupModeCLI || first.Binary != filepath.Join(home, ".ghostchrome", "bin", setupCLIName) {
+	if first.Mode != setupModeCLI || first.Binary != filepath.Join(home, ".ghostchrome", "bin", setupCLIName+binarySuffix()) {
 		t.Fatalf("unexpected CLI manifest: %+v", first)
 	}
-	if _, err := os.Stat(filepath.Join(home, ".ghostchrome", "bin", setupMCPName)); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(home, ".ghostchrome", "bin", setupMCPName+binarySuffix())); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("MCP artifact should not be installed, err=%v", err)
 	}
 	for _, client := range clients {
@@ -89,7 +93,7 @@ func TestSetupCLIIsExclusiveAndIdempotent(t *testing.T) {
 			if err != nil {
 				t.Fatalf("skill file missing for %s: %s: %v", client, relative, err)
 			}
-			if strings.HasSuffix(relative, ".sh") && info.Mode().Perm()&0o111 == 0 {
+			if runtime.GOOS != "windows" && strings.HasSuffix(relative, ".sh") && info.Mode().Perm()&0o111 == 0 {
 				t.Fatalf("skill script is not executable for %s: %s", client, relative)
 			}
 		}
@@ -273,7 +277,7 @@ func TestSetupManifestIsStrictAndAtomic(t *testing.T) {
 	if decoded.Mode != setupModeCLI || decoded.SchemaVersion != setupManifestSchema {
 		t.Fatalf("decoded manifest mismatch: %+v", decoded)
 	}
-	if info, err := os.Stat(paths.Manifest); err != nil || info.Mode().Perm() != 0o600 {
+	if info, err := os.Stat(paths.Manifest); err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o600) {
 		t.Fatalf("manifest permissions = %o, err=%v", info.Mode().Perm(), err)
 	}
 	if err := os.WriteFile(paths.Manifest, []byte(`{"schema_version":999}`), 0o600); err != nil {
@@ -290,9 +294,9 @@ func TestSetupManifestIsStrictAndAtomic(t *testing.T) {
 	if _, err := readSetupManifest(paths); err == nil || !strings.Contains(err.Error(), "outside Ghostchrome locations") {
 		t.Fatalf("expected unsafe managed path refusal, got %v", err)
 	}
-	manifest.ManagedFiles = []string{"~/.ghostchrome/bin/ghostchrome"}
+	manifest.ManagedFiles = []string{"~/.ghostchrome/bin/" + setupCLIName + binarySuffix()}
 	manifest.InstallRoot = "~/.ghostchrome"
-	manifest.Binary = "~/.ghostchrome/bin/ghostchrome"
+	manifest.Binary = "~/.ghostchrome/bin/" + setupCLIName + binarySuffix()
 	if err := writeSetupManifest(paths, manifest); err != nil {
 		t.Fatal(err)
 	}
@@ -305,6 +309,9 @@ func TestSetupManifestIsStrictAndAtomic(t *testing.T) {
 func TestSetupInstructionsWritesManagedBlockAndBackup(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	if runtime.GOOS == "windows" {
+		t.Setenv("USERPROFILE", home)
+	}
 	oldClients := setupClientsFlag
 	oldWrite := setupInstructionsWrite
 	setupClientsFlag = "codex"

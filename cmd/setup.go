@@ -86,8 +86,8 @@ func pathsForHome(home string) setupPaths {
 		BinDir:       filepath.Join(root, "bin"),
 		Manifest:     filepath.Join(root, "install.json"),
 		Lock:         filepath.Join(root, "setup.lock"),
-		CLI:          filepath.Join(root, "bin", setupCLIName),
-		MCP:          filepath.Join(root, "bin", setupMCPName),
+		CLI:          filepath.Join(root, "bin", setupCLIName+binarySuffix()),
+		MCP:          filepath.Join(root, "bin", setupMCPName+binarySuffix()),
 		ClaudeConfig: filepath.Join(home, ".claude.json"),
 		CodexConfig:  filepath.Join(home, ".codex", "config.toml"),
 		GrokConfig:   filepath.Join(home, ".grok", "config.toml"),
@@ -470,8 +470,13 @@ func setupCheckExecutable(path string) error {
 	if err != nil {
 		return fmt.Errorf("binary %s: %w", path, err)
 	}
-	if info.Mode()&0o111 == 0 {
+	// Windows does not expose Unix execute bits through os.FileMode. A regular
+	// file with the platform executable suffix is the meaningful preflight.
+	if runtime.GOOS != "windows" && info.Mode()&0o111 == 0 {
 		return fmt.Errorf("binary %s is not executable", path)
+	}
+	if runtime.GOOS == "windows" && !info.Mode().IsRegular() {
+		return fmt.Errorf("binary %s is not a regular file", path)
 	}
 	return nil
 }
@@ -790,7 +795,7 @@ func installSetupMode(mode setupMode, clients []string, force bool) (*setupManif
 		return nil, err
 	}
 	if manifest != nil && manifest.Mode != mode && !force {
-		return nil, fmt.Errorf("Ghostchrome is already installed in %s mode; use `ghostchrome setup switch --to %s --yes`", manifest.Mode, mode)
+		return nil, fmt.Errorf("ghostchrome is already installed in %s mode; use `ghostchrome setup switch --to %s --yes`", manifest.Mode, mode)
 	}
 	if err := setupExistingOpposite(paths, manifest, mode); err != nil {
 		return nil, err
@@ -1098,7 +1103,7 @@ func runSetupDoctor(strict bool) ([]setupDoctorCheck, error) {
 	add("manifest", "ok", fmt.Sprintf("%s mode, schema %d", manifest.Mode, manifest.SchemaVersion))
 	if info, err := os.Stat(manifest.Binary); err != nil {
 		add("binary", "fail", err.Error())
-	} else if info.Mode()&0o111 == 0 {
+	} else if runtime.GOOS != "windows" && info.Mode()&0o111 == 0 {
 		add("binary", "fail", "installed binary is not executable")
 	} else {
 		add("binary", "ok", manifest.Binary)
@@ -1220,7 +1225,7 @@ func setupUninstall(yes, purge bool, out, errOut io.Writer) error {
 			return err
 		}
 		if manifest == nil {
-			return errors.New("Ghostchrome setup is not configured")
+			return errors.New("ghostchrome setup is not configured")
 		}
 		if n, killErr := engine.KillAllSessions(); killErr != nil {
 			fmt.Fprintf(errOut, "warning: could not stop all sessions: %v\n", killErr)

@@ -151,14 +151,6 @@ func truncateTraceString(value string, max int) string {
 	return value[:max]
 }
 
-// traceWindowStart returns the first valid entry timestamp. Using the trace
-// content rather than mtime keeps the retention window stable across restarts:
-// appending does not keep extending an old window forever.
-func traceWindowStart(data []byte) (int64, bool) {
-	firstTS, ok, _ := traceFileState(data)
-	return firstTS, ok
-}
-
 // traceFileState treats every non-final blank or malformed line as corruption.
 // On the next append appendTrace resets the same file, making the persisted
 // JSONL fully parseable again rather than preserving a broken prefix/suffix.

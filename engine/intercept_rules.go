@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -140,8 +141,8 @@ func compileMatch(pattern string, mt RuleMatchType) (func(string) bool, error) {
 func resolveBody(r RuleSpec, baseDir string, idx int) ([]byte, error) {
 	if r.BodyFile != "" {
 		p := r.BodyFile
-		if !isAbsolute(p) {
-			p = baseDir + "/" + p
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(baseDir, p)
 		}
 		data, err := os.ReadFile(p)
 		if err != nil {
@@ -150,8 +151,4 @@ func resolveBody(r RuleSpec, baseDir string, idx int) ([]byte, error) {
 		return data, nil
 	}
 	return []byte(r.Body), nil
-}
-
-func isAbsolute(p string) bool {
-	return len(p) > 0 && p[0] == '/'
 }

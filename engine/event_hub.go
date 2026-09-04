@@ -126,21 +126,6 @@ func (h *EventHub) WaitLifecycleSince(name proto.PageLifecycleEventName, frame p
 	}
 }
 
-func (h *EventHub) latestLoader(sinceMS int64, frame proto.PageFrameID) proto.NetworkLoaderID {
-	wantFrame := string(frame)
-	var loader proto.NetworkLoaderID
-	for _, e := range h.Drain(sinceMS) {
-		if e.Kind != KindPage || e.Loader == "" {
-			continue
-		}
-		if wantFrame != "" && e.Frame != wantFrame {
-			continue
-		}
-		loader = proto.NetworkLoaderID(e.Loader)
-	}
-	return loader
-}
-
 func (h *EventHub) Stop() {
 	if h == nil {
 		return

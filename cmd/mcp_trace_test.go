@@ -16,7 +16,7 @@ import (
 // TestMCPTraceStdioSequential exercises the public stdio boundary: initialize,
 // one successful tools/call, one failed tools/call, then trace-replay.
 func TestMCPTraceStdioSequential(t *testing.T) {
-	bin := filepath.Join(t.TempDir(), "ghostchrome")
+	bin := filepath.Join(t.TempDir(), "ghostchrome"+binarySuffix())
 	build := exec.Command("go", "build", "-o", bin, "..")
 	build.Dir = "."
 	if output, err := build.CombinedOutput(); err != nil {
@@ -115,7 +115,7 @@ func TestMCPTraceStdioSequential(t *testing.T) {
 }
 
 func TestMCPTraceWriteFailureStdio(t *testing.T) {
-	bin := filepath.Join(t.TempDir(), "ghostchrome")
+	bin := filepath.Join(t.TempDir(), "ghostchrome"+binarySuffix())
 	build := exec.Command("go", "build", "-o", bin, "..")
 	build.Dir = "."
 	if output, err := build.CombinedOutput(); err != nil {

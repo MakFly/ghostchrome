@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -257,6 +258,9 @@ func TestCloseCompatReusableContextDetection(t *testing.T) {
 	skipImplicitDaemon = false
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
+	if runtime.GOOS == "windows" {
+		t.Setenv("USERPROFILE", dir)
+	}
 
 	port, ws := startRegistryCDPServer(t)
 	if err := os.MkdirAll(filepath.Join(dir, ".ghostchrome"), 0o700); err != nil {

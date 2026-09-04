@@ -28,35 +28,6 @@ func parseRef(ref string) (string, error) {
 	return "@" + trimmed, nil
 }
 
-func resolveRefSnapshot(page *rod.Page, ref string, snapshot *PageSnapshot) (*rod.Element, error) {
-	if snapshot == nil {
-		// Silent auto-extract here would mint a fresh @N→backendNodeID
-		// mapping that almost certainly differs from the one the caller
-		// generated their ref against — i.e. silently click the wrong
-		// element. Force the caller to run extract/preview/navigate
-		// explicitly. Vague B (locator auto-wait) will reintroduce
-		// recovery via an explicit, ref-preserving path.
-		return nil, fmt.Errorf("%w: run preview, extract, or navigate --extract first", ErrStaleRef)
-	}
-	refInfo, ok := snapshot.Refs[ref]
-	if !ok || refInfo.BackendNodeID == 0 {
-		return nil, fmt.Errorf("%w: ref %s not found in last snapshot", ErrStaleRef, ref)
-	}
-
-	el, err := page.ElementFromNode(&proto.DOMNode{BackendNodeID: refInfo.BackendNodeID})
-	if err != nil {
-		return nil, fmt.Errorf("%w: ref %s is no longer attached", ErrStaleRef, ref)
-	}
-	connected, err := el.Eval(`() => this.isConnected`)
-	if err != nil {
-		return nil, fmt.Errorf("%w: ref %s could not be verified", ErrStaleRef, ref)
-	}
-	if connected == nil || connected.Value.Val() != true {
-		return nil, fmt.Errorf("%w: ref %s is detached from the DOM", ErrStaleRef, ref)
-	}
-	return el, nil
-}
-
 // ResolveRef finds an element by its ref (@1, @2, etc.) using a persisted snapshot.
 func ResolveRef(page *rod.Page, ref string, snapshot *PageSnapshot) (*rod.Element, error) {
 	parsed, err := parseRef(ref)

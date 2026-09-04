@@ -191,21 +191,6 @@ func formatPlaywrightPageStateOutput(info *engine.PageInfo, result *engine.Extra
 	return formatSnapshotPageOutput(info, path, "")
 }
 
-// formatCachedOrLivePageState avoids an extra page.Info() CDP round-trip when
-// the cached snapshot already carries the page URL and title.
-func formatCachedOrLivePageState(action string, b *engine.Browser, page *rod.Page, result *engine.ExtractionResult) string {
-	if flagFormat == "json" {
-		return engine.FormatTextProfile(result, renderProfile())
-	}
-	if snap := b.Snapshot(page); snap != nil && snap.URL != "" {
-		return formatPlaywrightPageStateOutput(&engine.PageInfo{
-			URL:   snap.URL,
-			Title: snap.Title,
-		}, result)
-	}
-	return formatCurrentPlaywrightPageStateOutput(action, page, result)
-}
-
 func formatCurrentPlaywrightPageStateOutput(action string, page *rod.Page, result *engine.ExtractionResult) string {
 	if flagFormat == "json" {
 		return engine.FormatTextProfile(result, renderProfile())
