@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -133,20 +134,43 @@ func TestConformanceCoreLoop(t *testing.T) {
 			n = parsed
 		}
 	}
-	html := "<!doctype html><html><body><button>Go</button><input aria-label=Query></body></html>"
+	html := `<!doctype html><html><body>
+		<button onclick="const state=document.getElementById('state'); state.textContent=state.textContent==='A'?'B':'A'">Go</button>
+		<button id="state">A</button><input aria-label=Query>
+	</body></html>`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(html))
 	}))
 	t.Cleanup(server.Close)
+	workers := 1
+	if n >= 1000 {
+		workers = 4
+	}
+	for worker := 0; worker < workers; worker++ {
+		worker := worker
+		operations := n / workers
+		if worker < n%workers {
+			operations++
+		}
+		t.Run(fmt.Sprintf("worker-%d", worker+1), func(t *testing.T) {
+			if workers > 1 {
+				t.Parallel()
+			}
+			runConformanceCoreLoop(t, server.URL, operations)
+		})
+	}
+}
 
+func runConformanceCoreLoop(t *testing.T, serverURL string, n int) {
+	t.Helper()
 	b, page := newIsolatedPage(t)
 	rt := NewRuntime(b)
 	if hub := rt.AttachEvents(page); hub == nil {
 		t.Fatal("expected event hub")
 	}
 	ps := rt.PageSession(page)
-	if _, err := Navigate(page, server.URL, "domcontentloaded"); err != nil {
+	if _, err := Navigate(page, serverURL, "domcontentloaded"); err != nil {
 		t.Fatalf("navigate: %v", err)
 	}
 	result, err := Extract(page, LevelSkeleton, "", false)
@@ -164,10 +188,19 @@ func TestConformanceCoreLoop(t *testing.T) {
 			t.Logf("click %d: %v", i, err)
 			continue
 		}
-		if _, _, err := CaptureMutation(b, page, snap); err != nil {
+		_, current, err := CaptureMutation(b, page, snap)
+		if err != nil {
 			failures++
 			t.Logf("diff %d: %v", i, err)
+			continue
 		}
+		next, err := BuildSnapshot(page, current)
+		if err != nil {
+			failures++
+			t.Logf("snapshot %d: %v", i, err)
+			continue
+		}
+		snap = next
 	}
 	if failures > 0 {
 		t.Fatalf("%d/%d core ops failed", failures, n)

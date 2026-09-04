@@ -76,15 +76,9 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
-      - id: chrome
-        uses: browser-actions/setup-chrome@v1
-        with:
-          chrome-version: stable
       # Keep browser-backed coverage on pull requests as well as main pushes;
       # the regular macOS job only runs -short and cannot catch CDP regressions.
       - run: go test ./engine -run 'TestConformanceCoreLoop|TestNavigateUsesEventHub|TestStartEventHubIdempotent|TestCaptureMutationWaitsForXHR|TestClickIframeLinkWaitsForFrameNav|TestExtractClickNestedIframeRef|TestClickFileInputInIframeDoesNotHang|TestClickFileInputInIframeAfterNavigationDoesNotHang|TestDialogAfterNavigationDoesNotHang|TestHandleNextDialogWaitsForAndHandlesDialogs|TestDialogAutoHandlerAcceptsTwoAlerts|TestResolveRefReportsStaleSnapshots' -count=1 -timeout 30m
-        env:
-          GHOSTCHROME_TEST_EXECUTABLE_PATH: ${{ steps.chrome.outputs.chrome-path }}
 
   windows-smoke:
     runs-on: windows-latest

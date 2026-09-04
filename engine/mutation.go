@@ -39,16 +39,38 @@ func CaptureMutation(b *Browser, page *rod.Page, prev *PageSnapshot) (SnapshotDi
 	if page == nil {
 		return SnapshotDiff{Unchanged: true}, nil, nil
 	}
-	_ = waitForImminentDOM(page, defaultImminentDOMTimeout)
 	if b != nil {
 		_ = b.InvalidateCachedExtract(page)
 	}
-	result, err := Extract(page, LevelSkeleton, "", false)
+	diff, result, err := extractMutation(page, prev)
+	if err != nil {
+		return SnapshotDiff{Unchanged: true}, nil, err
+	}
+	// Most browser actions update the DOM synchronously. Returning that result
+	// immediately keeps high-volume agent loops fast while retaining a bounded
+	// second chance for delayed XHR/framework updates.
+	if !diff.Unchanged {
+		if b != nil {
+			_ = b.SaveSnapshot(page, result)
+		}
+		return diff, result, nil
+	}
+
+	_ = waitForImminentDOM(page, defaultImminentDOMTimeout)
+	diff, result, err = extractMutation(page, prev)
 	if err != nil {
 		return SnapshotDiff{Unchanged: true}, nil, err
 	}
 	if b != nil {
 		_ = b.SaveSnapshot(page, result)
+	}
+	return diff, result, nil
+}
+
+func extractMutation(page *rod.Page, prev *PageSnapshot) (SnapshotDiff, *ExtractionResult, error) {
+	result, err := Extract(page, LevelSkeleton, "", false)
+	if err != nil {
+		return SnapshotDiff{Unchanged: true}, nil, err
 	}
 	curr, err := BuildSnapshot(page, result)
 	if err != nil {

@@ -69,13 +69,28 @@ func ClickElementWithButton(page *rod.Page, el *rod.Element, button proto.InputM
 		WaitForClickDownload(page)
 		return nil
 	}
-	if err := el.Click(button, 1); err != nil {
+	if err := clickActionableElement(page, el, button); err != nil {
 		return fmt.Errorf("click: %w", err)
 	}
 	settleAfterAction(page, 0)
 	WaitForClickNavigation(page)
 	WaitForClickDownload(page)
 	return nil
+}
+
+// clickActionableElement uses DOM activation for navigational links inside a
+// child frame. Rod's coordinate translation for nested frames is unreliable
+// with the bundled Chromium on macOS ARM, while HTMLElement.click preserves
+// the link's normal navigation semantics. Other controls keep a real input
+// event, including file inputs and non-left mouse buttons.
+func clickActionableElement(page *rod.Page, el *rod.Element, button proto.InputMouseButton) error {
+	elPage := el.Page()
+	if button == proto.InputMouseButtonLeft && page != nil && elPage != nil &&
+		elPage.FrameID != "" && elPage.FrameID != page.FrameID && ClickNavHint(elPage) {
+		_, err := el.Eval(`() => this.click()`)
+		return err
+	}
+	return el.Click(button, 1)
 }
 
 // DblClickRef double-clicks the element at the given ref.

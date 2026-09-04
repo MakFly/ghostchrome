@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -348,11 +347,7 @@ func TestConnectedPageSelection(t *testing.T) {
 func newIsolatedPage(t *testing.T) (*Browser, *rod.Page) {
 	t.Helper()
 
-	b, err := NewBrowserWith(BrowserOpts{
-		Headless:       true,
-		TimeoutSec:     10,
-		ExecutablePath: os.Getenv("GHOSTCHROME_TEST_EXECUTABLE_PATH"),
-	})
+	b, err := NewBrowser("", true, 10)
 	if err != nil {
 		t.Fatalf("new browser: %v", err)
 	}
