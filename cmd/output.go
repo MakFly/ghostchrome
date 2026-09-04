@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -12,6 +13,33 @@ import (
 	"github.com/dev-toolings/ghostchrome/engine"
 	"github.com/joho/godotenv"
 )
+
+// redactJSONOutput masks string values without changing JSON types or keys.
+func redactJSONOutput(data []byte, secrets []string) ([]byte, error) {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	var value any
+	if err := dec.Decode(&value); err != nil {
+		return nil, err
+	}
+	var redact func(any) any
+	redact = func(v any) any {
+		switch v := v.(type) {
+		case string:
+			return string(redactOutput([]byte(v), secrets))
+		case []any:
+			for i := range v {
+				v[i] = redact(v[i])
+			}
+		case map[string]any:
+			for key := range v {
+				v[key] = redact(v[key])
+			}
+		}
+		return v
+	}
+	return json.Marshal(redact(value))
+}
 
 // actionResult is a common result struct for interaction commands (click, hover, type).
 type actionResult struct {

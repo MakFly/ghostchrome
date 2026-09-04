@@ -19,6 +19,17 @@ function makeClient(): { gc: Ghostchrome; transport: FakeTransport } {
   return { gc, transport };
 }
 
+it("disposes the transport and stays closed when the close op fails", async () => {
+  let disposed = false;
+  const gc = new Ghostchrome({ transport: {
+    send: async () => { throw new Error("close timed out"); },
+    dispose: async () => { disposed = true; },
+  } });
+  await expect(gc.close()).rejects.toThrow("close timed out");
+  expect(disposed).toBe(true);
+  await expect(gc.init()).rejects.toThrow("session is closed");
+});
+
 // ---------------------------------------------------------------------------
 // ID correlation
 // ---------------------------------------------------------------------------

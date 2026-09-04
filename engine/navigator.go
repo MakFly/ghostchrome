@@ -59,6 +59,9 @@ func Navigate(page *rod.Page, rawURL string, waitStrategy string) (*PageInfo, er
 	if err := ActivePolicy.AllowURL(rawURL); err != nil {
 		return nil, err
 	}
+	if err := ApplyInitScripts(page); err != nil {
+		return nil, fmt.Errorf("init scripts: %w", err)
+	}
 	start := time.Now()
 	requestTracker := newRequestTracker(page)
 	requestTracker.listen(page)

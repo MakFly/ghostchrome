@@ -50,8 +50,8 @@ Examples:
 		b, page := openPage()
 		defer b.Close()
 
-		// snapshotPage reuses the current page's persisted extraction when its
-		// URL is unchanged, avoiding an AX-tree round trip for snapshot → find.
+		// Refresh content so prior skeleton snapshots and asynchronous changes
+		// cannot hide text from this search.
 		result := snapshotPage(b, page, engine.LevelContent)
 		matches := findSnapshotMatches(engine.FormatPlaywrightSnapshot(result), matcher)
 		output(findResult{Query: query, Regex: isRegex, Matches: matches}, formatFindMatches(matches))

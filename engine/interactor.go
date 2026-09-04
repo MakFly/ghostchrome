@@ -797,11 +797,30 @@ func SwitchTab(browser *rod.Browser, index int) (*rod.Page, error) {
 // NewTab opens a new tab, optionally navigating to url (blank when empty),
 // activates it, and returns the page.
 func NewTab(browser *rod.Browser, url string) (*rod.Page, error) {
-	page, err := browser.Page(proto.TargetCreateTarget{URL: url})
+	if url != "" {
+		if err := ActivePolicy.AllowURL(url); err != nil {
+			return nil, err
+		}
+	}
+	page, err := browser.Page(proto.TargetCreateTarget{URL: "about:blank"})
 	if err != nil {
 		return nil, err
 	}
+	if err := ApplyInitScripts(page); err != nil {
+		forgetPageEventState(page)
+		_ = page.Close()
+		return nil, err
+	}
+	if url != "" && url != "about:blank" {
+		if err := page.Navigate(url); err != nil {
+			forgetPageEventState(page)
+			_ = page.Close()
+			return nil, err
+		}
+	}
 	if _, err := page.Activate(); err != nil {
+		forgetPageEventState(page)
+		_ = page.Close()
 		return nil, err
 	}
 	return page, nil
@@ -983,6 +1002,7 @@ func forgetPageEventState(page *rod.Page) {
 		return
 	}
 	fileChooserOnce.Delete(pageSessionKey{browser: page.Browser(), session: page.SessionID})
+	installedPageScripts.Delete(pageSessionKey{browser: page.Browser(), session: page.SessionID})
 	dialogAutoOnce.Delete(page)
 	dialogAutoPolicies.Delete(page)
 	dialogAutoWaiters.Delete(page)
@@ -992,6 +1012,12 @@ func forgetBrowserEventState(browser *rod.Browser) {
 	if browser == nil {
 		return
 	}
+	installedPageScripts.Range(func(key, _ any) bool {
+		if key.(pageSessionKey).browser == browser {
+			installedPageScripts.Delete(key)
+		}
+		return true
+	})
 	pages, err := browser.Pages()
 	if err != nil {
 		return

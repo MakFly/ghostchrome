@@ -1,11 +1,11 @@
 // Package mcp tool registrations.
 //
-// MCP v2.0 surface: 16 tools for an LLM-agent browser loop (snapshot, navigate,
-// click, type, select, press, wait_for, eval, screenshot, hover, drag,
-// fill_form, upload, tabs, back, forward). Everything that isn't on the hot path
-// (sniff/trace/cookies/storage/viewport/dialog/blocker_stats) lives in the CLI
-// only — adding tools here has a real token cost in every `tools/list` the
-// model receives, so we stay deliberately small.
+// MCP v2.0 surface: 19 tools for an LLM-agent browser loop (snapshot, navigate,
+// click, type, select, press, wait_for, eval, screenshot, hover, drag, swipe,
+// emulate, fill_form, upload, tabs, dialog, back, forward). Everything that
+// isn't on the hot path (sniff/trace/cookies/storage/blocker_stats) lives in
+// the CLI only — adding tools here has a real token cost in every `tools/list`
+// the model receives, so we stay deliberately small.
 package mcp
 
 import (
@@ -107,6 +107,30 @@ func registerTools(srv *mcpsrv.MCPServer, s *Server) {
 		mcpgo.WithString("to", mcpgo.Required(), mcpgo.Description("Target element ref")),
 		mcpgo.WithNumber("steps", mcpgo.Description("Intermediate mouse move steps (default 10)"), mcpgo.DefaultNumber(10)),
 	), s.handleDrag)
+
+	srv.AddTool(mcpgo.NewTool("swipe",
+		mcpgo.WithDescription("Swipe with a real single-finger touch gesture (touchstart/touchmove/touchend) between two viewport coordinates in CSS pixels. Use this — not drag — to test a mobile drawer, carousel, or pull-to-refresh: drag emits mouse events, which a touch-only handler ignores. Enables touch emulation automatically if it is off."),
+		mcpgo.WithNumber("from_x", mcpgo.Required(), mcpgo.Description("Start X in CSS pixels, relative to the viewport")),
+		mcpgo.WithNumber("from_y", mcpgo.Required(), mcpgo.Description("Start Y in CSS pixels, relative to the viewport")),
+		mcpgo.WithNumber("to_x", mcpgo.Required(), mcpgo.Description("End X in CSS pixels")),
+		mcpgo.WithNumber("to_y", mcpgo.Required(), mcpgo.Description("End Y in CSS pixels")),
+		mcpgo.WithNumber("duration_ms", mcpgo.Description("Gesture duration in milliseconds (default 300). Shorter = flick, longer = slow drag."), mcpgo.DefaultNumber(300)),
+		mcpgo.WithNumber("steps", mcpgo.Description("Intermediate touchmove events (default 12)"), mcpgo.DefaultNumber(12)),
+		mcpgo.WithString("snapshot", mcpgo.Description("none | diff | full (default: diff)"), mcpgo.Enum("none", "diff", "full"), mcpgo.DefaultString("diff")),
+	), s.handleSwipe)
+
+	srv.AddTool(mcpgo.NewTool("emulate",
+		mcpgo.WithDescription("Emulate a device: viewport size, devicePixelRatio, mobile flag, touch input, user-agent, and prefers-color-scheme. Use it before testing a responsive or mobile-only UI — without it the page is a 1920x1080 desktop with pointer:fine, so a phone shell or a coarse-pointer media query never activates. Pass a preset via `device`, or explicit width/height. Pass reset=true to go back to a plain desktop tab. Invalidates refs: re-snapshot afterwards."),
+		mcpgo.WithString("device", mcpgo.Description("Preset: iphone-se, iphone-14, iphone-14-pro, iphone-14-pro-max, pixel-7, pixel-8-pro, ipad, ipad-pro, desktop, desktop-2k")),
+		mcpgo.WithNumber("width", mcpgo.Description("Viewport width in CSS pixels (overrides the preset)")),
+		mcpgo.WithNumber("height", mcpgo.Description("Viewport height in CSS pixels (overrides the preset)")),
+		mcpgo.WithNumber("device_scale_factor", mcpgo.Description("devicePixelRatio, e.g. 3 for a modern iPhone (default 1, or the preset's)")),
+		mcpgo.WithBoolean("mobile", mcpgo.Description("Mobile viewport semantics: meta viewport, mobile scrollbars, screen size")),
+		mcpgo.WithBoolean("touch", mcpgo.Description("Touch input emulation: pointer:coarse, navigator.maxTouchPoints > 0, touch events")),
+		mcpgo.WithString("user_agent", mcpgo.Description("Override navigator.userAgent and the User-Agent header")),
+		mcpgo.WithString("color_scheme", mcpgo.Description("Emulate prefers-color-scheme"), mcpgo.Enum("dark", "light", "no-preference")),
+		mcpgo.WithBoolean("reset", mcpgo.Description("Drop every emulation override and restore the real desktop viewport and UA"), mcpgo.DefaultBool(false)),
+	), s.handleEmulate)
 
 	srv.AddTool(mcpgo.NewTool("fill_form",
 		mcpgo.WithDescription("Fill multiple form fields in one call. Pass a JSON object mapping refs to values: {\"@1\": \"John\", \"@2\": \"john@example.com\"}"),
@@ -495,6 +519,150 @@ func (s *Server) handleDrag(ctx context.Context, req mcpgo.CallToolRequest) (*mc
 	})
 }
 
+func (s *Server) handleSwipe(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	fromX := mcpgo.ParseFloat64(req, "from_x", -1)
+	fromY := mcpgo.ParseFloat64(req, "from_y", -1)
+	toX := mcpgo.ParseFloat64(req, "to_x", -1)
+	toY := mcpgo.ParseFloat64(req, "to_y", -1)
+	if fromX < 0 || fromY < 0 || toX < 0 || toY < 0 {
+		return errResult(fmt.Errorf("from_x, from_y, to_x and to_y are required and must be >= 0"))
+	}
+	durationMs := int(mcpgo.ParseFloat64(req, "duration_ms", 300))
+	if durationMs <= 0 {
+		durationMs = 300
+	}
+	if durationMs > 10000 {
+		durationMs = 10000
+	}
+	steps := int(mcpgo.ParseFloat64(req, "steps", 12))
+	if steps <= 0 {
+		steps = 12
+	}
+	if steps > 100 {
+		steps = 100
+	}
+	return s.withPage(ctx, func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
+		// Chrome drops synthesized touch events on a page whose widget has no
+		// touch support, so a swipe on a non-emulated tab would silently do
+		// nothing. Turn touch on rather than failing.
+		hint := ""
+		if !s.emulation.Touch {
+			if err := engine.EnsureTouchEmulation(page); err != nil {
+				return errResult(fmt.Errorf("swipe: %w", err))
+			}
+			s.emulation.Touch = true
+			hint = " (touch emulation enabled for this swipe)"
+		}
+		if err := engine.SwipeTouch(page, fromX, fromY, toX, toY, steps, time.Duration(durationMs)*time.Millisecond); err != nil {
+			return errResult(fmt.Errorf("swipe: %w", err))
+		}
+		summary := fmt.Sprintf("swiped (%.0f,%.0f) -> (%.0f,%.0f) in %dms%s", fromX, fromY, toX, toY, durationMs, hint)
+		return s.mutationResult(b, page, summary, snapshotModeFromReq(req))
+	})
+}
+
+func (s *Server) handleEmulate(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	reset := mcpgo.ParseBoolean(req, "reset", false)
+	device := strings.TrimSpace(mcpgo.ParseString(req, "device", ""))
+	width := int(mcpgo.ParseFloat64(req, "width", 0))
+	height := int(mcpgo.ParseFloat64(req, "height", 0))
+	dpr := mcpgo.ParseFloat64(req, "device_scale_factor", 0)
+	userAgent := strings.TrimSpace(mcpgo.ParseString(req, "user_agent", ""))
+	colorScheme := strings.TrimSpace(mcpgo.ParseString(req, "color_scheme", ""))
+	// mobile/touch are tri-state: absent means "keep whatever the preset or the
+	// current profile says", which a plain ParseBoolean default cannot express.
+	hasMobile := hasArg(req, "mobile")
+	mobile := mcpgo.ParseBoolean(req, "mobile", false)
+	hasTouch := hasArg(req, "touch")
+	touch := mcpgo.ParseBoolean(req, "touch", false)
+
+	if reset {
+		if device != "" || width > 0 || height > 0 || dpr > 0 || userAgent != "" || colorScheme != "" || hasMobile || hasTouch {
+			return errResult(fmt.Errorf("reset cannot be combined with other emulation parameters"))
+		}
+		return s.withPage(ctx, func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
+			if err := engine.ResetEmulation(page); err != nil {
+				return errResult(fmt.Errorf("emulate reset: %w", err))
+			}
+			s.emulation = engine.EmulationState{}
+			_ = b.ClearEmulationState()
+			_ = b.InvalidateCachedExtract(page)
+			return mcpgo.NewToolResultText("emulation reset: real viewport, no touch, browser user-agent. Re-snapshot before using refs."), nil
+		})
+	}
+
+	return s.withPage(ctx, func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
+		state := s.emulation
+		if device != "" {
+			preset, ok := engine.DeviceByName(device)
+			if !ok {
+				return errResult(fmt.Errorf("unknown device %q (iphone-se, iphone-14, iphone-14-pro, iphone-14-pro-max, pixel-7, pixel-8-pro, ipad, ipad-pro, desktop, desktop-2k)", device))
+			}
+			next := engine.EmulationFromDevice(preset)
+			// Desktop presets carry no UA of their own; keep whatever is in force
+			// rather than silently reverting to the browser default mid-flow.
+			if next.UserAgent == "" {
+				next.UserAgent = state.UserAgent
+			}
+			next.ColorScheme = state.ColorScheme
+			next.Timezone = state.Timezone
+			state = next
+		}
+		if width > 0 {
+			state.Width = width
+		}
+		if height > 0 {
+			state.Height = height
+		}
+		if dpr > 0 {
+			state.DPR = dpr
+		}
+		if hasMobile {
+			state.Mobile = mobile
+		}
+		if hasTouch {
+			state.Touch = touch
+		}
+		if userAgent != "" {
+			state.UserAgent = userAgent
+		}
+		if colorScheme != "" {
+			state.ColorScheme = colorScheme
+		}
+		if device == "" && (width > 0 || height > 0 || dpr > 0 || hasMobile || hasTouch) {
+			// A geometry axis was overridden by hand, so the preset label the
+			// profile still carries would lie about what the page actually sees.
+			state.Device = ""
+		}
+
+		if state.Empty() {
+			return errResult(fmt.Errorf("nothing to emulate: pass device, width+height, mobile, touch, user_agent, color_scheme, or reset=true"))
+		}
+		if (state.Width > 0) != (state.Height > 0) {
+			return errResult(fmt.Errorf("width and height must be given together"))
+		}
+		if state.Width < 0 || state.Width > 10000 || state.Height < 0 || state.Height > 10000 {
+			return errResult(fmt.Errorf("width and height must be between 1 and 10000 CSS pixels"))
+		}
+		if state.DPR < 0 || state.DPR > 5 {
+			return errResult(fmt.Errorf("device_scale_factor must be between 0.1 and 5"))
+		}
+		if state.Width > 0 && state.DPR <= 0 {
+			state.DPR = 1
+		}
+
+		if err := engine.ApplyEmulationProfile(page, state); err != nil {
+			return errResult(fmt.Errorf("emulate: %w", err))
+		}
+		s.emulation = state
+		// No-op outside a managed session; keeps a named session consistent
+		// with what the CLI would have persisted.
+		_ = b.SetEmulationState(state)
+		_ = b.InvalidateCachedExtract(page)
+		return jsonResult(state, "emulating "+state.Summary()+" — re-snapshot before using refs")
+	})
+}
+
 func (s *Server) handleFillForm(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	fieldsRaw := mcpgo.ParseString(req, "fields", "")
 	if fieldsRaw == "" {
@@ -567,6 +735,8 @@ func (s *Server) adoptPage(b *engine.Browser, page *rod.Page) {
 			s.observer = hub.Observer()
 		}
 	}
+	// A popup or a new tab is a fresh target with no emulation override.
+	s.replayEmulationLocked(page)
 }
 func (s *Server) handleTabs(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 	action := mcpgo.ParseString(req, "action", "list")
@@ -724,6 +894,18 @@ func jsonResult(payload any, summary string) (*mcpgo.CallToolResult, error) {
 		return mcpgo.NewToolResultText(string(data)), nil
 	}
 	return mcpgo.NewToolResultText(summary + "\n" + string(data)), nil
+}
+
+// hasArg reports whether the caller actually supplied a key, as opposed to the
+// tool schema carrying a default for it. Needed for tri-state booleans where
+// "absent" and "false" must behave differently.
+func hasArg(req mcpgo.CallToolRequest, key string) bool {
+	args := req.GetArguments()
+	if args == nil {
+		return false
+	}
+	v, ok := args[key]
+	return ok && v != nil
 }
 
 // normalizeRef accepts "@3", "3", "ref:3" and returns "@3" (or empty).

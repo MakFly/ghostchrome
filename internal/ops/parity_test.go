@@ -75,6 +75,8 @@ var mcpOps = map[string]bool{
 	"forward":    true,
 	"hover":      true,
 	"drag":       true,
+	"swipe":      true,
+	"emulate":    true,
 	"fill_form":  true,
 	"tabs":       true,
 	"upload":     true,

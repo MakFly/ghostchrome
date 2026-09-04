@@ -52,8 +52,9 @@ The repo exposes three main automation surfaces:
 - Result shapes are not inferred from the catalog. They must be measured from
   the running binary with `scripts/measure-agent-ops.sh` when the agent surface
   or SDK types change.
-- Preferred runtime mode is attaching to an existing Chrome with
-  `--connect=auto`; cold spawn remains a fallback path.
+- Preferred CLI runtime mode is the implicit persistent daemon. Explicit
+  `--connect=auto` attaches to an existing Chrome; the JSONL agent embeds Chrome
+  unless a named session or connection is requested.
 - Use `bun` for JS/TS package commands. Do not use `npm` or `npx`.
 - Use `rg` (ripgrep) or the built-in search tools for code search.
 
@@ -63,4 +64,3 @@ The repo exposes three main automation surfaces:
 - `change-workflows.md`: how to change commands, engine behavior, SDKs, docs,
   and validation.
 - `validation.md`: command checklist and what each command proves.
-

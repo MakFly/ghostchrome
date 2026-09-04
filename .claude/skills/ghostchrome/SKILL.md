@@ -177,12 +177,20 @@ session only when the browser itself is unhealthy.
 
 ## MCP mode
 
-Use the registered Ghostchrome MCP connection and its 17 browser tools. Start
+Use the registered Ghostchrome MCP connection and its 19 browser tools. Start
 with `snapshot` when entering or revisiting a page; it combines page status,
 console/network observations, and a compact DOM with refs. Continue with
-`navigate`, `click`, `type`, `select`, `press`, `hover`, `drag`, `fill_form`,
-`upload`, `tabs`, `dialog`, `wait_for`, `eval`, `screenshot`, `back`, or
-`forward` as the task requires. Verify state after each mutating operation.
+`navigate`, `click`, `type`, `select`, `press`, `hover`, `drag`, `swipe`,
+`emulate`, `fill_form`, `upload`, `tabs`, `dialog`, `wait_for`, `eval`,
+`screenshot`, `back`, or `forward` as the task requires. Verify state after each
+mutating operation.
+
+Call `emulate` before checking a responsive layout, a mobile shell, or a
+progressive web app. The default context is a desktop viewport with a fine
+pointer, so a phone breakpoint or a `pointer: coarse` query never activates
+without it. Use `swipe` rather than `drag` for a touch gesture: `drag` sends
+mouse events, which a touch-only handler ignores. Treat refs as stale after an
+emulation change and re-snapshot.
 
 The standalone MCP server owns one browser context and releases Chrome after
 the configured idle timeout while keeping the stdio server available. Keep MCP

@@ -57,15 +57,20 @@ type Options struct {
 type Server struct {
 	opts Options
 
-	mu             sync.Mutex
-	browser        *engine.Browser
-	page           *rod.Page
-	snapshot       *engine.PageSnapshot // last in-memory snapshot (for ref resolution)
-	rt             *engine.Runtime
-	observer       *engine.Observer         // long-lived; feeds error/network info into snapshot
-	observerFn     context.CancelFunc       // cancel attached to the observer's context
-	blocker        *engine.InterceptSession // non-nil when anti-bot blocker is active
-	dialogPolicy   *engine.DialogAutoPolicy
+	mu           sync.Mutex
+	browser      *engine.Browser
+	page         *rod.Page
+	snapshot     *engine.PageSnapshot // last in-memory snapshot (for ref resolution)
+	rt           *engine.Runtime
+	observer     *engine.Observer         // long-lived; feeds error/network info into snapshot
+	observerFn   context.CancelFunc       // cancel attached to the observer's context
+	blocker      *engine.InterceptSession // non-nil when anti-bot blocker is active
+	dialogPolicy *engine.DialogAutoPolicy
+	// emulation is the device profile installed by the `emulate` tool. CDP
+	// emulation overrides die with the target, so it is replayed on every
+	// page bind (crash relaunch, target recovery, tab switch) — otherwise a
+	// phone-shell test silently snaps back to 1920x1080 mid-flow.
+	emulation      engine.EmulationState
 	lastActivity   time.Time // updated on every ensurePageLocked; drives the idle reaper
 	lastRecovery   string    // last target/browser recovery reason for diagnostics
 	lastRecoveryAt time.Time
@@ -385,7 +390,21 @@ func (s *Server) bindPageLocked(b *engine.Browser, page *rod.Page) {
 			s.observer = hub.Observer()
 		}
 	}
+	s.replayEmulationLocked(page)
 	engine.PrewarmDomains(page)
+}
+
+// replayEmulationLocked re-installs the device profile requested through the
+// `emulate` tool on a freshly bound page. Caller MUST hold s.mu.
+func (s *Server) replayEmulationLocked(page *rod.Page) {
+	if page == nil || s.emulation.Empty() {
+		return
+	}
+	if err := engine.ApplyEmulationProfile(page, s.emulation); err != nil {
+		fmt.Fprintf(os.Stderr, "[ghostchrome mcp] emulation not restored: %v\n", err)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "[ghostchrome mcp] emulation restored: %s\n", s.emulation.Summary())
 }
 
 // launchPageLocked launches (or connects to) Chrome and initializes all
@@ -471,6 +490,9 @@ func (s *Server) launchPageLocked() (*engine.Browser, *rod.Page, error) {
 	if s.rt == nil {
 		s.rt = engine.NewRuntime(b)
 	}
+	// A relaunch after a Chrome crash gets a virgin target: without this the
+	// agent keeps testing a phone shell on a 1920x1080 desktop viewport.
+	s.replayEmulationLocked(page)
 	return b, page, nil
 }
 

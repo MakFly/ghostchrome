@@ -68,6 +68,11 @@ type Op struct {
 //     via eval in MCP).
 //   - "errors" and "url" appear in JSONL and AI but not MCP (covered by snapshot).
 //   - "screenshot" appears in JSONL and MCP but not AI.
+//   - "emulate" and "swipe" are MCP-only: the CLI covers them with the
+//     `emulate` command plus a session-persisted profile, and the JSONL loop
+//     runs in one process where `ghostchrome batch` can carry an emulate verb.
+//     MCP holds a long-lived browser, so it needs its own device switch and a
+//     touch-event gesture (drag is mouse-only and a mobile PWA ignores it).
 func Catalog() []Op {
 	return []Op{
 		{
@@ -135,6 +140,22 @@ func Catalog() []Op {
 				{Name: "from", Type: ArgString, Required: true, Description: "Source element @ref"},
 				{Name: "to", Type: ArgString, Required: true, Description: "Target element @ref"},
 				{Name: "steps", Type: ArgNumber, Required: false, Description: "Intermediate mouse move steps (default 10)"},
+			},
+			Surfaces: []string{"mcp"},
+		},
+		{
+			Name:    "emulate",
+			Summary: "Emulate a device: viewport, DPR, mobile flag, touch, user-agent, color-scheme. MCP surface only (the CLI has `ghostchrome emulate`).",
+			Args: []Arg{
+				{Name: "device", Type: ArgString, Required: false, Description: "Preset name, e.g. iphone-14-pro-max, pixel-7, ipad, desktop"},
+				{Name: "width", Type: ArgNumber, Required: false, Description: "Viewport width in CSS pixels"},
+				{Name: "height", Type: ArgNumber, Required: false, Description: "Viewport height in CSS pixels"},
+				{Name: "device_scale_factor", Type: ArgNumber, Required: false, Description: "devicePixelRatio (default 1 or the preset's)"},
+				{Name: "mobile", Type: ArgBoolean, Required: false, Description: "Mobile viewport semantics (meta viewport, screen size)"},
+				{Name: "touch", Type: ArgBoolean, Required: false, Description: "Touch input emulation (pointer:coarse, maxTouchPoints)"},
+				{Name: "user_agent", Type: ArgString, Required: false, Description: "Override navigator.userAgent and the User-Agent header"},
+				{Name: "color_scheme", Type: ArgString, Required: false, Description: "prefers-color-scheme: dark | light | no-preference"},
+				{Name: "reset", Type: ArgBoolean, Required: false, Description: "Drop every emulation override and restore the desktop viewport/UA"},
 			},
 			Surfaces: []string{"mcp"},
 		},
@@ -274,6 +295,20 @@ func Catalog() []Op {
 				{Name: "wait", Type: ArgString, Required: false, Description: "Wait strategy: domcontentloaded | load | stable | idle | none"},
 				{Name: "level", Type: ArgString, Required: false, Description: "skeleton | content | full (default: content)"},
 				{Name: "selector", Type: ArgString, Required: false, Description: "Optional CSS selector to scope DOM extraction"},
+			},
+			Surfaces: []string{"mcp"},
+		},
+		{
+			Name:    "swipe",
+			Summary: "Swipe with a real single-finger touch gesture between two viewport coordinates. MCP surface only.",
+			Args: []Arg{
+				{Name: "from_x", Type: ArgNumber, Required: true, Description: "Start X in CSS pixels, relative to the viewport"},
+				{Name: "from_y", Type: ArgNumber, Required: true, Description: "Start Y in CSS pixels, relative to the viewport"},
+				{Name: "to_x", Type: ArgNumber, Required: true, Description: "End X in CSS pixels"},
+				{Name: "to_y", Type: ArgNumber, Required: true, Description: "End Y in CSS pixels"},
+				{Name: "duration_ms", Type: ArgNumber, Required: false, Description: "Gesture duration in ms (default 300, max 10000)"},
+				{Name: "steps", Type: ArgNumber, Required: false, Description: "Intermediate touchmove events (default 12, max 100)"},
+				{Name: "snapshot", Type: ArgString, Required: false, Description: "none | diff | full (default: diff)"},
 			},
 			Surfaces: []string{"mcp"},
 		},

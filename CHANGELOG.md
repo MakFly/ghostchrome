@@ -5,6 +5,49 @@ All notable changes to ghostchrome are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- **MCP `emulate` tool** — device emulation is now reachable from the MCP
+  surface, not only the CLI. It takes a preset (`iphone-14-pro-max`, `pixel-7`,
+  `ipad`, ...) or explicit `width`/`height`/`device_scale_factor`/`mobile`/
+  `touch`/`user_agent`/`color_scheme`, and `reset: true` returns to a plain
+  desktop tab. Until now an MCP agent had no way to change the viewport, so a
+  mobile shell gated on a width breakpoint or `pointer: coarse` could not be
+  tested at all: the page was always 1920x1080 with a fine pointer. The server
+  holds the profile and replays it whenever it binds a new page (tab switch,
+  popup, crash relaunch), because CDP emulation overrides die with the target.
+- **MCP `swipe` tool** — a real single-finger touch gesture
+  (`touchstart` → N × `touchmove` → `touchend`) between two viewport
+  coordinates, via `Input.dispatchTouchEvent`. `drag` synthesizes mouse events,
+  which a touch-only handler in a mobile drawer, carousel, or pull-to-refresh
+  never receives. Touch emulation is enabled on demand so a swipe is never
+  silently discarded.
+- **`engine.SwipeTouch` / `TapTouch` / `EnsureTouchEmulation` /
+  `ApplyEmulationProfile`** — the touch and emulation primitives behind the two
+  tools. `ApplyEmulationProfile` differs from the additive
+  `ApplyEmulationState`: it also turns touch emulation *off* when the profile
+  asks for it, so going back to a desktop profile really restores
+  `pointer: fine`.
+
+### Fixed
+- Enforce navigation policy before opening a new tab and reject init-script
+  removal paths outside the script directory. Installed scripts now run before
+  document scripts and remain registered across navigations.
+- Mask configured secrets in JSONL payloads and saved snapshot artifacts.
+- Merge independent session-state updates under a file lock and serialize MCP
+  emulation updates to preserve concurrent changes.
+- Preserve pre-init dialog policies and retained console/network errors. Reject
+  malformed JSONL arguments and report post-action snapshot failures as
+  non-retryable errors instead of claiming that the page is unchanged.
+- Refresh command snapshots at the requested extraction level, including DOM
+  changes at the same URL. Always dispose the TypeScript transport after close.
+- **`--stealth` no longer hides an emulated touchscreen** — the stealth patch
+  pinned `navigator.maxTouchPoints` to 0 on every new document, overwriting the
+  value `Emulation.setTouchEmulationEnabled` installs. An emulated iPhone
+  therefore claimed `pointer: coarse` while reporting zero touch points, and a
+  mobile web app feature-detecting on `maxTouchPoints` kept its desktop shell.
+  The pin is gone: a headless desktop Chrome already reports 0 on its own, and
+  the contradiction was a stronger bot signal than the real number.
+
 ## [0.5.0] — 2026-08-12
 
 ### Fixed

@@ -184,6 +184,55 @@ func ApplyEmulationState(page *rod.Page, s EmulationState) error {
 	return nil
 }
 
+// ApplyEmulationProfile installs an emulation profile authoritatively.
+//
+// It differs from ApplyEmulationState, which is a replay helper that only ever
+// adds overrides: this one also turns touch emulation OFF when the profile has
+// Touch=false, so switching from a phone profile back to a desktop one really
+// restores pointer:fine instead of leaving navigator.maxTouchPoints at 5.
+// Use ResetEmulation to drop the overrides entirely.
+func ApplyEmulationProfile(page *rod.Page, s EmulationState) error {
+	if page == nil {
+		return nil
+	}
+	if s.Width > 0 && s.Height > 0 {
+		dpr := s.DPR
+		if dpr <= 0 {
+			dpr = 1
+		}
+		sw, sh := s.Width, s.Height
+		if err := (proto.EmulationSetDeviceMetricsOverride{
+			Width:             s.Width,
+			Height:            s.Height,
+			DeviceScaleFactor: dpr,
+			Mobile:            s.Mobile,
+			ScreenWidth:       &sw,
+			ScreenHeight:      &sh,
+		}).Call(page); err != nil {
+			return fmt.Errorf("device metrics: %w", err)
+		}
+	}
+	if err := setTouchEmulation(page, s.Touch); err != nil {
+		return err
+	}
+	if s.UserAgent != "" {
+		if err := ApplyUserAgent(page, s.UserAgent); err != nil {
+			return err
+		}
+	}
+	if s.ColorScheme != "" {
+		if err := ApplyColorScheme(page, s.ColorScheme); err != nil {
+			return err
+		}
+	}
+	if s.Timezone != "" {
+		if err := ApplyTimezone(page, s.Timezone); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // ResetEmulation drops every emulation override on the page and restores the
 // browser's own User-Agent. Device metrics fall back to the real window size,
 // which is what an un-emulated tab looks like.

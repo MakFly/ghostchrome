@@ -418,7 +418,12 @@ func applyStealthWithProfile(page *rod.Page, profile stealthProfile) error {
 	// --- hardware ---
 	__defineNative(navProto, 'hardwareConcurrency', () => __HARDWARE_CONCURRENCY__);
 	__defineNative(navProto, 'deviceMemory', () => 8);
-	__defineNative(navProto, 'maxTouchPoints', () => 0);
+	// maxTouchPoints is deliberately NOT pinned. A headless desktop Chrome
+	// already reports 0, so hardcoding it bought nothing — and it overwrote the
+	// value Emulation.setTouchEmulationEnabled installs, so an emulated phone
+	// claimed pointer:coarse while reporting zero touch points. That
+	// self-contradiction is a stronger bot signal than the real number, and it
+	// broke feature detection in mobile web apps under --stealth.
 
 	// --- navigator.connection ---
 	if (!navigator.connection) {

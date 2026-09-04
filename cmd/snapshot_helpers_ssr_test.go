@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/dev-toolings/ghostchrome/engine"
@@ -12,14 +13,13 @@ import (
 
 // TestSnapshotPageBypassesCacheWhenSSRRequested is a regression test (real
 // headless Chrome, local HTTP server only — no live network) for the
-// SSR/cache leak: a plain (non-SSR) snapshotPage call must be served from
-// cache on repeat, but an includeSSR=true call must bypass that cache and
-// recompute rather than silently return the cached, necessarily SSR-less,
-// result.
+// SSR/cache leak: snapshots must refresh at the requested level, including
+// SSR opt-in, and must observe DOM changes even when the URL stays unchanged.
 func TestSnapshotPageBypassesCacheWhenSSRRequested(t *testing.T) {
 	if testing.Short() {
 		t.Skip("requires Chrome")
 	}
+	t.Setenv("HOME", t.TempDir())
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`<!doctype html><html><body><button>hi</button></body></html>`))
 	}))
@@ -56,9 +56,12 @@ func TestSnapshotPageBypassesCacheWhenSSRRequested(t *testing.T) {
 		t.Fatal("expected a non-nil extraction result")
 	}
 
-	second := snapshotPage(b, page, engine.LevelSkeleton)
-	if second != first {
-		t.Fatal("expected a repeat non-SSR call to be served from cache (same result pointer)")
+	if _, err := page.Eval(`() => { document.body.innerHTML += '<p>fresh paragraph marker</p>'; }`); err != nil {
+		t.Fatal(err)
+	}
+	second := snapshotPage(b, page, engine.LevelContent)
+	if !strings.Contains(engine.FormatText(second), "fresh paragraph marker") {
+		t.Fatal("content snapshot reused stale skeleton cache")
 	}
 
 	third := snapshotPage(b, page, engine.LevelSkeleton, true)

@@ -19,15 +19,8 @@ import (
 // passes an explicit value (navChallengeRecovered).
 func snapshotPage(b *engine.Browser, page *rod.Page, level engine.ExtractLevel, includeSSR ...bool) *engine.ExtractionResult {
 	ssr := len(includeSSR) > 0 && includeSSR[0]
-	// A cached result never carries SSRPayloads (SaveSnapshot strips them
-	// before persisting), so serving it here when the caller opted into SSR
-	// would silently swallow the fallback it explicitly asked for. Bypass the
-	// cache and recompute in that case.
-	if !ssr {
-		if cached := b.CachedExtract(page); cached != nil {
-			return cached
-		}
-	}
+	// An unchanged URL does not imply an unchanged DOM or extraction level.
+	// Keep persisted refs, but refresh the tree requested by this command.
 	result, err := engine.Extract(page, level, "", ssr)
 	if err != nil {
 		exitErr("extract", err)
@@ -134,6 +127,7 @@ func writePlaywrightSnapshotArtifact(result *engine.ExtractionResult) (string, e
 	}
 	path := filepath.Join(dir, playwrightSnapshotFilename(time.Now().UTC()))
 	data := []byte(engine.FormatPlaywrightSnapshot(result) + "\n")
+	data = redactOutput(data, flagOutputSecrets)
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return "", err
 	}

@@ -158,6 +158,69 @@
     ]
   },
   {
+    "name": "emulate",
+    "summary": "Emulate a device: viewport, DPR, mobile flag, touch, user-agent, color-scheme. MCP surface only (the CLI has `ghostchrome emulate`).",
+    "args": [
+      {
+        "name": "device",
+        "type": "string",
+        "required": false,
+        "description": "Preset name, e.g. iphone-14-pro-max, pixel-7, ipad, desktop"
+      },
+      {
+        "name": "width",
+        "type": "number",
+        "required": false,
+        "description": "Viewport width in CSS pixels"
+      },
+      {
+        "name": "height",
+        "type": "number",
+        "required": false,
+        "description": "Viewport height in CSS pixels"
+      },
+      {
+        "name": "device_scale_factor",
+        "type": "number",
+        "required": false,
+        "description": "devicePixelRatio (default 1 or the preset's)"
+      },
+      {
+        "name": "mobile",
+        "type": "boolean",
+        "required": false,
+        "description": "Mobile viewport semantics (meta viewport, screen size)"
+      },
+      {
+        "name": "touch",
+        "type": "boolean",
+        "required": false,
+        "description": "Touch input emulation (pointer:coarse, maxTouchPoints)"
+      },
+      {
+        "name": "user_agent",
+        "type": "string",
+        "required": false,
+        "description": "Override navigator.userAgent and the User-Agent header"
+      },
+      {
+        "name": "color_scheme",
+        "type": "string",
+        "required": false,
+        "description": "prefers-color-scheme: dark | light | no-preference"
+      },
+      {
+        "name": "reset",
+        "type": "boolean",
+        "required": false,
+        "description": "Drop every emulation override and restore the desktop viewport/UA"
+      }
+    ],
+    "surfaces": [
+      "mcp"
+    ]
+  },
+  {
     "name": "errors",
     "summary": "Return console and network errors observed on the current page.",
     "args": [],
@@ -475,6 +538,57 @@
         "type": "string",
         "required": false,
         "description": "Optional CSS selector to scope DOM extraction"
+      }
+    ],
+    "surfaces": [
+      "mcp"
+    ]
+  },
+  {
+    "name": "swipe",
+    "summary": "Swipe with a real single-finger touch gesture between two viewport coordinates. MCP surface only.",
+    "args": [
+      {
+        "name": "from_x",
+        "type": "number",
+        "required": true,
+        "description": "Start X in CSS pixels, relative to the viewport"
+      },
+      {
+        "name": "from_y",
+        "type": "number",
+        "required": true,
+        "description": "Start Y in CSS pixels, relative to the viewport"
+      },
+      {
+        "name": "to_x",
+        "type": "number",
+        "required": true,
+        "description": "End X in CSS pixels"
+      },
+      {
+        "name": "to_y",
+        "type": "number",
+        "required": true,
+        "description": "End Y in CSS pixels"
+      },
+      {
+        "name": "duration_ms",
+        "type": "number",
+        "required": false,
+        "description": "Gesture duration in ms (default 300, max 10000)"
+      },
+      {
+        "name": "steps",
+        "type": "number",
+        "required": false,
+        "description": "Intermediate touchmove events (default 12, max 100)"
+      },
+      {
+        "name": "snapshot",
+        "type": "string",
+        "required": false,
+        "description": "none | diff | full (default: diff)"
       }
     ],
     "surfaces": [

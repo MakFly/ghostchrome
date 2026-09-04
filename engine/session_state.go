@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"crypto/sha1"
 	"encoding/json"
 	"fmt"
@@ -15,6 +16,9 @@ import (
 )
 
 type sessionState struct {
+	// baseline records what this client read, so a stale writer only changes
+	// its own fields when another process has updated the same session.
+	baseline        map[string]json.RawMessage
 	CurrentTargetID string                  `json:"current_target_id,omitempty"`
 	Snapshots       map[string]PageSnapshot `json:"snapshots,omitempty"`
 	PlaywrightLog   PlaywrightLogState      `json:"playwright_log,omitempty"`
@@ -165,7 +169,9 @@ func loadSessionState(path string) (*sessionState, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return &sessionState{Snapshots: map[string]PageSnapshot{}}, nil
+			state := &sessionState{Snapshots: map[string]PageSnapshot{}}
+			state.baseline, _ = sessionFields(state)
+			return state, nil
 		}
 		return nil, err
 	}
@@ -177,6 +183,10 @@ func loadSessionState(path string) (*sessionState, error) {
 	if state.Snapshots == nil {
 		state.Snapshots = map[string]PageSnapshot{}
 	}
+	state.baseline, err = sessionFields(state)
+	if err != nil {
+		return nil, err
+	}
 	return state, nil
 }
 
@@ -184,6 +194,81 @@ func saveSessionState(path string, state *sessionState) error {
 	if state == nil {
 		return nil
 	}
+	return lockContinuousLog(path, func() error {
+		current, err := sessionFields(state)
+		if err != nil {
+			return err
+		}
+		latest, err := loadSessionState(path)
+		if err != nil {
+			return err
+		}
+		merged := latest.baseline
+		if state.baseline == nil {
+			merged = current
+		} else {
+			mergeSessionFields(merged, state.baseline, current, true)
+		}
+		data, err := json.Marshal(merged)
+		if err != nil {
+			return err
+		}
+		var next sessionState
+		if err := json.Unmarshal(data, &next); err != nil {
+			return err
+		}
+		if err := writeSessionState(path, &next); err != nil {
+			return err
+		}
+		next.baseline, err = sessionFields(&next)
+		if err != nil {
+			return err
+		}
+		*state = next
+		return nil
+	})
+}
+
+func sessionFields(state *sessionState) (map[string]json.RawMessage, error) {
+	data, err := json.Marshal(state)
+	if err != nil {
+		return nil, err
+	}
+	fields := map[string]json.RawMessage{}
+	err = json.Unmarshal(data, &fields)
+	return fields, err
+}
+
+// Merge independent top-level changes and per-target snapshots. A deliberate
+// update to the same field wins over an earlier writer; untouched fields do not.
+func mergeSessionFields(latest, before, after map[string]json.RawMessage, snapshots bool) {
+	keys := map[string]bool{}
+	for key := range before {
+		keys[key] = true
+	}
+	for key := range after {
+		keys[key] = true
+	}
+	for key := range keys {
+		if bytes.Equal(before[key], after[key]) {
+			continue
+		}
+		if snapshots && key == "snapshots" {
+			oldMap, newMap, latestMap := map[string]json.RawMessage{}, map[string]json.RawMessage{}, map[string]json.RawMessage{}
+			_ = json.Unmarshal(before[key], &oldMap)
+			_ = json.Unmarshal(after[key], &newMap)
+			_ = json.Unmarshal(latest[key], &latestMap)
+			mergeSessionFields(latestMap, oldMap, newMap, false)
+			latest[key], _ = json.Marshal(latestMap)
+		} else if value, ok := after[key]; ok {
+			latest[key] = value
+		} else {
+			delete(latest, key)
+		}
+	}
+}
+
+func writeSessionState(path string, state *sessionState) error {
 	if state.Snapshots == nil {
 		state.Snapshots = map[string]PageSnapshot{}
 	}

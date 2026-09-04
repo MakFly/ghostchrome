@@ -21,6 +21,31 @@ type ErrorEntry struct {
 	TimeMs  int64  `json:"time_ms"`          // timestamp relative to collector start
 }
 
+// ErrorsFromEvents returns the retained console and network errors in an
+// observer history. Reading errors does not consume the session history.
+func ErrorsFromEvents(events []ObserverEvent) []ErrorEntry {
+	out := make([]ErrorEntry, 0)
+	for _, e := range events {
+		switch e.Kind {
+		case KindConsole, KindError:
+			if e.Level == "error" || e.Level == "warning" {
+				out = append(out, ErrorEntry{Type: "console", Level: e.Level, Message: e.Text, Source: e.Source, TimeMs: e.TS})
+			}
+		case KindNet:
+			if e.Status >= 400 || e.Failed != "" {
+				level := "error"
+				if e.Status >= 500 {
+					level = "5xx"
+				} else if e.Status >= 400 {
+					level = "4xx"
+				}
+				out = append(out, ErrorEntry{Type: "network", Level: level, Message: e.URL, Source: e.URL, Status: e.Status, Method: e.Method, TimeMs: e.DurationMs})
+			}
+		}
+	}
+	return out
+}
+
 // ErrorCollector collects console-side errors from a page via CDP events.
 type ErrorCollector struct {
 	mu        sync.Mutex

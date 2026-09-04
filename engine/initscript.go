@@ -5,9 +5,23 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/proto"
 )
+
+type installedScript struct {
+	source string
+	id     proto.PageScriptIdentifier
+}
+
+type installedScriptSet struct {
+	mu      sync.Mutex
+	scripts map[string]installedScript
+}
+
+var installedPageScripts sync.Map // pageSessionKey -> *installedScriptSet
 
 // InitScriptsDir returns the directory for user init scripts.
 func InitScriptsDir() (string, error) {
@@ -64,6 +78,9 @@ func AddInitScript(srcPath string) (string, error) {
 
 // RemoveInitScript removes a script by name from the init-scripts directory.
 func RemoveInitScript(name string) error {
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
+		return fmt.Errorf("init script name must be a filename without directory separators")
+	}
 	dir, err := InitScriptsDir()
 	if err != nil {
 		return err
@@ -78,8 +95,11 @@ func RemoveInitScript(name string) error {
 	return os.Remove(path)
 }
 
-// ApplyInitScripts loads and evaluates all init scripts on the page.
+// ApplyInitScripts registers installed scripts before scripts on future documents.
 func ApplyInitScripts(page *rod.Page) error {
+	if page == nil {
+		return fmt.Errorf("page is nil")
+	}
 	dir, err := InitScriptsDir()
 	if err != nil {
 		return err
@@ -91,6 +111,7 @@ func ApplyInitScripts(page *rod.Page) error {
 		}
 		return err
 	}
+	sources := map[string]string{}
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".js") {
 			continue
@@ -99,10 +120,44 @@ func ApplyInitScripts(page *rod.Page) error {
 		if err != nil {
 			return fmt.Errorf("read %s: %w", e.Name(), err)
 		}
-		_, err = page.Eval(string(data))
-		if err != nil {
-			return fmt.Errorf("eval %s: %w", e.Name(), err)
+		sources[e.Name()] = string(data)
+	}
+	key := pageSessionKey{browser: page.Browser(), session: page.SessionID}
+	if len(sources) == 0 {
+		if _, ok := installedPageScripts.Load(key); !ok {
+			return nil
 		}
+	} else if err := ActivePolicy.AllowAction("eval"); err != nil {
+		return err
+	}
+	value, _ := installedPageScripts.LoadOrStore(key, &installedScriptSet{scripts: map[string]installedScript{}})
+	set := value.(*installedScriptSet)
+	set.mu.Lock()
+	defer set.mu.Unlock()
+	for name, script := range set.scripts {
+		if source, ok := sources[name]; ok && source == script.source {
+			continue
+		}
+		if err := (proto.PageRemoveScriptToEvaluateOnNewDocument{Identifier: script.id}).Call(page); err != nil {
+			return err
+		}
+		delete(set.scripts, name)
+	}
+	// ReadDir is sorted; preserve installation order for dependent scripts.
+	for _, entry := range entries {
+		name := entry.Name()
+		source, ok := sources[name]
+		if !ok {
+			continue
+		}
+		if _, ok := set.scripts[name]; ok {
+			continue
+		}
+		result, err := (proto.PageAddScriptToEvaluateOnNewDocument{Source: source}).Call(page)
+		if err != nil {
+			return fmt.Errorf("register %s: %w", name, err)
+		}
+		set.scripts[name] = installedScript{source: source, id: result.Identifier}
 	}
 	return nil
 }

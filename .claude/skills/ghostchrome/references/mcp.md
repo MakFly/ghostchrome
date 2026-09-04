@@ -12,10 +12,10 @@ metadata, console/network observations, and a compact accessibility tree with
 refs. Use a fresh snapshot after navigation, a route transition, a modal, or a
 DOM-changing interaction.
 
-The 17-tool surface is:
+The 19-tool surface is:
 
 ```text
-snapshot, navigate, click, type, select, press, hover, drag,
+snapshot, navigate, click, type, select, press, hover, drag, swipe, emulate,
 fill_form, upload, tabs, dialog, wait_for, eval, screenshot, back, forward
 ```
 
@@ -24,6 +24,47 @@ call through a URL/title change, a control state, visible text, or a new
 snapshot. Use `wait_for` with a selector or state condition for dynamic pages;
 prefer a bounded condition over arbitrary sleeps. Use `screenshot` for visual
 evidence, not as a replacement for semantic extraction.
+
+## Device emulation and touch gestures
+
+The server's default context is a desktop tab: a 1920x1080 viewport, a
+`devicePixelRatio` of 1, and `pointer: fine`. A mobile shell, a phone
+breakpoint, or a coarse-pointer media query therefore stays inactive until
+`emulate` installs a device profile.
+
+```jsonc
+// iPhone 14 Pro Max, by preset
+{"device": "iphone-14-pro-max"}
+// the same geometry, stated explicitly
+{"width": 430, "height": 932, "device_scale_factor": 3, "mobile": true, "touch": true,
+ "user_agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Mobile/15E148 Safari/604.1"}
+// back to an un-emulated desktop tab
+{"reset": true}
+```
+
+Presets are `iphone-se`, `iphone-14`, `iphone-14-pro`, `iphone-14-pro-max`,
+`pixel-7`, `pixel-8-pro`, `ipad`, `ipad-pro`, `desktop`, and `desktop-2k`.
+Individual axes override the preset, and `color_scheme` emulates
+`prefers-color-scheme`. The profile survives a tab switch, a popup, and a
+browser relaunch, because the server replays it whenever it binds a new page.
+An emulation change relayouts the document: take a fresh snapshot before using
+any ref, and reset when the mobile part of the flow is finished.
+
+`swipe` dispatches a real single-finger touch sequence — `touchstart`, a series
+of `touchmove` events, then `touchend` — between two viewport coordinates in
+CSS pixels. Use it for a drawer, a carousel, a bottom sheet, or pull-to-refresh:
+`drag` sends mouse events only, which a touch-only handler never receives.
+
+```jsonc
+// open a left drawer: swipe right from the screen edge
+{"from_x": 8, "from_y": 500, "to_x": 300, "to_y": 500, "duration_ms": 250}
+// scroll a list with a flick
+{"from_x": 215, "from_y": 700, "to_x": 215, "to_y": 200, "duration_ms": 150, "steps": 20}
+```
+
+A short duration reads as a flick and can trigger momentum; a longer one reads
+as a deliberate drag. Touch emulation is enabled automatically when a swipe is
+requested on a page that has none, so the gesture is never silently discarded.
 
 There are no recipes, CLI session commands, `perf`, `capture`, or JSONL batch
 operations on this MCP surface. Request an explicit CLI-mode setup switch when

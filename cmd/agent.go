@@ -197,6 +197,33 @@ func runAgentLoop() {
 
 func (s *agentSession) write(resp agentResponse) {
 	resp.Protocol = engine.ProtocolVersion
+	// Redact payloads structurally: replacing bytes in JSON could corrupt a
+	// number or a key, and correlation IDs must remain untouched.
+	if len(flagOutputSecrets) > 0 {
+		payload, err := json.Marshal(resp)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "agent: encode response: %v\n", err)
+			return
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(payload, &fields); err != nil {
+			return
+		}
+		for _, key := range []string{"result", "error", "events", "observation"} {
+			if value, ok := fields[key]; ok {
+				redacted, err := redactJSONOutput(value, flagOutputSecrets)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "agent: redact response: %v\n", err)
+					return
+				}
+				fields[key] = redacted
+			}
+		}
+		if err := s.enc.Encode(fields); err != nil {
+			fmt.Fprintf(os.Stderr, "agent: write response: %v\n", err)
+		}
+		return
+	}
 	if err := s.enc.Encode(resp); err != nil {
 		fmt.Fprintf(os.Stderr, "agent: write response %s: %v\n", resp.ID, err)
 	}
@@ -247,7 +274,9 @@ func (s *agentSession) ensurePage() (*engine.Browser, *rod.Page, error) {
 	s.browser = b
 	s.page = page
 	s.rt = engine.NewRuntime(b)
-	s.dialogPolicy = &engine.DialogAutoPolicy{Accept: true}
+	if s.dialogPolicy == nil {
+		s.dialogPolicy = &engine.DialogAutoPolicy{Accept: true}
+	}
 	engine.StartDialogAutoHandler(page, s.dialogPolicy)
 	if flagSession != "" {
 		engine.TouchSessionLease(flagSession)
@@ -536,7 +565,7 @@ func (s *agentSession) opRef(raw json.RawMessage, op string) (interface{}, error
 			page = popup
 		}
 	}
-	return s.mutationResult(b, page, prev, snapshotModeFromArgs(raw)), nil
+	return s.mutationResult(b, page, prev, snapshotModeFromArgs(raw))
 }
 
 // opCheck ticks (checked=true) or unticks (checked=false) a checkbox/radio.
@@ -568,7 +597,7 @@ func (s *agentSession) opCheck(raw json.RawMessage, checked bool) (interface{}, 
 	if err != nil {
 		return nil, err
 	}
-	return s.mutationResult(b, page, prev, snapshotModeFromArgs(raw)), nil
+	return s.mutationResult(b, page, prev, snapshotModeFromArgs(raw))
 }
 
 // opReload refreshes the current page.
@@ -628,7 +657,7 @@ func (s *agentSession) opType(raw json.RawMessage) (interface{}, error) {
 	}); err != nil {
 		return nil, err
 	}
-	return s.mutationResult(b, page, prev, snapshotModeFromArgs(raw)), nil
+	return s.mutationResult(b, page, prev, snapshotModeFromArgs(raw))
 }
 
 func (s *agentSession) opPress(raw json.RawMessage) (interface{}, error) {
@@ -653,7 +682,7 @@ func (s *agentSession) opPress(raw json.RawMessage) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	return s.mutationResult(b, page, prev, snapshotModeFromArgs(raw)), nil
+	return s.mutationResult(b, page, prev, snapshotModeFromArgs(raw))
 }
 
 func (s *agentSession) opSelect(raw json.RawMessage) (interface{}, error) {
@@ -681,7 +710,7 @@ func (s *agentSession) opSelect(raw json.RawMessage) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	return s.mutationResult(b, page, prev, snapshotModeFromArgs(raw)), nil
+	return s.mutationResult(b, page, prev, snapshotModeFromArgs(raw))
 }
 
 func (s *agentSession) opFill(raw json.RawMessage) (interface{}, error) {
@@ -735,7 +764,9 @@ func (s *agentSession) opScrollTo(raw json.RawMessage) (interface{}, error) {
 		Y      int  `json:"y"`
 		Bottom bool `json:"bottom"`
 	}
-	_ = unmarshalArgs(raw, &a)
+	if err := unmarshalArgs(raw, &a); err != nil {
+		return nil, err
+	}
 	_, page, err := s.ensurePage()
 	if err != nil {
 		return nil, err
@@ -784,7 +815,9 @@ func (s *agentSession) opScreenshot(raw json.RawMessage) (interface{}, error) {
 		Quality  int     `json:"quality"`
 		Scale    float64 `json:"scale"`
 	}
-	_ = unmarshalArgs(raw, &a)
+	if err := unmarshalArgs(raw, &a); err != nil {
+		return nil, err
+	}
 	b, page, err := s.ensurePage()
 	if err != nil {
 		return nil, err
@@ -819,7 +852,9 @@ func (s *agentSession) opWait(raw json.RawMessage) (interface{}, error) {
 		MS       int    `json:"ms"`
 		Timeout  int    `json:"timeout_ms"`
 	}
-	_ = unmarshalArgs(raw, &a)
+	if err := unmarshalArgs(raw, &a); err != nil {
+		return nil, err
+	}
 	b, page, err := s.ensurePage()
 	if err != nil {
 		return nil, err
@@ -843,15 +878,14 @@ func (s *agentSession) opWait(raw json.RawMessage) (interface{}, error) {
 }
 
 func (s *agentSession) opErrors() (interface{}, error) {
-	_, page, err := s.ensurePage()
+	_, _, err := s.ensurePage()
 	if err != nil {
 		return nil, err
 	}
-	entries, err := engine.CollectErrors(page, "", "", nil)
-	if err != nil {
-		return nil, err
+	if s.observer == nil {
+		return nil, fmt.Errorf("errors: no session observer; enable --observe to collect errors in stealth mode")
 	}
-	return entries, nil
+	return engine.ErrorsFromEvents(s.observer.Drain(0)), nil
 }
 
 func (s *agentSession) opDialog(raw json.RawMessage) (interface{}, error) {
@@ -1001,23 +1035,28 @@ func snapshotModeFromArgs(raw json.RawMessage) engine.SnapshotMode {
 // mutationResult honours none/diff/full. snapshot=full returns the skeleton
 // ExtractionResult (same shape as extract) so agents can keep refs without a
 // second extract call. none skips AX work after the mutation.
-func (s *agentSession) mutationResult(b *engine.Browser, page *rod.Page, prev *engine.PageSnapshot, mode engine.SnapshotMode) interface{} {
+func (s *agentSession) mutationResult(b *engine.Browser, page *rod.Page, prev *engine.PageSnapshot, mode engine.SnapshotMode) (interface{}, error) {
+	failure := func(err error) (interface{}, error) {
+		// Classify explicitly: a completed click must not become a retryable
+		// timeout and execute twice merely because observation failed.
+		return nil, &engine.OpError{Code: engine.ErrCodeUnknown, Retryable: false, Err: fmt.Errorf("action completed, but post-action snapshot failed (do not repeat the action; extract again): %w", err)}
+	}
 	switch mode {
 	case engine.SnapshotModeNone:
 		if b != nil {
 			_ = b.InvalidateCachedExtract(page)
 		}
-		return engine.SnapshotDiff{Unchanged: true}
+		return engine.SnapshotDiff{Unchanged: true}, nil
 	case engine.SnapshotModeFull:
 		if b != nil {
 			_ = b.InvalidateCachedExtract(page)
 		}
 		if err := engine.WaitForImminentDOM(page, 0); err != nil {
-			return engine.SnapshotDiff{Unchanged: true}
+			return failure(err)
 		}
 		result, err := engine.Extract(page, engine.LevelSkeleton, "", false)
 		if err != nil {
-			return engine.SnapshotDiff{Unchanged: true}
+			return failure(err)
 		}
 		if b != nil {
 			_ = b.SaveSnapshot(page, result)
@@ -1025,18 +1064,18 @@ func (s *agentSession) mutationResult(b *engine.Browser, page *rod.Page, prev *e
 				s.snapshot = snap
 			}
 		}
-		return result
+		return result, nil
 	default:
 		diff, _, err := engine.CaptureMutation(b, page, prev)
 		if err != nil {
-			return engine.SnapshotDiff{Unchanged: true}
+			return failure(err)
 		}
 		if b != nil {
 			if snap := b.Snapshot(page); snap != nil {
 				s.snapshot = snap
 			}
 		}
-		return diff
+		return diff, nil
 	}
 }
 

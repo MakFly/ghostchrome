@@ -155,10 +155,13 @@ export class Ghostchrome {
    */
   async close(): Promise<OpOutcome<CloseResult>> {
     if (this.closed) return { result: {} };
-    const outcome = await this.emptyOp<Record<string, never>>("close");
+    const pending = this.emptyOp<Record<string, never>>("close");
     this.closed = true;
-    await this.transport.dispose();
-    return outcome as OpOutcome<CloseResult>;
+    try {
+      return await pending as OpOutcome<CloseResult>;
+    } finally {
+      await this.transport.dispose();
+    }
   }
 
   // -------------------------------------------------------------------------

@@ -741,7 +741,14 @@ func (b *Browser) ClearEmulationState() error {
 
 // Page returns the active page or creates a new one.
 // When connected to an existing Chrome, it prefers the persisted active tab.
-func (b *Browser) Page() (*rod.Page, error) {
+func (b *Browser) Page() (page *rod.Page, err error) {
+	defer func() {
+		if err == nil && page != nil {
+			if scriptErr := ApplyInitScripts(page); scriptErr != nil {
+				page, err = nil, fmt.Errorf("init scripts: %w", scriptErr)
+			}
+		}
+	}()
 	if b.page != nil {
 		return b.page, nil
 	}
@@ -920,6 +927,9 @@ func (b *Browser) Alive(d time.Duration) bool {
 func (b *Browser) SetCurrentPage(page *rod.Page) error {
 	if page == nil {
 		return nil
+	}
+	if err := ApplyInitScripts(page); err != nil {
+		return fmt.Errorf("init scripts: %w", err)
 	}
 	b.page = page
 	return b.setCurrentTargetID(page.TargetID)
