@@ -156,7 +156,7 @@ func (s *Server) handleSnapshot(ctx context.Context, req mcpgo.CallToolRequest) 
 		return errResult(err)
 	}
 
-	return s.withPage(func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
+	return s.withPage(ctx, func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
 		// With URL: full Preview (navigate + errors + network + extract).
 		if url != "" {
 			pv, err := engine.Preview(page, url, wait, level, func(p *rod.Page) error {
@@ -218,7 +218,7 @@ func (s *Server) handleNavigate(ctx context.Context, req mcpgo.CallToolRequest) 
 	}
 	wait := mcpgo.ParseString(req, "wait", "domcontentloaded")
 
-	return s.withPage(func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
+	return s.withPage(ctx, func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
 		info, err := engine.Navigate(page, url, wait)
 		if err != nil {
 			recovered, recErr := tryNavigateRecovery(page, err)
@@ -252,7 +252,7 @@ func (s *Server) handleClick(ctx context.Context, req mcpgo.CallToolRequest) (*m
 	if berr != nil {
 		return errResult(fmt.Errorf("click: %w", berr))
 	}
-	return s.withPage(func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
+	return s.withPage(ctx, func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
 		snap := s.snapshotForResolve(page)
 		popupMark := engine.PopupMark(page)
 		var err error
@@ -279,7 +279,7 @@ func (s *Server) handleType(ctx context.Context, req mcpgo.CallToolRequest) (*mc
 	if ref == "" {
 		return errResult(fmt.Errorf("ref is required"))
 	}
-	return s.withPage(func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
+	return s.withPage(ctx, func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
 		snap := s.snapshotForResolve(page)
 		var err error
 		if s.rt != nil {
@@ -315,7 +315,7 @@ func (s *Server) handleSelect(ctx context.Context, req mcpgo.CallToolRequest) (*
 			values = arr
 		}
 	}
-	return s.withPage(func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
+	return s.withPage(ctx, func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
 		snap := s.snapshotForResolve(page)
 		var err error
 		if s.rt != nil {
@@ -336,7 +336,7 @@ func (s *Server) handlePress(ctx context.Context, req mcpgo.CallToolRequest) (*m
 		return errResult(fmt.Errorf("key is required"))
 	}
 	ref := normalizeRef(mcpgo.ParseString(req, "ref", ""))
-	return s.withPage(func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
+	return s.withPage(ctx, func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
 		snap := s.snapshotForResolve(page)
 		if err := engine.PressKey(page, key, ref, snap); err != nil {
 			return errResult(fmt.Errorf("press %s: %w", key, err))
@@ -371,7 +371,7 @@ func (s *Server) handleWaitFor(ctx context.Context, req mcpgo.CallToolRequest) (
 		}
 		return mcpgo.NewToolResultText(fmt.Sprintf("waited %dms (no condition)", timeoutMs)), nil
 	}
-	return s.withPage(func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
+	return s.withPage(ctx, func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
 		start := time.Now()
 		if _, err := engine.WaitForAgent(page, b, s.snapshotForResolve(page), engine.WaitSpec{
 			Selector: selector,
@@ -414,7 +414,7 @@ func (s *Server) handleEval(ctx context.Context, req mcpgo.CallToolRequest) (*mc
 	if timeoutMs <= 0 {
 		timeoutMs = 8000
 	}
-	return s.withPage(func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
+	return s.withPage(ctx, func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
 		snap := s.snapshotForResolve(page)
 		value, err := engine.EvalJSTimeout(page, expr, ref, snap, time.Duration(timeoutMs)*time.Millisecond)
 		if err != nil {
@@ -438,7 +438,7 @@ func (s *Server) handleScreenshot(ctx context.Context, req mcpgo.CallToolRequest
 		format = "png"
 		quality = 0
 	}
-	return s.withPage(func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
+	return s.withPage(ctx, func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
 		snap := s.snapshotForResolve(page)
 		data, err := engine.TakeScreenshotFormat(page, fullPage, ref, format, quality, snap)
 		if err != nil {
@@ -464,7 +464,7 @@ func (s *Server) handleHover(ctx context.Context, req mcpgo.CallToolRequest) (*m
 	if ref == "" {
 		return errResult(fmt.Errorf("ref is required"))
 	}
-	return s.withPage(func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
+	return s.withPage(ctx, func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
 		snap := s.snapshotForResolve(page)
 		var err error
 		if s.rt != nil {
@@ -486,7 +486,7 @@ func (s *Server) handleDrag(ctx context.Context, req mcpgo.CallToolRequest) (*mc
 	if from == "" || to == "" {
 		return errResult(fmt.Errorf("from and to refs are required"))
 	}
-	return s.withPage(func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
+	return s.withPage(ctx, func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
 		snap := s.snapshotForResolve(page)
 		if err := engine.DragDrop(page, from, to, snap, steps); err != nil {
 			return errResult(fmt.Errorf("drag %s→%s: %w", from, to, err))
@@ -508,7 +508,7 @@ func (s *Server) handleFillForm(ctx context.Context, req mcpgo.CallToolRequest) 
 	for ref, value := range fields {
 		normalized[normalizeRef(ref)] = value
 	}
-	return s.withPage(func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
+	return s.withPage(ctx, func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
 		snap := s.snapshotForResolve(page)
 		filled, snap, err := engine.FillFields(b, page, normalized, snap)
 		if err != nil {
@@ -538,7 +538,7 @@ func (s *Server) handleUpload(ctx context.Context, req mcpgo.CallToolRequest) (*
 	} else {
 		paths = []string{pathsRaw}
 	}
-	return s.withPage(func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
+	return s.withPage(ctx, func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
 		snap := s.snapshotForResolve(page)
 		el, err := engine.ResolveRef(page, ref, snap)
 		if err != nil {
@@ -572,7 +572,7 @@ func (s *Server) handleTabs(ctx context.Context, req mcpgo.CallToolRequest) (*mc
 	action := mcpgo.ParseString(req, "action", "list")
 	index := int(mcpgo.ParseFloat64(req, "index", -1))
 
-	return s.withPage(func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
+	return s.withPage(ctx, func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
 		currentID := string(page.TargetID)
 		switch action {
 		case "switch":
@@ -653,7 +653,7 @@ func (s *Server) handleDialog(ctx context.Context, req mcpgo.CallToolRequest) (*
 	return mcpgo.NewToolResultText(fmt.Sprintf("dialogs will %s", action)), nil
 }
 func (s *Server) handleBack(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-	return s.withPage(func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
+	return s.withPage(ctx, func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
 		res, err := historyStep(page, "back")
 		if err == nil {
 			_ = b.InvalidateCachedExtract(page)
@@ -663,7 +663,7 @@ func (s *Server) handleBack(ctx context.Context, req mcpgo.CallToolRequest) (*mc
 }
 
 func (s *Server) handleForward(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-	return s.withPage(func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
+	return s.withPage(ctx, func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error) {
 		res, err := historyStep(page, "forward")
 		if err == nil {
 			_ = b.InvalidateCachedExtract(page)

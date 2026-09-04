@@ -810,6 +810,33 @@ func (b *Browser) Page() (*rod.Page, error) {
 	return p, nil
 }
 
+// ReacquirePage drops the cached page handle and resolves a new live page
+// from the same browser connection. It is intended for long-lived callers
+// (MCP/JSONL) after a target was closed or replaced while Chrome itself is
+// still alive. The previous target's persisted snapshot is discarded so refs
+// from the dead target cannot be used against the replacement page.
+//
+// ReacquirePage never launches or reconnects Chrome. Callers that cannot
+// recover a page from the current browser must close this Browser and use
+// NewBrowserWith again, which keeps ownership and reconnect semantics
+// explicit.
+func (b *Browser) ReacquirePage(previous *rod.Page) (*rod.Page, error) {
+	if b == nil || b.browser == nil {
+		return nil, fmt.Errorf("browser is not connected")
+	}
+	if previous != nil {
+		if b.page == previous || (b.page != nil && b.page.TargetID == previous.TargetID) {
+			b.page = nil
+		}
+		// A target replacement invalidates all backend-node refs, even when the
+		// replacement happens to be assigned the same logical tab index.
+		if err := b.deleteSnapshot(previous.TargetID); err != nil {
+			return nil, fmt.Errorf("discard stale page snapshot: %w", err)
+		}
+	}
+	return b.Page()
+}
+
 func pageAtIndex(browser *rod.Browser, index int) (*rod.Page, error) {
 	pages, err := browser.Pages()
 	if err != nil {

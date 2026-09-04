@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"testing"
@@ -135,7 +136,7 @@ func runMCPFunctionalCase(t *testing.T, name string) {
 		wg.Wait()
 	case "with_page_runs_callback":
 		called := false
-		result, err := s.withPage(func(_ *engine.Browser, p *rod.Page) (*mcpgo.CallToolResult, error) {
+		result, err := s.withPage(context.Background(), func(_ *engine.Browser, p *rod.Page) (*mcpgo.CallToolResult, error) {
 			called = true
 			if _, err := p.Info(); err != nil {
 				return nil, err
@@ -163,7 +164,7 @@ func TestServerCloseIsTerminalBeforeLaunch(t *testing.T) {
 	}
 
 	called := false
-	result, err := s.withPage(func(*engine.Browser, *rod.Page) (*mcpgo.CallToolResult, error) {
+	result, err := s.withPage(context.Background(), func(*engine.Browser, *rod.Page) (*mcpgo.CallToolResult, error) {
 		called = true
 		return nil, nil
 	})

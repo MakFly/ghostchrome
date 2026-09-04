@@ -57,20 +57,23 @@ type Options struct {
 type Server struct {
 	opts Options
 
-	mu           sync.Mutex
-	browser      *engine.Browser
-	page         *rod.Page
-	snapshot     *engine.PageSnapshot // last in-memory snapshot (for ref resolution)
-	rt           *engine.Runtime
-	observer     *engine.Observer         // long-lived; feeds error/network info into snapshot
-	observerFn   context.CancelFunc       // cancel attached to the observer's context
-	blocker      *engine.InterceptSession // non-nil when anti-bot blocker is active
-	dialogPolicy *engine.DialogAutoPolicy
-	lastActivity time.Time      // updated on every ensurePageLocked; drives the idle reaper
-	closed       bool           // terminal state set only by Server.Close
-	done         chan struct{}  // stops background reapers after terminal close
-	closeDone    chan struct{}  // closes after terminal teardown and prewarm drain
-	prewarmWG    sync.WaitGroup // drains any prewarm admitted before terminal close
+	mu             sync.Mutex
+	browser        *engine.Browser
+	page           *rod.Page
+	snapshot       *engine.PageSnapshot // last in-memory snapshot (for ref resolution)
+	rt             *engine.Runtime
+	observer       *engine.Observer         // long-lived; feeds error/network info into snapshot
+	observerFn     context.CancelFunc       // cancel attached to the observer's context
+	blocker        *engine.InterceptSession // non-nil when anti-bot blocker is active
+	dialogPolicy   *engine.DialogAutoPolicy
+	lastActivity   time.Time // updated on every ensurePageLocked; drives the idle reaper
+	lastRecovery   string    // last target/browser recovery reason for diagnostics
+	lastRecoveryAt time.Time
+	recoveryCount  uint64
+	closed         bool           // terminal state set only by Server.Close
+	done           chan struct{}  // stops background reapers after terminal close
+	closeDone      chan struct{}  // closes after terminal teardown and prewarm drain
+	prewarmWG      sync.WaitGroup // drains any prewarm admitted before terminal close
 }
 
 // New returns a Server that lazy-initializes the browser on the first tool
@@ -86,6 +89,45 @@ func New(opts Options) *Server {
 }
 
 var errServerClosed = errors.New("mcp server is closed")
+
+// LifecycleDiagnostics describes the held MCP runtime without probing Chrome.
+// It is intentionally a snapshot: callers can safely render it while a tool
+// call is not in progress, and Connect is only the configured transport
+// endpoint (never a browser cookie or page payload).
+type LifecycleDiagnostics struct {
+	Connect        string    `json:"connect,omitempty"`
+	BrowserHeld    bool      `json:"browser_held"`
+	PageHeld       bool      `json:"page_held"`
+	TargetID       string    `json:"target_id,omitempty"`
+	LastRecovery   string    `json:"last_recovery,omitempty"`
+	LastRecoveryAt time.Time `json:"last_recovery_at,omitempty"`
+	RecoveryCount  uint64    `json:"recovery_count,omitempty"`
+}
+
+// Diagnostics returns the last known MCP lifecycle state. It performs no CDP
+// call, so it remains safe for health reporting while Chrome is unreachable.
+func (s *Server) Diagnostics() LifecycleDiagnostics {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d := LifecycleDiagnostics{
+		Connect:        s.opts.Connect,
+		BrowserHeld:    s.browser != nil,
+		PageHeld:       s.page != nil,
+		LastRecovery:   s.lastRecovery,
+		LastRecoveryAt: s.lastRecoveryAt,
+		RecoveryCount:  s.recoveryCount,
+	}
+	if s.page != nil {
+		d.TargetID = string(s.page.TargetID)
+	}
+	return d
+}
+
+func (s *Server) recordRecoveryLocked(reason string) {
+	s.lastRecovery = reason
+	s.lastRecoveryAt = time.Now()
+	s.recoveryCount++
+}
 
 // PrewarmAsync spawns Chrome in the background so the first user-facing tool
 // call doesn't pay the ~1.3s cold-start. Safe to call from main(): if the
@@ -253,13 +295,39 @@ func (s *Server) ensurePageLocked() (*engine.Browser, *rod.Page, error) {
 		engine.TouchSessionLease(s.opts.SessionName)
 	}
 	if s.page != nil && s.browser != nil {
-		if s.browser.Alive(alivenessProbeTimeout) {
-			return s.browser, s.page, nil
+		relaunchReason := "chrome is unresponsive"
+		if browserAlive := s.browser.Alive(alivenessProbeTimeout); browserAlive {
+			// Browser.getVersion only proves that Chrome is reachable. A closed
+			// target leaves the browser alive while the cached rod.Page becomes
+			// unusable, which used to make every subsequent MCP call reuse the
+			// dead target forever. Probe the target itself before returning it.
+			if info, err := s.page.Timeout(alivenessProbeTimeout).Info(); err == nil && info != nil {
+				return s.browser, s.page, nil
+			} else {
+				targetID := string(s.page.TargetID)
+				reason := fmt.Sprintf("page target %s unavailable", targetID)
+				if err != nil {
+					reason = fmt.Sprintf("%s: %v", reason, err)
+				}
+				s.recordRecoveryLocked(reason)
+				fmt.Fprintf(os.Stderr, "[ghostchrome mcp] %s — recovering page on the existing browser\n", reason)
+				if page, recoverErr := s.recoverPageLocked(s.browser, s.page); recoverErr == nil {
+					return s.browser, page, nil
+				} else {
+					s.recordRecoveryLocked(fmt.Sprintf("%s; same-browser recovery failed: %v", reason, recoverErr))
+					relaunchReason = fmt.Sprintf("%s; relaunching browser", reason)
+					fmt.Fprintf(os.Stderr, "[ghostchrome mcp] same-browser page recovery failed: %v\n", recoverErr)
+				}
+				// The target is gone and no replacement page could be resolved.
+				// Fall through to the existing full browser reconnect path.
+			}
+		} else {
+			s.recordRecoveryLocked("browser is unresponsive")
 		}
 		// Relaunch invalidates refs (@1, @2) from earlier snapshots;
 		// closeLocked drops the snapshot so ref-based tools tell the agent
 		// to re-snapshot instead of clicking into the void.
-		fmt.Fprintln(os.Stderr, "[ghostchrome mcp] chrome is unresponsive, relaunching a fresh browser")
+		fmt.Fprintf(os.Stderr, "[ghostchrome mcp] %s — relaunching a fresh browser\n", relaunchReason)
 		s.closeLocked()
 		b, page, err := s.launchPageLocked()
 		if err != nil {
@@ -276,6 +344,48 @@ func (s *Server) ensurePageLocked() (*engine.Browser, *rod.Page, error) {
 		return s.browser, page, nil
 	}
 	return s.launchPageLocked()
+}
+
+// recoverPageLocked replaces only the page/target binding. Browser ownership,
+// CDP connection, cookies, and the profile remain untouched. Caller falls
+// back to a full reconnect when this returns an error and MUST hold s.mu.
+func (s *Server) recoverPageLocked(b *engine.Browser, previous *rod.Page) (*rod.Page, error) {
+	page, err := b.ReacquirePage(previous)
+	if err != nil {
+		return nil, err
+	}
+	if info, err := page.Timeout(alivenessProbeTimeout).Info(); err != nil || info == nil {
+		if err == nil {
+			err = errors.New("reacquired target returned no metadata")
+		}
+		return nil, err
+	}
+	s.bindPageLocked(b, page)
+	return page, nil
+}
+
+// bindPageLocked attaches the per-page MCP helpers after a target switch.
+// Browser-level state (anti-bot blocker and runtime) is deliberately reused.
+// Caller MUST hold s.mu.
+func (s *Server) bindPageLocked(b *engine.Browser, page *rod.Page) {
+	s.page = page
+	s.snapshot = b.Snapshot(page)
+	if s.opts.Stealth {
+		_ = engine.ApplyStealth(page)
+	}
+	if s.dialogPolicy == nil {
+		s.dialogPolicy = &engine.DialogAutoPolicy{Accept: true}
+	}
+	engine.StartDialogAutoHandler(page, s.dialogPolicy)
+	if s.rt == nil {
+		s.rt = engine.NewRuntime(b)
+	}
+	if !s.opts.Stealth {
+		if hub := s.rt.AttachEvents(page); hub != nil {
+			s.observer = hub.Observer()
+		}
+	}
+	engine.PrewarmDomains(page)
 }
 
 // launchPageLocked launches (or connects to) Chrome and initializes all
@@ -365,15 +475,35 @@ func (s *Server) launchPageLocked() (*engine.Browser, *rod.Page, error) {
 }
 
 // withPage runs fn under the server lock with a guaranteed-live page.
-// Returns an MCP error result on initialization failure.
-func (s *Server) withPage(fn func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error)) (*mcpgo.CallToolResult, error) {
+//
+// The page passed to fn is a short-lived clone bound to the MCP request
+// context. That makes notifications/cancelled stop in-flight Rod waits without
+// poisoning the long-lived page held by the server for the next tool call.
+// Returns an MCP error result on initialization failure or cancelled context.
+func (s *Server) withPage(ctx context.Context, fn func(b *engine.Browser, page *rod.Page) (*mcpgo.CallToolResult, error)) (*mcpgo.CallToolResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return errResult(err)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return errResult(err)
+	}
 	b, page, err := s.ensurePageLocked()
 	if err != nil {
 		return mcpgo.NewToolResultError(err.Error()), nil
 	}
-	return fn(b, page)
+	// Keep the long-lived page context as the parent: closing the target or its
+	// browser must still interrupt this operation. The request context is wired
+	// in separately so MCP notifications/cancelled interrupt it as well.
+	opCtx, cancel := context.WithCancel(page.GetContext())
+	stop := context.AfterFunc(ctx, cancel)
+	defer stop()
+	defer cancel()
+	return fn(b, page.Context(opCtx))
 }
 
 // rememberSnapshot stores the snapshot built from an extract so subsequent
