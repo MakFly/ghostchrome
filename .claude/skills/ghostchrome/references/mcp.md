@@ -12,11 +12,11 @@ metadata, console/network observations, and a compact accessibility tree with
 refs. Use a fresh snapshot after navigation, a route transition, a modal, or a
 DOM-changing interaction.
 
-The 16-tool surface is:
+The 17-tool surface is:
 
 ```text
 snapshot, navigate, click, type, select, press, hover, drag,
-fill_form, upload, tabs, wait_for, eval, screenshot, back, forward
+fill_form, upload, tabs, dialog, wait_for, eval, screenshot, back, forward
 ```
 
 Use refs from the current snapshot for interaction. Validate each mutating tool

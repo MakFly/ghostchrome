@@ -89,7 +89,7 @@ func TestSetupCLIIsExclusiveAndIdempotent(t *testing.T) {
 			if err != nil {
 				t.Fatalf("skill file missing for %s: %s: %v", client, relative, err)
 			}
-			if strings.HasPrefix(relative, "scripts/") && info.Mode().Perm()&0o111 == 0 {
+			if strings.HasSuffix(relative, ".sh") && info.Mode().Perm()&0o111 == 0 {
 				t.Fatalf("skill script is not executable for %s: %s", client, relative)
 			}
 		}

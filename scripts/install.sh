@@ -284,6 +284,10 @@ install_skill_for_client() {
   cp -R "$source_dir" "$destination"
   chmod 0700 "$destination"
   find "$destination" -type f -exec chmod 0600 {} \;
+  # Skills may ship validation or runnable example scripts. Keep the skill
+  # private by default, but preserve execution for those explicitly executable
+  # shell assets so a fresh install passes its own validator.
+  find "$destination" -type f -name '*.sh' -exec chmod 0755 {} \;
 }
 
 write_manifest() {

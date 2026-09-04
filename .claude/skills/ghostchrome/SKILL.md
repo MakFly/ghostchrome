@@ -177,12 +177,12 @@ session only when the browser itself is unhealthy.
 
 ## MCP mode
 
-Use the registered Ghostchrome MCP connection and its 16 browser tools. Start
+Use the registered Ghostchrome MCP connection and its 17 browser tools. Start
 with `snapshot` when entering or revisiting a page; it combines page status,
 console/network observations, and a compact DOM with refs. Continue with
 `navigate`, `click`, `type`, `select`, `press`, `hover`, `drag`, `fill_form`,
-`upload`, `tabs`, `wait_for`, `eval`, `screenshot`, `back`, or `forward` as the
-task requires. Verify state after each mutating operation.
+`upload`, `tabs`, `dialog`, `wait_for`, `eval`, `screenshot`, `back`, or
+`forward` as the task requires. Verify state after each mutating operation.
 
 The standalone MCP server owns one browser context and releases Chrome after
 the configured idle timeout while keeping the stdio server available. Keep MCP

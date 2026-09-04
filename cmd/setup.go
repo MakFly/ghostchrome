@@ -399,7 +399,10 @@ func installSetupSkills(home string, clients []string, managed map[string]bool, 
 		for relative, fileContent := range bundle {
 			path := setupSkillFilePath(home, client, relative)
 			mode := os.FileMode(0o644)
-			if strings.HasPrefix(filepath.ToSlash(relative), "scripts/") {
+			// The bundled validator executes shell examples directly. Preserve
+			// execution for every authored shell asset, not only scripts/:
+			// examples/cli-flow.sh is part of the installed skill contract too.
+			if strings.HasSuffix(strings.ToLower(relative), ".sh") {
 				mode = 0o755
 			}
 			if err := writeSetupAtomic(path, fileContent, mode); err != nil {
